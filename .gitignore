@@ -1,0 +1,273 @@
+# Temporary data directory
+data/tmp/
+
+# ============================================
+# Go
+# ============================================
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Project-specific binaries
+claude-with-openai-api
+claude-code-cli-with-openai-api
+/claude-with-openai-api
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# Go module cache (optional, usually not needed)
+# go.sum is committed, but some prefer to ignore it
+# Uncomment if you don't want to commit go.sum
+# go.sum
+
+# Go build cache
+.cache/
+
+# ============================================
+# Python (for data/tmp/claude-code-proxy/)
+# ============================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# ============================================
+# IDEs and Editors
+# ============================================
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA / PyCharm / GoLand
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# OS Files
+# ============================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================
+# Environment and Configuration
+# ============================================
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# Local configuration files
+config.local.*
+*.local.yaml
+*.local.yml
+*.local.json
+
+# ============================================
+# Logs and Debugging
+# ============================================
+
+# Log files
+*.log
+logs/
+*.log.*
+*.log.[0-9]
+
+# Debug files
+*.debug
+debug/
+
+# ============================================
+# Build and Dist
+# ============================================
+
+# Build artifacts
+build/
+dist/
+bin/
+out/
+target/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# ============================================
+# Docker
+# ============================================
+
+# Docker
+docker-compose.override.yml
+
+# ============================================
+# Miscellaneous
+# ============================================
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+!*.example.pem
+!*.example.key
+
+# Secrets
+secrets/
+.secrets/
+*.secret
+
+# Lock files (uncomment if you don't want to commit them)
+# package-lock.json
+# yarn.lock
+# Pipfile.lock
+# poetry.lock
+# uv.lock
