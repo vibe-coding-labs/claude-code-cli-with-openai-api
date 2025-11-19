@@ -4,22 +4,24 @@ import "time"
 
 // APIConfig represents an API configuration
 type APIConfig struct {
-	ID                    string    `json:"id"`
-	Name                  string    `json:"name"`
-	Description           string    `json:"description"`
-	OpenAIAPIKey          string    `json:"openai_api_key,omitempty"`        // Decrypted, not stored
-	OpenAIAPIKeyEncrypted string    `json:"-"`                               // Encrypted, for DB only
-	OpenAIAPIKeyMasked    string    `json:"openai_api_key_masked,omitempty"` // Masked for display
-	OpenAIBaseURL         string    `json:"openai_base_url"`
-	BigModel              string    `json:"big_model"`
-	MiddleModel           string    `json:"middle_model"`
-	SmallModel            string    `json:"small_model"`
-	MaxTokensLimit        int       `json:"max_tokens_limit"`
-	RequestTimeout        int       `json:"request_timeout"`
-	AnthropicAPIKey       string    `json:"anthropic_api_key,omitempty"`
-	Enabled               bool      `json:"enabled"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Description           string            `json:"description"`
+	OpenAIAPIKey          string            `json:"openai_api_key,omitempty"`        // Decrypted, not stored
+	OpenAIAPIKeyEncrypted string            `json:"-"`                               // Encrypted, for DB only
+	OpenAIAPIKeyMasked    string            `json:"openai_api_key_masked,omitempty"` // Masked for display
+	OpenAIBaseURL         string            `json:"openai_base_url"`
+	BigModel              string            `json:"big_model"`
+	MiddleModel           string            `json:"middle_model"`
+	SmallModel            string            `json:"small_model"`
+	ModelMappings         map[string]string `json:"model_mappings,omitempty"` // 高级模型映射
+	MaxTokensLimit        int               `json:"max_tokens_limit"`
+	RequestTimeout        int               `json:"request_timeout"`
+	AnthropicAPIKey       string            `json:"anthropic_api_key,omitempty"`
+	CustomHeaders         map[string]string `json:"custom_headers,omitempty"` // 自定义请求头
+	Enabled               bool              `json:"enabled"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 // TokenStats represents token usage statistics

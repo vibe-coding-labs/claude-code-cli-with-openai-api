@@ -26,11 +26,34 @@ import {
   ThunderboltOutlined,
   ReloadOutlined,
   CopyOutlined,
+  MinusCircleOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
 const { TextArea } = Input;
 const { TabPane } = Tabs;
+const { Option } = Select;
+
+// 常用的iFlow模型列表
+const IFLOW_MODELS = [
+  { value: 'tstars2.0', label: 'TStars-2.0 (128K/64K)', description: '淘宝星辰大模型' },
+  { value: 'qwen3-coder', label: 'Qwen3-Coder-Plus (1M/64K)', description: '代码生成' },
+  { value: 'qwen3-max', label: 'Qwen3-Max (256K/32K)', description: '智能体编程' },
+  { value: 'deepseek-v3', label: 'DeepSeek-V3 (128K/32K)', description: '推理能力强' },
+  { value: 'deepseek-r1', label: 'DeepSeek-R1 (128K/32K)', description: '推理模型' },
+  { value: 'kimi-k2', label: 'Kimi-K2 (128K/64K)', description: 'Agent能力' },
+  { value: 'glm-4.6', label: 'GLM-4.6 (200K/128K)', description: '支持thinking' },
+];
+
+// Claude模型名称列表
+const CLAUDE_MODELS = [
+  'claude-3-opus-20240229',
+  'claude-3-5-sonnet-20241022',
+  'claude-3-5-haiku-20241022',
+  'claude-3-haiku-20240307',
+  'claude-3-sonnet-20240229',
+];
 
 interface Config {
   id: string;
@@ -41,6 +64,8 @@ interface Config {
   big_model: string;
   middle_model: string;
   small_model: string;
+  model_mappings?: Record<string, string>;
+  custom_headers?: Record<string, string>;
   max_tokens_limit: number;
   request_timeout: number;
   enabled: boolean;
@@ -181,6 +206,8 @@ const ConfigDetail: React.FC = () => {
         big_model: config.big_model,
         middle_model: config.middle_model,
         small_model: config.small_model,
+        model_mappings: config.model_mappings || {},
+        custom_headers: config.custom_headers || {},
         max_tokens_limit: config.max_tokens_limit,
         request_timeout: config.request_timeout,
         enabled: config.enabled,
@@ -316,6 +343,17 @@ const ConfigDetail: React.FC = () => {
               <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
               <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
               <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
+              {config.model_mappings && Object.keys(config.model_mappings).length > 0 && (
+                <Descriptions.Item label="高级模型映射" span={2}>
+                  <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                    {Object.entries(config.model_mappings).map(([claude, target]) => (
+                      <li key={claude}>
+                        <code>{claude}</code> → <code>{target}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
               <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
               <Descriptions.Item label="创建时间">
@@ -449,23 +487,113 @@ claude`}
           <Form.Item
             name="big_model"
             label="大模型 (Opus)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
+            rules={[{ required: true, message: '请选择或输入模型' }]}
+            extra="映射Claude Opus系列模型"
           >
-            <Input />
+            <Select
+              showSearch
+              allowClear
+              placeholder="选择或输入模型"
+              optionFilterProp="children"
+            >
+              {IFLOW_MODELS.map(model => (
+                <Option key={model.value} value={model.value}>
+                  {model.label} - {model.description}
+                </Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item
             name="middle_model"
             label="中模型 (Sonnet)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
+            rules={[{ required: true, message: '请选择或输入模型' }]}
+            extra="映射Claude Sonnet系列模型"
           >
-            <Input />
+            <Select
+              showSearch
+              allowClear
+              placeholder="选择或输入模型"
+              optionFilterProp="children"
+            >
+              {IFLOW_MODELS.map(model => (
+                <Option key={model.value} value={model.value}>
+                  {model.label} - {model.description}
+                </Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item
             name="small_model"
             label="小模型 (Haiku)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
+            rules={[{ required: true, message: '请选择或输入模型' }]}
+            extra="映射Claude Haiku系列模型"
           >
-            <Input />
+            <Select
+              showSearch
+              allowClear
+              placeholder="选择或输入模型"
+              optionFilterProp="children"
+            >
+              {IFLOW_MODELS.map(model => (
+                <Option key={model.value} value={model.value}>
+                  {model.label} - {model.description}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item label="高级模型映射">
+            <Form.List name="model_mappings">
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'claude']}
+                        rules={[{ required: true, message: '请选择Claude模型' }]}
+                      >
+                        <Select placeholder="Claude模型" style={{ width: 220 }}>
+                          {CLAUDE_MODELS.map(model => (
+                            <Option key={model} value={model}>{model}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                      <span>→</span>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'target']}
+                        rules={[{ required: true, message: '请选择目标模型' }]}
+                      >
+                        <Select
+                          showSearch
+                          allowClear
+                          placeholder="目标模型"
+                          style={{ width: 200 }}
+                        >
+                          {IFLOW_MODELS.map(model => (
+                            <Option key={model.value} value={model.value}>
+                              {model.label}
+                            </Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                      <Button type="link" danger onClick={() => remove(name)}>
+                        删除
+                      </Button>
+                    </Space>
+                  ))}
+                  <Form.Item>
+                    <Button type="dashed" onClick={() => add()} block>
+                      + 添加映射规则
+                    </Button>
+                  </Form.Item>
+                </>
+              )}
+            </Form.List>
+            <div style={{ color: '#666', fontSize: '12px', marginTop: '8px' }}>
+              提示：高级映射规则优先级高于基本映射，可以为特定的Claude模型指定不同的目标模型
+            </div>
           </Form.Item>
           <Form.Item name="max_tokens_limit" label="最大Token限制">
             <Input type="number" />
