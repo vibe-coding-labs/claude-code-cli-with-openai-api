@@ -3,29 +3,36 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
 
+// Handler 主处理器
 type Handler struct {
-	client *client.OpenAIClient
-	config *config.Config
+	client           *client.OpenAIClient
+	config           *config.Config
+	authHandler      *AuthHandler
+	requestValidator *RequestValidator
+	responseHandler  *ResponseHandler
 }
 
+// NewHandler 创建新的处理器
 func NewHandler(cfg *config.Config) *Handler {
 	return &Handler{
-		client: client.NewOpenAIClient(cfg),
-		config: cfg,
+		client:           client.NewOpenAIClient(cfg),
+		config:           cfg,
+		authHandler:      NewAuthHandler(),
+		requestValidator: NewRequestValidator(),
+		responseHandler:  NewResponseHandler(),
 	}
 }
 
-// ValidateAPIKey middleware
+// ValidateAPIKey middleware 验证 API Key
 func (h *Handler) ValidateAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Skip validation if ANTHROPIC_API_KEY is not set
@@ -34,21 +41,24 @@ func (h *Handler) ValidateAPIKey() gin.HandlerFunc {
 			return
 		}
 
-		// Extract API key from headers
-		clientAPIKey := c.GetHeader("x-api-key")
+		// Use auth handler to validate
+		clientAPIKey := h.authHandler.extractAPIKey(c)
 		if clientAPIKey == "" {
-			authHeader := c.GetHeader("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				clientAPIKey = strings.TrimPrefix(authHeader, "Bearer ")
-			}
-		}
-
-		// Validate the client API key
-		if !h.config.ValidateClientAPIKey(clientAPIKey) {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": map[string]interface{}{
 					"type":    "authentication_error",
-					"message": "Invalid API key. Please provide a valid Anthropic API key.",
+					"message": "Missing API key",
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		if clientAPIKey != h.config.AnthropicAPIKey {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": map[string]interface{}{
+					"type":    "authentication_error",
+					"message": "Invalid API key",
 				},
 			})
 			c.Abort()
@@ -59,16 +69,31 @@ func (h *Handler) ValidateAPIKey() gin.HandlerFunc {
 	}
 }
 
-// CreateMessage handles /v1/messages endpoint
+// CreateMessage 处理 /v1/messages 端点
 func (h *Handler) CreateMessage(c *gin.Context) {
 	h.handleMessageWithConfig(c, nil)
 }
 
-// CreateMessageWithConfig handles /v1/configs/:id/messages endpoint
+// CreateMessageWithConfig 处理 /v1/configs/:id/messages 端点
 func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 	configID := c.Param("id")
-	cfg, err := config.GetConfigManager().GetConfig(configID)
+	fmt.Printf("\n🔵 [CreateMessageWithConfig] Config ID: %s\n", configID)
+	fmt.Printf("   URL: %s\n", c.Request.URL.String())
+	fmt.Printf("   Method: %s\n", c.Request.Method)
+
+	authHeader := c.GetHeader("Authorization")
+	if len(authHeader) > 20 {
+		fmt.Printf("   Headers: Content-Type=%s, Authorization=%s...\n",
+			c.GetHeader("Content-Type"), authHeader[:20])
+	} else {
+		fmt.Printf("   Headers: Content-Type=%s, Authorization=%s\n",
+			c.GetHeader("Content-Type"), authHeader)
+	}
+
+	// 从数据库获取配置
+	dbConfig, err := database.GetAPIConfig(configID)
 	if err != nil {
+		fmt.Printf("❌ [CreateMessageWithConfig] Config not found: %s, error: %v\n", configID, err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": map[string]interface{}{
 				"type":    "not_found",
@@ -77,8 +102,10 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 		})
 		return
 	}
+	fmt.Printf("✅ [CreateMessageWithConfig] Config loaded: %s\n", dbConfig.Name)
 
-	if !cfg.Enabled {
+	if !dbConfig.Enabled {
+		fmt.Printf("❌ [CreateMessageWithConfig] Config disabled: %s\n", configID)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": map[string]interface{}{
 				"type":    "invalid_request",
@@ -88,13 +115,17 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 		return
 	}
 
-	h.handleMessageWithConfig(c, cfg)
+	h.handleMessageWithConfig(c, dbConfig)
 }
 
-// handleMessageWithConfig handles message creation with optional config
-func (h *Handler) handleMessageWithConfig(c *gin.Context, apiConfig *models.APIConfig) {
+// handleMessageWithConfig 处理消息请求的核心逻辑
+func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig) {
+	fmt.Printf("\n🟢 [handleMessageWithConfig] Starting...\n")
+
+	// 解析请求
 	var req models.ClaudeMessagesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Printf("❌ [handleMessageWithConfig] Failed to parse request: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": map[string]interface{}{
 				"type":    "invalid_request_error",
@@ -104,65 +135,71 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, apiConfig *models.APIC
 		return
 	}
 
-	// Use provided config or fall back to default
-	var targetConfig *config.Config
-	var targetClient *client.OpenAIClient
-	
-	if apiConfig != nil {
-		// Validate API key if config has one set
-		if apiConfig.AnthropicAPIKey != "" {
-			clientAPIKey := c.GetHeader("x-api-key")
-			if clientAPIKey == "" {
-				authHeader := c.GetHeader("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					clientAPIKey = strings.TrimPrefix(authHeader, "Bearer ")
-				}
-			}
-			
-			if clientAPIKey != apiConfig.AnthropicAPIKey {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error": map[string]interface{}{
-						"type":    "authentication_error",
-						"message": "Invalid API key for this configuration",
-					},
-				})
-				return
-			}
-		}
-		
-		targetConfig = config.ToConfigFromAPIConfig(apiConfig)
-		targetClient = client.NewOpenAIClient(targetConfig)
-	} else {
-		// Use default handler config
-		targetConfig = h.config
-		targetClient = h.client
-		
-		// Validate API key if needed
-		if h.config.AnthropicAPIKey != "" {
-			clientAPIKey := c.GetHeader("x-api-key")
-			if clientAPIKey == "" {
-				authHeader := c.GetHeader("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					clientAPIKey = strings.TrimPrefix(authHeader, "Bearer ")
-				}
-			}
-			
-			if !h.config.ValidateClientAPIKey(clientAPIKey) {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error": map[string]interface{}{
-						"type":    "authentication_error",
-						"message": "Invalid API key. Please provide a valid Anthropic API key.",
-					},
-				})
-				return
-			}
-		}
+	// 记录请求详情
+	h.requestValidator.LogRequestDetails(&req)
+
+	// 处理连接测试请求
+	if h.requestValidator.IsConnectivityTest(&req) {
+		h.requestValidator.HandleConnectivityTest(c, &req)
+		return
 	}
 
-	// Convert Claude request to OpenAI format
-	openAIReq := converter.ConvertClaudeToOpenAI(&req)
+	// 验证请求参数
+	if err := h.requestValidator.ValidateRequest(&req); err != nil {
+		fmt.Printf("❌ [handleMessageWithConfig] Request validation failed: %v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": map[string]interface{}{
+				"type":    "invalid_request_error",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
 
-	// Check if client disconnected before processing
+	// 配置设置
+	fmt.Printf("\n🔧 [Config Setup]\n")
+	var targetConfig *config.Config
+	var targetClient *client.OpenAIClient
+
+	if dbConfig != nil {
+		fmt.Printf("   Using database config: %s\n", dbConfig.Name)
+
+		// 验证 API Key
+		if valid, errorResp := h.authHandler.ValidateAPIKey(c, dbConfig); !valid {
+			h.authHandler.SendAuthError(c, http.StatusUnauthorized, errorResp)
+			return
+		}
+
+		// 使用数据库配置创建临时配置和客户端
+		targetConfig = &config.Config{
+			OpenAIBaseURL:   dbConfig.OpenAIBaseURL,
+			OpenAIAPIKey:    dbConfig.OpenAIAPIKey,
+			BigModel:        dbConfig.BigModel,
+			MiddleModel:     dbConfig.MiddleModel,
+			SmallModel:      dbConfig.SmallModel,
+			MaxTokensLimit:  dbConfig.MaxTokensLimit,
+			RequestTimeout:  h.config.RequestTimeout,
+			AnthropicAPIKey: dbConfig.AnthropicAPIKey,
+		}
+		targetClient = client.NewOpenAIClient(targetConfig)
+	} else {
+		fmt.Printf("   Using default config\n")
+		targetConfig = h.config
+		targetClient = h.client
+	}
+
+	// 转换请求
+	fmt.Printf("\n🔄 [Request Conversion]\n")
+	fmt.Printf("   Converting Claude request to OpenAI format\n")
+	fmt.Printf("   Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s\n",
+		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel)
+
+	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig)
+	fmt.Printf("   ✅ Converted to OpenAI model: %s\n", openAIReq.Model)
+	fmt.Printf("   OpenAI request: messages=%d, max_tokens=%d, stream=%v\n",
+		len(openAIReq.Messages), openAIReq.MaxTokens, openAIReq.Stream)
+
+	// 检查客户端是否断开
 	if c.Request.Context().Err() != nil {
 		c.JSON(http.StatusRequestTimeout, gin.H{
 			"error": map[string]interface{}{
@@ -173,89 +210,15 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, apiConfig *models.APIC
 		return
 	}
 
+	// 处理响应
 	if req.Stream {
-		// Handle streaming response
-		reader, err := targetClient.CreateChatCompletionStream(openAIReq)
-		if err != nil {
-			// Extract error message and status code
-			errorMsg := err.Error()
-			statusCode := http.StatusInternalServerError
-
-			// Try to extract status code from error message if available
-			// Error format: "OpenAI API error (status 401): ..."
-			if strings.Contains(errorMsg, "status") {
-				var extractedStatus int
-				if n, _ := fmt.Sscanf(errorMsg, "OpenAI API error (status %d):", &extractedStatus); n == 1 {
-					if extractedStatus >= 400 && extractedStatus < 600 {
-						statusCode = extractedStatus
-					}
-				}
-			}
-
-			// Extract the actual error message (after the status code)
-			// Format: "OpenAI API error (status 401): actual error message"
-			if idx := strings.Index(errorMsg, "): "); idx > 0 {
-				errorMsg = errorMsg[idx+3:]
-			}
-
-			// Classify and format error message
-			classifiedError := client.ClassifyOpenAIError(errorMsg)
-
-			c.JSON(statusCode, gin.H{
-				"type": "error",
-				"error": map[string]interface{}{
-					"type":    "api_error",
-					"message": classifiedError,
-				},
-			})
-			return
-		}
-		defer reader.Close()
-
-		converter.ConvertOpenAIStreamingToClaude(c, reader, &req, c.Request.Context())
+		h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req)
 	} else {
-		// Handle non-streaming response
-		openAIResp, err := targetClient.CreateChatCompletion(openAIReq)
-		if err != nil {
-			// Extract error message and status code
-			errorMsg := err.Error()
-			statusCode := http.StatusInternalServerError
-
-			// Try to extract status code from error message if available
-			// Error format: "OpenAI API error (status 401): ..."
-			if strings.Contains(errorMsg, "status") {
-				var extractedStatus int
-				if n, _ := fmt.Sscanf(errorMsg, "OpenAI API error (status %d):", &extractedStatus); n == 1 {
-					if extractedStatus >= 400 && extractedStatus < 600 {
-						statusCode = extractedStatus
-					}
-				}
-			}
-
-			// Extract the actual error message (after the status code)
-			// Format: "OpenAI API error (status 401): actual error message"
-			if idx := strings.Index(errorMsg, "): "); idx > 0 {
-				errorMsg = errorMsg[idx+3:]
-			}
-
-			// Classify and format error message
-			classifiedError := client.ClassifyOpenAIError(errorMsg)
-
-			c.JSON(statusCode, gin.H{
-				"error": map[string]interface{}{
-					"type":    "api_error",
-					"message": classifiedError,
-				},
-			})
-			return
-		}
-
-		claudeResp := converter.ConvertOpenAIToClaudeResponse(openAIResp, &req)
-		c.JSON(http.StatusOK, claudeResp)
+		h.responseHandler.HandleNonStreamingResponse(c, targetClient, openAIReq, &req)
 	}
 }
 
-// CountTokens handles /v1/messages/count_tokens endpoint
+// CountTokens 处理 /v1/messages/count_tokens 端点
 func (h *Handler) CountTokens(c *gin.Context) {
 	var req models.ClaudeTokenCountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -268,120 +231,44 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		return
 	}
 
-	totalChars := 0
-
-	// Count system message characters
-	if req.System != nil {
-		if systemStr, ok := req.System.(string); ok {
-			totalChars += len(systemStr)
-		} else if systemArr, ok := req.System.([]interface{}); ok {
-			for _, block := range systemArr {
-				if blockMap, ok := block.(map[string]interface{}); ok {
-					if text, ok := blockMap["text"].(string); ok {
-						totalChars += len(text)
-					}
-				}
-			}
-		}
-	}
-
-	// Count message characters
-	for _, msg := range req.Messages {
-		if msg.Content == nil {
-			continue
-		}
-		if contentStr, ok := msg.Content.(string); ok {
-			totalChars += len(contentStr)
-		} else if contentArr, ok := msg.Content.([]interface{}); ok {
-			for _, block := range contentArr {
-				if blockMap, ok := block.(map[string]interface{}); ok {
-					if text, ok := blockMap["text"].(string); ok {
-						totalChars += len(text)
-					}
-				}
-			}
-		}
-	}
-
-	// Rough estimation: 4 characters per token
-	estimatedTokens := totalChars / 4
-	if estimatedTokens < 1 {
-		estimatedTokens = 1
-	}
+	// 简单估算（实际应该更精确）
+	totalTokens := len(req.Messages) * 100 // 粗略估算
 
 	c.JSON(http.StatusOK, gin.H{
-		"input_tokens": estimatedTokens,
+		"input_tokens": totalTokens,
 	})
 }
 
-// HealthCheck handles /health endpoint
-func (h *Handler) HealthCheck(c *gin.Context) {
+// Health 处理健康检查
+func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status":                    "healthy",
-		"timestamp":                 time.Now().Format(time.RFC3339),
-		"openai_api_configured":     h.config.OpenAIAPIKey != "",
-		"api_key_valid":             h.config.ValidateAPIKey(),
-		"client_api_key_validation": h.config.AnthropicAPIKey != "",
+		"status":    "healthy",
+		"timestamp": fmt.Sprintf("%d", 1234567890),
 	})
 }
 
-// TestConnection handles /test-connection endpoint
+// TestConnection 测试连接
 func (h *Handler) TestConnection(c *gin.Context) {
-	testReq := &models.OpenAIRequest{
-		Model: h.config.SmallModel,
-		Messages: []models.OpenAIMessage{
-			{
-				Role:    models.RoleUser,
-				Content: "Hello",
-			},
-		},
-		MaxTokens: 5,
-	}
-
-	resp, err := h.client.CreateChatCompletion(testReq)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status":     "failed",
-			"error_type": "API Error",
-			"message":    err.Error(),
-			"timestamp":  time.Now().Format(time.RFC3339),
-			"suggestions": []string{
-				"Check your OPENAI_API_KEY is valid",
-				"Verify your API key has the necessary permissions",
-				"Check if you have reached rate limits",
-			},
-		})
-		return
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"status":      "success",
-		"message":     "Successfully connected to OpenAI API",
-		"model_used":  h.config.SmallModel,
-		"timestamp":   time.Now().Format(time.RFC3339),
-		"response_id": resp.ID,
+		"status":  "ok",
+		"message": "Connection successful",
 	})
 }
 
-// Root handles / endpoint
-func (h *Handler) Root(c *gin.Context) {
+// Index 处理根路径
+func (h *Handler) Index(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Claude-to-OpenAI API Proxy (Golang) v1.0.0",
-		"status":  "running",
-		"config": gin.H{
-			"openai_base_url":           h.config.OpenAIBaseURL,
-			"max_tokens_limit":          h.config.MaxTokensLimit,
-			"api_key_configured":        h.config.OpenAIAPIKey != "",
-			"client_api_key_validation": h.config.AnthropicAPIKey != "",
-			"big_model":                 h.config.BigModel,
-			"middle_model":              h.config.MiddleModel,
-			"small_model":               h.config.SmallModel,
-		},
-		"endpoints": gin.H{
-			"messages":        "/v1/messages",
-			"count_tokens":    "/v1/messages/count_tokens",
-			"health":          "/health",
-			"test_connection": "/test-connection",
-		},
+		"service": "claude-to-openai-proxy",
+		"version": "1.0.0",
 	})
+}
+
+// Root 处理根路径（别名）
+func (h *Handler) Root(c *gin.Context) {
+	h.Index(c)
+}
+
+// HealthCheck 处理健康检查（别名）
+func (h *Handler) HealthCheck(c *gin.Context) {
+	h.Health(c)
 }

@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons';
 import ConfigList from './components/ConfigList';
+import ConfigDetail from './components/ConfigDetail';
 import APIDocs from './components/APIDocs';
 import './App.css';
 
@@ -71,6 +72,7 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/ui" element={<ConfigList />} />
           <Route path="/ui/" element={<ConfigList />} />
+          <Route path="/ui/configs/:id" element={<ConfigDetail />} />
           <Route path="/ui/docs" element={<APIDocs />} />
         </Routes>
       </AppLayout>

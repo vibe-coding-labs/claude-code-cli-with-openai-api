@@ -1,6 +1,13 @@
 # Temporary data directory
 data/tmp/
 
+# Reference projects
+data/claude-code-openai-wrapper/
+data/claude-code-api/
+data/claude2/
+data/claude-code-gpt-5/
+data/claude-relay-service/
+
 # ============================================
 # Go
 # ============================================

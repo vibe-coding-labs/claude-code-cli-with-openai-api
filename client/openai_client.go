@@ -110,6 +110,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		errorMsg := string(body)
 		classifiedError := ClassifyOpenAIError(errorMsg)
 		// Return error with status code information for proper error handling

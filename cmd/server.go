@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/fatih/color"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/handler"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
@@ -80,6 +83,25 @@ func runServer(cmd *cobra.Command, args []string) error {
 		os.Setenv("SMALL_MODEL", smallModel)
 	}
 
+	// Initialize database
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = filepath.Join(".", "data", "proxy.db")
+	}
+	if err := database.InitDB(dbPath); err != nil {
+		color.New(color.FgRed, color.Bold).Print("❌ Database Error: ")
+		color.New(color.FgRed).Println(err)
+		return err
+	}
+	defer database.CloseDB()
+
+	// Initialize encryption
+	if err := database.InitEncryption(); err != nil {
+		color.New(color.FgRed, color.Bold).Print("❌ Encryption Error: ")
+		color.New(color.FgRed).Println(err)
+		return err
+	}
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -106,14 +128,93 @@ func runServer(cmd *cobra.Command, args []string) error {
 	router.GET("/health", h.HealthCheck)
 	router.GET("/test-connection", h.TestConnection)
 
-	// Protected routes
-	api := router.Group("/v1")
-	api.Use(h.ValidateAPIKey())
+	// Standard Claude API routes - 标准 Anthropic API 路径（/v1/messages）
+	// Claude CLI 使用这些标准路径，不强制验证
+	v1 := router.Group("/v1")
 	{
-		api.POST("/messages", h.CreateMessage)
-		api.POST("/messages/count_tokens", h.CountTokens)
-		// Multi-config support
-		api.POST("/configs/:id/messages", h.CreateMessageWithConfig)
+		v1.POST("/messages", h.CreateMessage)
+		v1.POST("/messages/count_tokens", h.CountTokens)
+
+		// Claude CLI 需要的认证端点
+		v1.GET("/me", h.GetMe)
+		v1.GET("/models", h.GetModels)
+		v1.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+	}
+
+	// Per-config Claude API endpoints (每个配置独立的路径)
+	// 使用路径: /proxy/:id/v1/messages
+	proxyGroup := router.Group("/proxy/:id/v1")
+	{
+		proxyGroup.POST("/messages", h.CreateMessageWithConfig)
+		proxyGroup.POST("/messages/count_tokens", h.CountTokens)
+
+		// Claude CLI 需要的认证端点
+		proxyGroup.GET("/me", h.GetMe)
+		proxyGroup.GET("/models", h.GetModels)
+		proxyGroup.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+	}
+
+	// Config management API (unprotected for UI access)
+	configAPI := router.Group("/api")
+	{
+		// Config CRUD
+		configAPI.GET("/configs", h.GetAllConfigs)
+		configAPI.GET("/configs/:id", h.GetConfig)
+		configAPI.POST("/configs", h.CreateConfig)
+		configAPI.PUT("/configs/:id", h.UpdateConfig)
+		configAPI.DELETE("/configs/:id", h.DeleteConfig)
+
+		// Stats and logs
+		configAPI.GET("/configs/:id/stats", h.GetConfigStats)
+		configAPI.GET("/configs/:id/logs", h.GetConfigLogs)
+
+		// Test endpoint
+		configAPI.POST("/configs/:id/test", h.TestConfig)
+	}
+
+	// Serve UI static files
+	frontendBuildPath := filepath.Join(".", "frontend", "build")
+	if _, err := os.Stat(frontendBuildPath); err == nil {
+		// Serve static files
+		router.GET("/ui", func(c *gin.Context) {
+			c.Redirect(http.StatusMovedPermanently, "/ui/")
+		})
+
+		router.GET("/ui/*filepath", func(c *gin.Context) {
+			path := c.Param("filepath")
+
+			// Handle root path
+			if path == "/" || path == "" {
+				c.File(filepath.Join(frontendBuildPath, "index.html"))
+				return
+			}
+
+			// Remove leading slash
+			if len(path) > 0 && path[0] == '/' {
+				path = path[1:]
+			}
+
+			// Handle static files
+			if len(path) > 7 && path[:7] == "static/" {
+				staticPath := filepath.Join(frontendBuildPath, path)
+				if info, err := os.Stat(staticPath); err == nil && !info.IsDir() {
+					c.File(staticPath)
+					return
+				}
+				c.Status(http.StatusNotFound)
+				return
+			}
+
+			// Handle other files in build root
+			fullPath := filepath.Join(frontendBuildPath, path)
+			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+				c.File(fullPath)
+				return
+			}
+
+			// For all other paths (React Router routes), serve index.html
+			c.File(filepath.Join(frontendBuildPath, "index.html"))
+		})
 	}
 
 	// Find available port

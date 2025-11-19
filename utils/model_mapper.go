@@ -52,8 +52,11 @@ import (
 //	MapClaudeModelToOpenAI("unknown-model")
 //	// Returns: "gpt-4o" (defaults to BigModel for unknown models)
 func MapClaudeModelToOpenAI(claudeModel string) string {
-	cfg := config.GlobalConfig
+	return MapClaudeModelToOpenAIWithConfig(claudeModel, config.GlobalConfig)
+}
 
+// MapClaudeModelToOpenAIWithConfig maps Claude model names to OpenAI model names using a specific config
+func MapClaudeModelToOpenAIWithConfig(claudeModel string, cfg *config.Config) string {
 	modelLower := strings.ToLower(claudeModel)
 
 	// If it's already an OpenAI model, return as-is

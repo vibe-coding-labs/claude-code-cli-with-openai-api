@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Table,
   Button,
@@ -8,41 +9,50 @@ import {
   message,
   Card,
   Typography,
-  Tooltip,
-  Switch,
+  Modal,
+  Form,
+  Input,
+  InputNumber,
 } from 'antd';
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  ThunderboltOutlined,
-  CopyOutlined,
-  StarOutlined,
-  StarFilled,
+  EyeOutlined,
 } from '@ant-design/icons';
-import { configAPI } from '../services/api';
-import { APIConfig } from '../types/api';
-import ConfigModal from './ConfigModal';
+import axios from 'axios';
+
+const { TextArea } = Input;
 
 const { Title } = Typography;
 
+interface Config {
+  id: string;
+  name: string;
+  description: string;
+  openai_api_key_masked: string;
+  openai_base_url: string;
+  big_model: string;
+  middle_model: string;
+  small_model: string;
+  enabled: boolean;
+  created_at: string;
+}
+
 const ConfigList: React.FC = () => {
-  const [configs, setConfigs] = useState<APIConfig[]>([]);
-  const [defaultConfigId, setDefaultConfigId] = useState<string>('');
+  const navigate = useNavigate();
+  const [configs, setConfigs] = useState<Config[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingConfig, setEditingConfig] = useState<APIConfig | null>(null);
+  const [form] = Form.useForm();
 
   const loadConfigs = async () => {
     setLoading(true);
     try {
-      const response = await configAPI.listConfigs();
-      setConfigs(response.configs);
-      setDefaultConfigId(response.default_config_id || '');
+      const response = await axios.get('/api/configs');
+      setConfigs(response.data.configs || []);
     } catch (error: any) {
-      message.error('加载配置失败: ' + (error.response?.data?.error?.message || error.message));
+      message.error('加载配置失败');
     } finally {
       setLoading(false);
     }
@@ -53,70 +63,29 @@ const ConfigList: React.FC = () => {
   }, []);
 
   const handleCreate = () => {
-    setEditingConfig(null);
-    setModalVisible(true);
-  };
-
-  const handleEdit = (config: APIConfig) => {
-    setEditingConfig(config);
+    form.resetFields();
     setModalVisible(true);
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await configAPI.deleteConfig(id);
+      await axios.delete(`/api/configs/${id}`);
       message.success('配置已删除');
       loadConfigs();
     } catch (error: any) {
-      message.error('删除配置失败: ' + (error.response?.data?.error?.message || error.message));
+      message.error('删除配置失败');
     }
   };
 
-  const handleTest = async (id: string) => {
+  const handleSubmit = async (values: any) => {
     try {
-      const response = await configAPI.testConfig(id);
-      if (response.status === 'success') {
-        message.success('测试成功: ' + response.message);
-      } else {
-        message.error('测试失败: ' + (response.error || response.message));
-      }
+      await axios.post('/api/configs', values);
+      message.success('配置创建成功');
+      setModalVisible(false);
+      form.resetFields();
       loadConfigs();
     } catch (error: any) {
-      message.error('测试失败: ' + (error.response?.data?.error?.message || error.message));
-    }
-  };
-
-  const handleSetDefault = async (id: string) => {
-    try {
-      await configAPI.setDefaultConfig(id);
-      message.success('默认配置已设置');
-      loadConfigs();
-    } catch (error: any) {
-      message.error('设置默认配置失败: ' + (error.response?.data?.error?.message || error.message));
-    }
-  };
-
-  const handleCopyClaudeConfig = async (id: string, name: string) => {
-    try {
-      const claudeConfig = await configAPI.getClaudeConfig(id);
-      const configText = `ANTHROPIC_BASE_URL=${claudeConfig.ANTHROPIC_BASE_URL}\nANTHROPIC_API_KEY=${claudeConfig.ANTHROPIC_API_KEY}`;
-      await navigator.clipboard.writeText(configText);
-      message.success('Claude配置已复制到剪贴板');
-    } catch (error: any) {
-      message.error('获取Claude配置失败: ' + (error.response?.data?.error?.message || error.message));
-    }
-  };
-
-  const handleToggleEnabled = async (config: APIConfig, enabled: boolean) => {
-    try {
-      await configAPI.updateConfig(config.id, {
-        ...config,
-        enabled,
-      });
-      message.success(enabled ? '配置已启用' : '配置已禁用');
-      loadConfigs();
-    } catch (error: any) {
-      message.error('更新配置失败: ' + (error.response?.data?.error?.message || error.message));
+      message.error('创建配置失败');
     }
   };
 
@@ -125,14 +94,9 @@ const ConfigList: React.FC = () => {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
-      render: (text: string, record: APIConfig) => (
+      render: (text: string, record: Config) => (
         <Space>
           {text}
-          {record.id === defaultConfigId && (
-            <Tag color="gold" icon={<StarFilled />}>
-              默认
-            </Tag>
-          )}
           {!record.enabled && <Tag color="default">已禁用</Tag>}
         </Space>
       ),
@@ -144,31 +108,15 @@ const ConfigList: React.FC = () => {
       ellipsis: true,
     },
     {
-      title: '状态',
-      key: 'status',
-      render: (_: any, record: APIConfig) => {
-        if (record.last_test_status === 'success') {
-          return (
-            <Tag color="success" icon={<CheckCircleOutlined />}>
-              测试通过
-            </Tag>
-          );
-        } else if (record.last_test_status === 'failed') {
-          return (
-            <Tooltip title={record.last_test_error}>
-              <Tag color="error" icon={<CloseCircleOutlined />}>
-                测试失败
-              </Tag>
-            </Tooltip>
-          );
-        }
-        return <Tag>未测试</Tag>;
-      },
+      title: 'Base URL',
+      dataIndex: 'openai_base_url',
+      key: 'openai_base_url',
+      ellipsis: true,
     },
     {
-      title: '模型',
+      title: '模型配置',
       key: 'models',
-      render: (_: any, record: APIConfig) => (
+      render: (_: any, record: Config) => (
         <Space direction="vertical" size="small">
           <Tag>大: {record.big_model}</Tag>
           <Tag>中: {record.middle_model}</Tag>
@@ -177,59 +125,35 @@ const ConfigList: React.FC = () => {
       ),
     },
     {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (text: string) => new Date(text).toLocaleString('zh-CN'),
+    },
+    {
       title: '操作',
       key: 'action',
-      width: 300,
-      render: (_: any, record: APIConfig) => (
+      width: 200,
+      render: (_: any, record: Config) => (
         <Space>
-          <Tooltip title="编辑">
-            <Button
-              type="link"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
-            />
-          </Tooltip>
-          <Tooltip title="测试">
-            <Button
-              type="link"
-              icon={<ThunderboltOutlined />}
-              onClick={() => handleTest(record.id)}
-            />
-          </Tooltip>
-          <Tooltip title="复制Claude配置">
-            <Button
-              type="link"
-              icon={<CopyOutlined />}
-              onClick={() => handleCopyClaudeConfig(record.id, record.name)}
-            />
-          </Tooltip>
-          {record.id !== defaultConfigId && (
-            <Tooltip title="设为默认">
-              <Button
-                type="link"
-                icon={<StarOutlined />}
-                onClick={() => handleSetDefault(record.id)}
-              />
-            </Tooltip>
-          )}
-          <Switch
-            checked={record.enabled}
-            onChange={(checked) => handleToggleEnabled(record, checked)}
-            size="small"
-          />
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/ui/configs/${record.id}`)}
+          >
+            详情
+          </Button>
           <Popconfirm
             title="确定要删除这个配置吗？"
             onConfirm={() => handleDelete(record.id)}
             okText="确定"
             cancelText="取消"
           >
-            <Tooltip title="删除">
-              <Button
-                type="link"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Tooltip>
+            <Button
+              type="link"
+              danger
+              icon={<DeleteOutlined />}
+            />
           </Popconfirm>
         </Space>
       ),
@@ -257,19 +181,71 @@ const ConfigList: React.FC = () => {
         loading={loading}
         pagination={{ pageSize: 10 }}
       />
-      <ConfigModal
-        visible={modalVisible}
-        config={editingConfig}
-        onCancel={() => {
-          setModalVisible(false);
-          setEditingConfig(null);
-        }}
-        onSuccess={() => {
-          setModalVisible(false);
-          setEditingConfig(null);
-          loadConfigs();
-        }}
-      />
+      <Modal
+        title="新建配置"
+        open={modalVisible}
+        onCancel={() => setModalVisible(false)}
+        onOk={() => form.submit()}
+        width={600}
+      >
+        <Form form={form} onFinish={handleSubmit} layout="vertical">
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: '请输入名称' }]}
+          >
+            <Input placeholder="例如: iFlow API" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <TextArea rows={3} placeholder="配置描述" />
+          </Form.Item>
+          <Form.Item
+            name="openai_api_key"
+            label="API Key"
+            rules={[{ required: true, message: '请输入API Key' }]}
+          >
+            <Input.Password placeholder="sk-xxx" />
+          </Form.Item>
+          <Form.Item
+            name="openai_base_url"
+            label="Base URL"
+            rules={[{ required: true, message: '请输入Base URL' }]}
+            initialValue="https://api.openai.com/v1"
+          >
+            <Input placeholder="https://api.openai.com/v1" />
+          </Form.Item>
+          <Form.Item
+            name="big_model"
+            label="大模型 (Opus)"
+            rules={[{ required: true, message: '请输入模型名称' }]}
+            initialValue="gpt-4o"
+          >
+            <Input placeholder="gpt-4o" />
+          </Form.Item>
+          <Form.Item
+            name="middle_model"
+            label="中模型 (Sonnet)"
+            rules={[{ required: true, message: '请输入模型名称' }]}
+            initialValue="gpt-4o"
+          >
+            <Input placeholder="gpt-4o" />
+          </Form.Item>
+          <Form.Item
+            name="small_model"
+            label="小模型 (Haiku)"
+            rules={[{ required: true, message: '请输入模型名称' }]}
+            initialValue="gpt-4o-mini"
+          >
+            <Input placeholder="gpt-4o-mini" />
+          </Form.Item>
+          <Form.Item name="max_tokens_limit" label="最大Token限制" initialValue={4096}>
+            <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="request_timeout" label="请求超时(秒)" initialValue={90}>
+            <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Card>
   );
 };

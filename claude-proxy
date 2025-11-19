@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Claude CLI Proxy Wrapper
+# 这个脚本确保环境变量正确传递给 Claude CLI
+
+BASE_URL="http://localhost:8082/proxy/8fccf7f4-392d-4351-8382-c7ffc1a9de76"
+
+# 使用 env 命令确保环境变量被设置
+exec env \
+  ANTHROPIC_BASE_URL="$BASE_URL" \
+  claude "$@"

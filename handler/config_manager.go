@@ -1,0 +1,334 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+)
+
+// GetAllConfigs returns all API configurations
+func (h *Handler) GetAllConfigs(c *gin.Context) {
+	configs, err := database.GetAllAPIConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get configs: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"configs": configs,
+	})
+}
+
+// GetConfig returns a specific API configuration
+func (h *Handler) GetConfig(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	config, err := database.GetAPIConfig(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Config not found: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"config": config,
+	})
+}
+
+// CreateConfig creates a new API configuration
+func (h *Handler) CreateConfig(c *gin.Context) {
+	var config database.APIConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid request: %v", err),
+		})
+		return
+	}
+
+	// Validate required fields
+	if config.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Name is required",
+		})
+		return
+	}
+
+	if config.OpenAIAPIKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "OpenAI API Key is required",
+		})
+		return
+	}
+
+	if config.OpenAIBaseURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "OpenAI Base URL is required",
+		})
+		return
+	}
+
+	// Set defaults
+	if config.MaxTokensLimit == 0 {
+		config.MaxTokensLimit = 4096
+	}
+	if config.RequestTimeout == 0 {
+		config.RequestTimeout = 90
+	}
+	if config.BigModel == "" {
+		config.BigModel = "gpt-4o"
+	}
+	if config.MiddleModel == "" {
+		config.MiddleModel = "gpt-4o"
+	}
+	if config.SmallModel == "" {
+		config.SmallModel = "gpt-4o-mini"
+	}
+	// Enable by default
+	config.Enabled = true
+
+	// Create config
+	if err := database.CreateAPIConfig(&config); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to create config: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Config created successfully",
+		"id":      config.ID,
+	})
+}
+
+// UpdateConfig updates an existing API configuration
+func (h *Handler) UpdateConfig(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	var config database.APIConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid request: %v", err),
+		})
+		return
+	}
+
+	config.ID = id
+
+	// Update config
+	if err := database.UpdateAPIConfig(&config); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to update config: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Config updated successfully",
+	})
+}
+
+// DeleteConfig deletes an API configuration
+func (h *Handler) DeleteConfig(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	if err := database.DeleteAPIConfig(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to delete config: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Config deleted successfully",
+	})
+}
+
+// GetConfigStats returns statistics for a config
+func (h *Handler) GetConfigStats(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	// Get days parameter (default 30)
+	days := 30
+	if daysStr := c.Query("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 {
+			days = d
+		}
+	}
+
+	stats, err := database.GetConfigStats(id, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get stats: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats": stats,
+	})
+}
+
+// GetConfigLogs returns recent request logs for a config
+func (h *Handler) GetConfigLogs(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	// Get limit parameter (default 100)
+	limit := 100
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	logs, err := database.GetRecentLogs(id, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get logs: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logs": logs,
+	})
+}
+
+// TestConfig tests an API configuration by making a simple request
+func (h *Handler) TestConfig(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	// Get config
+	dbConfig, err := database.GetAPIConfig(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Config not found: %v", err),
+		})
+		return
+	}
+
+	// Convert to config.Config
+	cfg := &config.Config{
+		OpenAIAPIKey:    dbConfig.OpenAIAPIKey,
+		OpenAIBaseURL:   dbConfig.OpenAIBaseURL,
+		BigModel:        dbConfig.BigModel,
+		MiddleModel:     dbConfig.MiddleModel,
+		SmallModel:      dbConfig.SmallModel,
+		MaxTokensLimit:  dbConfig.MaxTokensLimit,
+		RequestTimeout:  dbConfig.RequestTimeout,
+		AnthropicAPIKey: dbConfig.AnthropicAPIKey,
+	}
+
+	// Create client
+	testClient := client.NewOpenAIClient(cfg)
+
+	// Make test request
+	startTime := time.Now()
+	testReq := &models.OpenAIRequest{
+		Model: cfg.SmallModel,
+		Messages: []models.OpenAIMessage{
+			{
+				Role:    models.RoleUser,
+				Content: "Hello, this is a test message. Please respond with 'OK'.",
+			},
+		},
+		MaxTokens: 10,
+	}
+
+	resp, err := testClient.CreateChatCompletion(testReq)
+	duration := time.Since(startTime).Milliseconds()
+
+	// Log the request
+	logEntry := &database.RequestLog{
+		ConfigID:   id,
+		Model:      cfg.SmallModel,
+		DurationMs: int(duration),
+		Status:     "success",
+	}
+
+	if err != nil {
+		logEntry.Status = "error"
+		logEntry.ErrorMessage = err.Error()
+		_ = database.LogRequest(logEntry)
+
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status":      "failed",
+			"error":       err.Error(),
+			"duration_ms": duration,
+		})
+		return
+	}
+
+	// Record token usage
+	if resp != nil {
+		logEntry.InputTokens = resp.Usage.PromptTokens
+		logEntry.OutputTokens = resp.Usage.CompletionTokens
+		logEntry.TotalTokens = resp.Usage.TotalTokens
+	}
+	_ = database.LogRequest(logEntry)
+
+	var responseContent string
+	if len(resp.Choices) > 0 {
+		if content, ok := resp.Choices[0].Message.Content.(string); ok {
+			responseContent = content
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "success",
+		"message":     "Test completed successfully",
+		"duration_ms": duration,
+		"model":       cfg.SmallModel,
+		"response":    responseContent,
+		"usage": gin.H{
+			"input_tokens":  logEntry.InputTokens,
+			"output_tokens": logEntry.OutputTokens,
+			"total_tokens":  logEntry.TotalTokens,
+		},
+	})
+}

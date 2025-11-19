@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -97,26 +96,6 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 	}
 }
 
-// StreamingState holds the state for streaming conversion
-type StreamingState struct {
-	mu               sync.Mutex
-	messageID        string
-	textBlockIndex   int
-	toolBlockCounter int
-	currentToolCalls map[int]*ToolCallState
-	finalStopReason  string
-	usage            models.ClaudeUsage
-}
-
-type ToolCallState struct {
-	ID          string
-	Name        string
-	ArgsBuffer  string
-	JSONSent    bool
-	ClaudeIndex int
-	Started     bool
-}
-
 // ConvertOpenAIStreamingToClaude converts OpenAI streaming response to Claude format
 func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context) {
 	state := &StreamingState{
@@ -191,6 +170,10 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 				continue
 			}
 
+			if strings.HasPrefix(line, "data:") {
+				line = "data: " + strings.TrimPrefix(line, "data:")
+			}
+
 			if strings.HasPrefix(line, "data: ") {
 				chunkData := strings.TrimPrefix(line, "data: ")
 				if strings.TrimSpace(chunkData) == "[DONE]" {
@@ -199,7 +182,6 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 
 				var chunk models.OpenAIResponse
 				if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
-					// Log parsing error but continue
 					continue
 				}
 
@@ -338,17 +320,9 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 	sendSSE(c, models.EventMessageStop, map[string]interface{}{
 		"type": models.EventMessageStop,
 	})
-}
 
-func sendSSEError(c *gin.Context, errorType, message string) {
-	errorEvent := map[string]interface{}{
-		"type": "error",
-		"error": map[string]interface{}{
-			"type":    errorType,
-			"message": message,
-		},
-	}
-	sendSSE(c, "error", errorEvent)
+	// Ensure the connection is properly flushed and closed
+	c.Writer.Flush()
 }
 
 func processToolCallDelta(c *gin.Context, state *StreamingState, tcDelta *models.OpenAIToolCall) {
@@ -441,10 +415,4 @@ func processToolCallDelta(c *gin.Context, state *StreamingState, tcDelta *models
 			}
 		}
 	}
-}
-
-func sendSSE(c *gin.Context, event string, data interface{}) {
-	jsonData, _ := json.Marshal(data)
-	c.Writer.Write([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(jsonData))))
-	c.Writer.Flush()
 }

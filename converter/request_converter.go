@@ -11,10 +11,13 @@ import (
 
 // ConvertClaudeToOpenAI converts a Claude API request to OpenAI format
 func ConvertClaudeToOpenAI(claudeReq *models.ClaudeMessagesRequest) *models.OpenAIRequest {
-	cfg := config.GlobalConfig
+	return ConvertClaudeToOpenAIWithConfig(claudeReq, config.GlobalConfig)
+}
 
-	// Map model
-	openAIModel := utils.MapClaudeModelToOpenAI(claudeReq.Model)
+// ConvertClaudeToOpenAIWithConfig converts a Claude API request to OpenAI format using specific config
+func ConvertClaudeToOpenAIWithConfig(claudeReq *models.ClaudeMessagesRequest, cfg *config.Config) *models.OpenAIRequest {
+	// Map model using the provided config
+	openAIModel := utils.MapClaudeModelToOpenAIWithConfig(claudeReq.Model, cfg)
 
 	// Convert messages
 	openAIMessages := []models.OpenAIMessage{}
