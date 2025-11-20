@@ -10,12 +10,12 @@ import {
   Space,
   message,
   Spin,
-  Select,
   Typography,
   Divider,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import axios from 'axios';
+import ModelSelector from './ModelSelector';
 
 const { TextArea } = Input;
 const { Title, Paragraph } = Typography;
@@ -179,31 +179,8 @@ const ConfigEdit: React.FC = () => {
             name="supported_models"
             label="模型列表"
             tooltip="支持的模型列表定义了此OpenAI API配置可以调用的所有模型。在测试页面中，您可以从这个列表中选择模型进行测试。如果不配置此列表，系统将使用上方三个模型映射（大中小模型）作为默认可用模型。您可以：1) 从下拉列表快速选择常用模型（GPT、Claude、Gemini等）；2) 直接输入任意自定义模型名称并按回车添加；3) 使用逗号分隔批量输入多个模型。此配置不影响实际的模型映射调用，仅用于测试和查询场景，让您能够验证API对不同模型的支持情况。"
-            help="可选择常用模型或直接输入自定义模型名称（输入后按回车添加），支持用逗号分隔批量输入"
           >
-            <Select
-              mode="tags"
-              style={{ width: '100%' }}
-              placeholder="选择常用模型或输入自定义模型名称后按回车..."
-              tokenSeparators={[',']}
-              options={[
-                { label: 'GPT-4o', value: 'gpt-4o' },
-                { label: 'GPT-4o mini', value: 'gpt-4o-mini' },
-                { label: 'GPT-4 Turbo', value: 'gpt-4-turbo' },
-                { label: 'GPT-4', value: 'gpt-4' },
-                { label: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
-                { label: 'GPT-3.5 Turbo 16k', value: 'gpt-3.5-turbo-16k' },
-                { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet-20241022' },
-                { label: 'Claude 3 Opus', value: 'claude-3-opus-20240229' },
-                { label: 'Claude 3 Sonnet', value: 'claude-3-sonnet-20240229' },
-                { label: 'Claude 3 Haiku', value: 'claude-3-haiku-20240307' },
-                { label: 'Gemini Pro', value: 'gemini-pro' },
-                { label: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
-                { label: 'Llama 3.1 405B', value: 'llama-3.1-405b' },
-                { label: 'Llama 3.1 70B', value: 'llama-3.1-70b' },
-                { label: 'Qwen2.5 72B', value: 'qwen2.5-72b' },
-              ]}
-            />
+            <ModelSelector />
           </Form.Item>
 
           <Divider />

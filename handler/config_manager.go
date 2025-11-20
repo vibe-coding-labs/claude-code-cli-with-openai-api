@@ -254,17 +254,24 @@ func (h *Handler) TestConfig(c *gin.Context) {
 	resp, err := testClient.CreateChatCompletion(testReq)
 	duration := time.Since(startTime).Milliseconds()
 
+	// Prepare request and response details for logging
+	var responseContent string
+	var requestSummary = "配置测试请求"
+	var responsePreview string
+
 	// Log the request
 	logEntry := &database.RequestLog{
-		ConfigID:   id,
-		Model:      cfg.SmallModel,
-		DurationMs: int(duration),
-		Status:     "success",
+		ConfigID:       id,
+		Model:          cfg.SmallModel,
+		DurationMs:     int(duration),
+		Status:         "success",
+		RequestSummary: requestSummary,
 	}
 
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.ErrorMessage = err.Error()
+		logEntry.ResponsePreview = "测试失败: " + err.Error()
 		_ = database.LogRequest(logEntry)
 
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -275,20 +282,25 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		return
 	}
 
-	// Record token usage
-	if resp != nil {
+	// Extract response content and prepare preview
+	if resp != nil && len(resp.Choices) > 0 {
+		if content, ok := resp.Choices[0].Message.Content.(string); ok {
+			responseContent = content
+			if len(content) > 200 {
+				responsePreview = content[:200] + "..."
+			} else {
+				responsePreview = content
+			}
+		}
+
+		// Record token usage
 		logEntry.InputTokens = resp.Usage.PromptTokens
 		logEntry.OutputTokens = resp.Usage.CompletionTokens
 		logEntry.TotalTokens = resp.Usage.TotalTokens
 	}
-	_ = database.LogRequest(logEntry)
 
-	var responseContent string
-	if len(resp.Choices) > 0 {
-		if content, ok := resp.Choices[0].Message.Content.(string); ok {
-			responseContent = content
-		}
-	}
+	logEntry.ResponsePreview = responsePreview
+	_ = database.LogRequest(logEntry)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":      "success",

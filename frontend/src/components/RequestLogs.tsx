@@ -151,6 +151,13 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
   };
 
   const showLogDetail = (record: RequestLog) => {
+    console.log('显示日志详情', record);
+    
+    if (!record) {
+      message.error('日志记录不存在');
+      return;
+    }
+    
     // Parse request body safely
     let requestBodyDisplay = '';
     if (record.request_body) {
@@ -158,6 +165,7 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
         const parsed = JSON.parse(record.request_body);
         requestBodyDisplay = JSON.stringify(parsed, null, 2);
       } catch (e) {
+        console.warn('请求体解析失败:', e);
         requestBodyDisplay = record.request_body;
       }
     }
@@ -169,6 +177,7 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
         const parsed = JSON.parse(record.response_body);
         responseBodyDisplay = JSON.stringify(parsed, null, 2);
       } catch (e) {
+        console.warn('响应体解析失败:', e);
         responseBodyDisplay = record.response_body;
       }
     }
@@ -288,7 +297,10 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
       key: 'request_summary',
       ellipsis: true,
       width: 200,
-      render: (text: string) => text || '-',
+      render: (text: string) => {
+        if (!text) return <span style={{ color: '#999' }}>-</span>;
+        return <span title={text}>{text}</span>;
+      },
     },
     {
       title: '响应预览',
@@ -296,17 +308,26 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
       key: 'response_preview',
       ellipsis: true,
       width: 250,
-      render: (text: string) => text || '-',
+      render: (text: string) => {
+        if (!text) return <span style={{ color: '#999' }}>-</span>;
+        return <span title={text}>{text}</span>;
+      },
     },
     {
       title: 'Token (输入/输出/总计)',
       key: 'tokens',
       width: 180,
-      render: (_: any, record: RequestLog) => (
-        <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
-          {record.input_tokens} / {record.output_tokens} / {record.total_tokens}
-        </span>
-      ),
+      render: (_: any, record: RequestLog) => {
+        const inputTokens = record.input_tokens || 0;
+        const outputTokens = record.output_tokens || 0;
+        const totalTokens = record.total_tokens || (inputTokens + outputTokens);
+        
+        return (
+          <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
+            {inputTokens} / {outputTokens} / {totalTokens}
+          </span>
+        );
+      },
     },
     {
       title: '耗时(ms)',
@@ -319,8 +340,18 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
       title: '操作',
       key: 'action',
       width: 80,
+      fixed: 'right' as const,
       render: (_: any, record: RequestLog) => (
-        <Button type="link" size="small" onClick={() => showLogDetail(record)}>
+        <Button 
+          type="link" 
+          size="small" 
+          onClick={(e) => {
+            e.stopPropagation();
+            console.log('详情按钮点击', record);
+            showLogDetail(record);
+          }}
+          style={{ padding: 0 }}
+        >
           详情
         </Button>
       ),

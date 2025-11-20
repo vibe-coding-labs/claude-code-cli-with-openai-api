@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日志测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        button {
+            padding: 6px 12px;
+            background-color: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #40a9ff;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 900px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: black;
+        }
+        .detail-section {
+            margin: 15px 0;
+        }
+        .detail-section strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>日志列表测试</h1>
+    <p>测试日志详情按钮点击功能</p>
+    
+    <table id="logsTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>时间</th>
+                <th>状态</th>
+                <th>模型</th>
+                <th>请求摘要</th>
+                <th>响应预览</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="logsBody">
+            <tr><td colspan="7">加载中...</td></tr>
+        </tbody>
+    </table>
+
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>请求详情</h2>
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const configId = 'aba7827a-ffd0-402d-9928-eb80fc3917c7';
+        const modal = document.getElementById('detailModal');
+        const closeBtn = document.getElementsByClassName('close')[0];
+
+        // 关闭模态框
+        closeBtn.onclick = function() {
+            modal.style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // 加载日志列表
+        async function loadLogs() {
+            try {
+                const response = await fetch(`http://localhost:8083/api/configs/${configId}/logs?page=1&page_size=10`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('logsBody');
+                tbody.innerHTML = '';
+                
+                data.logs.forEach(log => {
+                    const row = tbody.insertRow();
+                    row.innerHTML = `
+                        <td>${log.id}</td>
+                        <td>${new Date(log.created_at).toLocaleString('zh-CN')}</td>
+                        <td>${log.status === 'success' ? '✅ 成功' : '❌ 失败'}</td>
+                        <td>${log.model}</td>
+                        <td>${log.request_summary || '-'}</td>
+                        <td>${log.response_preview || '-'}</td>
+                        <td><button onclick="showDetail(${log.id})">详情</button></td>
+                    `;
+                });
+            } catch (error) {
+                console.error('加载日志失败:', error);
+                document.getElementById('logsBody').innerHTML = '<tr><td colspan="7">加载失败</td></tr>';
+            }
+        }
+
+        // 显示详情
+        async function showDetail(logId) {
+            console.log('显示日志详情, ID:', logId);
+            
+            try {
+                const response = await fetch(`http://localhost:8083/api/configs/${configId}/logs?page=1&page_size=100`);
+                const data = await response.json();
+                const log = data.logs.find(l => l.id === logId);
+                
+                if (!log) {
+                    alert('日志记录不存在');
+                    return;
+                }
+                
+                const detailContent = document.getElementById('detailContent');
+                detailContent.innerHTML = `
+                    <div class="detail-section">
+                        <strong>ID:</strong> ${log.id}
+                    </div>
+                    <div class="detail-section">
+                        <strong>时间:</strong> ${new Date(log.created_at).toLocaleString('zh-CN')}
+                    </div>
+                    <div class="detail-section">
+                        <strong>模型:</strong> ${log.model}
+                    </div>
+                    <div class="detail-section">
+                        <strong>状态:</strong> ${log.status === 'success' ? '✅ 成功' : '❌ 失败'}
+                    </div>
+                    <div class="detail-section">
+                        <strong>耗时:</strong> ${log.duration_ms}ms
+                    </div>
+                    <div class="detail-section">
+                        <strong>Token使用:</strong> 输入: ${log.input_tokens}, 输出: ${log.output_tokens}, 总计: ${log.total_tokens}
+                    </div>
+                    ${log.error_message ? `
+                        <div class="detail-section">
+                            <strong style="color: red;">错误信息:</strong>
+                            <pre>${log.error_message}</pre>
+                        </div>
+                    ` : ''}
+                    ${log.request_summary ? `
+                        <div class="detail-section">
+                            <strong>请求摘要:</strong>
+                            <pre>${log.request_summary}</pre>
+                        </div>
+                    ` : ''}
+                    ${log.response_preview ? `
+                        <div class="detail-section">
+                            <strong>响应预览:</strong>
+                            <pre>${log.response_preview}</pre>
+                        </div>
+                    ` : ''}
+                    ${log.request_body ? `
+                        <div class="detail-section">
+                            <strong>完整请求体:</strong>
+                            <pre>${JSON.stringify(JSON.parse(log.request_body), null, 2)}</pre>
+                        </div>
+                    ` : ''}
+                    ${log.response_body ? `
+                        <div class="detail-section">
+                            <strong>完整响应体:</strong>
+                            <pre>${log.response_body.substring(0, 1000)}${log.response_body.length > 1000 ? '...' : ''}</pre>
+                        </div>
+                    ` : ''}
+                `;
+                
+                modal.style.display = 'block';
+            } catch (error) {
+                console.error('获取详情失败:', error);
+                alert('获取详情失败: ' + error.message);
+            }
+        }
+
+        // 页面加载时获取日志
+        loadLogs();
+    </script>
+</body>
+</html>

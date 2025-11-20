@@ -147,3 +147,19 @@ func (h *Handler) GetAvailableModels(c *gin.Context) {
 		"models": models,
 	})
 }
+
+// GetHistoricalModels returns all unique models from all configs and logs
+// This is used by the frontend ModelSelector component to provide autocomplete suggestions
+func (h *Handler) GetHistoricalModels(c *gin.Context) {
+	models, err := database.GetAllHistoricalModels()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get historical models: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"models": models,
+	})
+}

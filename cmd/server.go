@@ -196,6 +196,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.GET("/configs/:id/logs/:log_id", h.GetLogDetail)
 		configAPI.GET("/configs/:id/models", h.GetAvailableModels)
 
+		// Global model history endpoint (for autocomplete in model selector)
+		configAPI.GET("/models/history", h.GetHistoricalModels)
+
 		// Test endpoint
 		configAPI.POST("/configs/:id/renew-key", h.RenewConfigAPIKey)
 		configAPI.POST("/configs/:id/test", h.TestConfig)

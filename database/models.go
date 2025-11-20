@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
@@ -499,4 +501,95 @@ func (a *APIConfig) ToConfig() *config.Config {
 		RequestTimeout:  a.RequestTimeout,
 		AnthropicAPIKey: a.AnthropicAPIKey,
 	}
+}
+
+// GetAllHistoricalModels retrieves all unique model names from configs and logs
+// This includes models from:
+// 1. Config model mappings (big_model, middle_model, small_model)
+// 2. Config supported_models lists
+// 3. Request logs
+func GetAllHistoricalModels() ([]string, error) {
+	modelSet := make(map[string]bool)
+	var models []string
+
+	// 1. Get models from config mappings
+	configQuery := `
+		SELECT DISTINCT model FROM (
+			SELECT big_model as model FROM api_configs WHERE big_model IS NOT NULL AND big_model != ''
+			UNION
+			SELECT middle_model as model FROM api_configs WHERE middle_model IS NOT NULL AND middle_model != ''
+			UNION
+			SELECT small_model as model FROM api_configs WHERE small_model IS NOT NULL AND small_model != ''
+		)
+	`
+	rows, err := DB.Query(configQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query config models: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var model string
+		if err := rows.Scan(&model); err != nil {
+			continue
+		}
+		if model != "" {
+			modelSet[model] = true
+		}
+	}
+
+	// 2. Get models from supported_models JSON field
+	supportedQuery := `SELECT supported_models FROM api_configs WHERE supported_models IS NOT NULL AND supported_models != ''`
+	rows, err = DB.Query(supportedQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var supportedModelsJSON string
+			if err := rows.Scan(&supportedModelsJSON); err != nil {
+				continue
+			}
+			// Parse JSON array
+			if supportedModelsJSON != "" {
+				// Simple JSON parsing for array of strings
+				// Remove brackets and quotes, split by comma
+				supportedModelsJSON = strings.Trim(supportedModelsJSON, "[]")
+				supportedModelsJSON = strings.ReplaceAll(supportedModelsJSON, "\"", "")
+				if supportedModelsJSON != "" {
+					modelList := strings.Split(supportedModelsJSON, ",")
+					for _, m := range modelList {
+						m = strings.TrimSpace(m)
+						if m != "" {
+							modelSet[m] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Get models from request logs
+	logQuery := `SELECT DISTINCT model FROM request_logs WHERE model IS NOT NULL AND model != ''`
+	rows, err = DB.Query(logQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var model string
+			if err := rows.Scan(&model); err != nil {
+				continue
+			}
+			if model != "" {
+				modelSet[model] = true
+			}
+		}
+	}
+
+	// Convert map to sorted slice
+	for model := range modelSet {
+		models = append(models, model)
+	}
+
+	// Sort models alphabetically
+	sort.Strings(models)
+
+	return models, nil
 }

@@ -45,11 +45,16 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	defer reader.Close()
 
 	fmt.Printf("✅ [Streaming] Stream created, starting conversion to Claude format\n")
-	converter.ConvertOpenAIStreamingToClaude(c, reader, claudeReq, c.Request.Context())
+	streamResult := converter.ConvertOpenAIStreamingToClaude(c, reader, claudeReq, c.Request.Context())
 	fmt.Printf("✅ [Streaming] Stream completed\n")
 
-	// 记录请求日志（流式响应中token信息在响应中，这里记录请求成功）
-	r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "success", "", claudeReq, nil)
+	// 记录请求日志（使用收集的流式响应数据）
+	if streamResult != nil {
+		r.logRequestWithStreamingDetails(configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
+	} else {
+		// 如果streamResult为nil，说明发生了错误，记录基本信息
+		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
+	}
 }
 
 // HandleNonStreamingResponse 处理非流式响应
@@ -89,6 +94,87 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 
 	c.JSON(http.StatusOK, claudeResp)
 	fmt.Printf("✅ [Non-Streaming] Response sent successfully\n")
+}
+
+// logRequestWithStreamingDetails 记录流式请求日志到数据库
+func (r *ResponseHandler) logRequestWithStreamingDetails(
+	configID string,
+	model string,
+	streamResult *converter.StreamingResult,
+	startTime time.Time,
+	status string,
+	errorMsg string,
+	claudeReq *models.ClaudeMessagesRequest,
+) {
+	// 如果 configID 为空，使用 "default" 作为标识
+	if configID == "" {
+		configID = "default"
+	}
+
+	duration := time.Since(startTime)
+
+	// 序列化请求体
+	requestBody := ""
+	if claudeReq != nil {
+		if reqJSON, err := json.Marshal(claudeReq); err == nil {
+			requestBody = string(reqJSON)
+		}
+	}
+
+	// 生成响应预览（使用收集的内容）
+	responsePreview := streamResult.Content
+	if len(responsePreview) > 500 {
+		responsePreview = responsePreview[:500] + "..."
+	}
+
+	// 生成请求摘要
+	requestSummary := ""
+	if claudeReq != nil {
+		if len(claudeReq.Messages) > 0 {
+			lastMsg := claudeReq.Messages[len(claudeReq.Messages)-1]
+			if lastMsg.Role == "user" {
+				// 尝试提取文本内容
+				if contentStr, ok := lastMsg.Content.(string); ok {
+					if len(contentStr) > 200 {
+						requestSummary = contentStr[:200] + "..."
+					} else {
+						requestSummary = contentStr
+					}
+				} else if contentArr, ok := lastMsg.Content.([]interface{}); ok && len(contentArr) > 0 {
+					// 处理数组形式的content
+					if contentMap, ok := contentArr[0].(map[string]interface{}); ok {
+						if text, ok := contentMap["text"].(string); ok {
+							if len(text) > 200 {
+								requestSummary = text[:200] + "..."
+							} else {
+								requestSummary = text
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	log := &database.RequestLog{
+		ConfigID:        configID,
+		Model:           model,
+		InputTokens:     streamResult.InputTokens,
+		OutputTokens:    streamResult.OutputTokens,
+		TotalTokens:     streamResult.InputTokens + streamResult.OutputTokens,
+		DurationMs:      int(duration.Milliseconds()),
+		Status:          status,
+		ErrorMessage:    errorMsg,
+		RequestBody:     requestBody,
+		ResponseBody:    streamResult.Content, // 存储完整的响应内容
+		RequestSummary:  requestSummary,
+		ResponsePreview: responsePreview,
+	}
+
+	if err := database.LogRequest(log); err != nil {
+		logger := utils.GetLogger()
+		logger.Error("Failed to log streaming request: %v", err)
+	}
 }
 
 // logRequestWithDetails 记录请求日志到数据库（含详细请求和响应）

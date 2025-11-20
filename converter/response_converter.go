@@ -96,8 +96,17 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 	}
 }
 
+// StreamingResult holds the result of a streaming conversion
+type StreamingResult struct {
+	Content      string
+	InputTokens  int
+	OutputTokens int
+	StopReason   string
+}
+
 // ConvertOpenAIStreamingToClaude converts OpenAI streaming response to Claude format
-func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context) {
+// Returns the collected content and token usage information
+func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context) *StreamingResult {
 	state := &StreamingState{
 		messageID:        fmt.Sprintf("msg_%s", uuid.New().String()[:24]),
 		textBlockIndex:   0,
@@ -109,6 +118,7 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 			OutputTokens: 0,
 		},
 	}
+	var collectedContent strings.Builder
 
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
@@ -211,6 +221,9 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 				// Handle text delta
 				if delta.Content != nil {
 					if textContent, ok := delta.Content.(string); ok && textContent != "" {
+						// Collect content for logging
+						collectedContent.WriteString(textContent)
+
 						sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
 							"type":  models.EventContentBlockDelta,
 							"index": state.textBlockIndex,
@@ -259,21 +272,21 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 		// Handle error (including cancellation)
 		if strings.Contains(err.Error(), "client disconnected") {
 			sendSSEError(c, "cancelled", "Request was cancelled by client")
-			return
+			return nil
 		}
 		// Classify error message for better error handling
 		errorMsg := err.Error()
 		classifiedError := client.ClassifyOpenAIError(errorMsg)
 		sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
-		return
+		return nil
 	case <-ctx.Done():
 		// Client disconnected
 		sendSSEError(c, "cancelled", "Request was cancelled by client")
-		return
+		return nil
 	case <-time.After(5 * time.Minute):
 		// Timeout
 		sendSSEError(c, "api_error", "Streaming timeout")
-		return
+		return nil
 	}
 
 	// Send final events (with mutex protection for reading state)
@@ -323,6 +336,14 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 
 	// Ensure the connection is properly flushed and closed
 	c.Writer.Flush()
+
+	// Return collected data for logging
+	return &StreamingResult{
+		Content:      collectedContent.String(),
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		StopReason:   string(finalStopReason),
+	}
 }
 
 func processToolCallDelta(c *gin.Context, state *StreamingState, tcDelta *models.OpenAIToolCall) {
