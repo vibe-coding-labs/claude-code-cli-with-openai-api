@@ -1,14 +1,18 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // ResponseHandler 处理响应生成
@@ -25,6 +29,8 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	targetClient *client.OpenAIClient,
 	openAIReq *models.OpenAIRequest,
 	claudeReq *models.ClaudeMessagesRequest,
+	configID string,
+	startTime time.Time,
 ) {
 	fmt.Printf("\n🌊 [Streaming Mode]\n")
 	fmt.Printf("   Initiating streaming request to upstream API\n")
@@ -33,6 +39,7 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	if err != nil {
 		fmt.Printf("❌ [Streaming] Failed to create stream: %v\n", err)
 		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
 		return
 	}
 	defer reader.Close()
@@ -40,6 +47,9 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	fmt.Printf("✅ [Streaming] Stream created, starting conversion to Claude format\n")
 	converter.ConvertOpenAIStreamingToClaude(c, reader, claudeReq, c.Request.Context())
 	fmt.Printf("✅ [Streaming] Stream completed\n")
+
+	// 记录请求日志（流式响应中token信息在响应中，这里记录请求成功）
+	r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "success", "", claudeReq, nil)
 }
 
 // HandleNonStreamingResponse 处理非流式响应
@@ -48,6 +58,8 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	targetClient *client.OpenAIClient,
 	openAIReq *models.OpenAIRequest,
 	claudeReq *models.ClaudeMessagesRequest,
+	configID string,
+	startTime time.Time,
 ) {
 	fmt.Printf("\n📝 [Non-Streaming Mode]\n")
 	fmt.Printf("   Sending non-streaming request to upstream API\n")
@@ -56,6 +68,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	if err != nil {
 		fmt.Printf("❌ [Non-Streaming] Request failed: %v\n", err)
 		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
 		return
 	}
 
@@ -67,8 +80,107 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 
 	claudeResp := converter.ConvertOpenAIToClaudeResponse(openAIResp, claudeReq)
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
+
+	// 记录请求日志（含详细请求和响应）
+	r.logRequestWithDetails(configID, openAIReq.Model,
+		claudeResp.Usage.InputTokens,
+		claudeResp.Usage.OutputTokens,
+		startTime, "success", "", claudeReq, claudeResp)
+
 	c.JSON(http.StatusOK, claudeResp)
 	fmt.Printf("✅ [Non-Streaming] Response sent successfully\n")
+}
+
+// logRequestWithDetails 记录请求日志到数据库（含详细请求和响应）
+func (r *ResponseHandler) logRequestWithDetails(
+	configID string,
+	model string,
+	inputTokens int,
+	outputTokens int,
+	startTime time.Time,
+	status string,
+	errorMsg string,
+	claudeReq *models.ClaudeMessagesRequest,
+	claudeResp *models.ClaudeResponse,
+) {
+	// 如果 configID 为空，使用 "default" 作为标识
+	if configID == "" {
+		configID = "default"
+	}
+
+	duration := time.Since(startTime)
+
+	// 序列化请求体
+	requestBody := ""
+	if claudeReq != nil {
+		if reqJSON, err := json.Marshal(claudeReq); err == nil {
+			requestBody = string(reqJSON)
+		}
+	}
+
+	// 序列化响应体
+	responseBody := ""
+	responsePreview := ""
+	if claudeResp != nil {
+		if respJSON, err := json.Marshal(claudeResp); err == nil {
+			responseBody = string(respJSON)
+			// 生成响应预览（前500字符）
+			if len(responseBody) > 500 {
+				responsePreview = responseBody[:500] + "..."
+			} else {
+				responsePreview = responseBody
+			}
+		}
+	}
+
+	// 生成请求摘要
+	requestSummary := ""
+	if claudeReq != nil {
+		if len(claudeReq.Messages) > 0 {
+			lastMsg := claudeReq.Messages[len(claudeReq.Messages)-1]
+			if lastMsg.Role == "user" {
+				// 尝试提取文本内容
+				if contentStr, ok := lastMsg.Content.(string); ok {
+					if len(contentStr) > 200 {
+						requestSummary = contentStr[:200] + "..."
+					} else {
+						requestSummary = contentStr
+					}
+				} else if contentArr, ok := lastMsg.Content.([]interface{}); ok && len(contentArr) > 0 {
+					// 处理数组形式的content
+					if contentMap, ok := contentArr[0].(map[string]interface{}); ok {
+						if text, ok := contentMap["text"].(string); ok {
+							if len(text) > 200 {
+								requestSummary = text[:200] + "..."
+							} else {
+								requestSummary = text
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	log := &database.RequestLog{
+		ConfigID:        configID,
+		Model:           model,
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
+		TotalTokens:     inputTokens + outputTokens,
+		DurationMs:      int(duration.Milliseconds()),
+		Status:          status,
+		ErrorMessage:    errorMsg,
+		RequestBody:     requestBody,
+		ResponseBody:    responseBody,
+		RequestSummary:  requestSummary,
+		ResponsePreview: responsePreview,
+	}
+
+	if err := database.LogRequest(log); err != nil {
+		logger := utils.GetLogger()
+		logger.Error("Failed to log request: %v", err)
+	}
 }
 
 // sendErrorResponse 发送错误响应

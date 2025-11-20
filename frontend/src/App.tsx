@@ -1,13 +1,18 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography } from 'antd';
+import { Layout, Menu, Typography, Button } from 'antd';
 import {
   SettingOutlined,
-  FileTextOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons';
-import ConfigList from './components/ConfigList';
-import ConfigDetail from './components/ConfigDetail';
-import APIDocs from './components/APIDocs';
+import ConfigList from './components/ConfigListV2';
+import ConfigDetailV2 from './components/ConfigDetailV2';
+import ConfigEdit from './components/ConfigEdit';
+import ConfigTestPage from './components/ConfigTestPage';
+import Login from './components/Login';
+import Initialize from './components/Initialize';
+import ProtectedRoute from './components/ProtectedRoute';
+import { logout, getCurrentUser } from './services/auth';
 import './App.css';
 
 const { Header, Content, Sider } = Layout;
@@ -15,8 +20,8 @@ const { Title } = Typography;
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
+  const currentUser = getCurrentUser();
   
-  // Normalize pathname for menu selection
   const normalizedPath = location.pathname === '/ui' || location.pathname === '/ui/' ? '/ui' : location.pathname;
 
   const menuItems = [
@@ -25,19 +30,32 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       icon: <SettingOutlined />,
       label: <Link to="/ui">配置管理</Link>,
     },
-    {
-      key: '/ui/docs',
-      icon: <FileTextOutlined />,
-      label: <Link to="/ui/docs">API文档</Link>,
-    },
   ];
+
+  const handleLogout = () => {
+    logout();
+    window.location.href = '/ui/login';
+  };
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#001529', padding: '0 24px' }}>
+      <Header style={{ background: '#001529', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Title level={4} style={{ color: '#fff', margin: '16px 0' }}>
-          Claude-to-OpenAI API Proxy
+          Use ClaudeCode CLI With OpenAI API
         </Title>
+        {currentUser && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ color: '#fff' }}>欢迎, {currentUser.username}</span>
+            <Button 
+              type="text" 
+              icon={<LogoutOutlined />} 
+              onClick={handleLogout}
+              style={{ color: '#fff' }}
+            >
+              退出登录
+            </Button>
+          </div>
+        )}
       </Header>
       <Layout>
         <Sider width={200} style={{ background: '#fff' }}>
@@ -68,14 +86,20 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const App: React.FC = () => {
   return (
     <Router>
-      <AppLayout>
-        <Routes>
-          <Route path="/ui" element={<ConfigList />} />
-          <Route path="/ui/" element={<ConfigList />} />
-          <Route path="/ui/configs/:id" element={<ConfigDetail />} />
-          <Route path="/ui/docs" element={<APIDocs />} />
-        </Routes>
-      </AppLayout>
+      <Routes>
+        <Route path="/ui/login" element={<Login />} />
+        <Route path="/ui/initialize" element={<Initialize />} />
+        <Route path="/ui/*" element={
+          <AppLayout>
+            <Routes>
+              <Route path="/" element={<ProtectedRoute><ConfigList /></ProtectedRoute>} />
+              <Route path="configs/:id" element={<ProtectedRoute><ConfigDetailV2 /></ProtectedRoute>} />
+              <Route path="configs/:id/edit" element={<ProtectedRoute><ConfigEdit /></ProtectedRoute>} />
+              <Route path="configs/:id/test" element={<ProtectedRoute><ConfigTestPage /></ProtectedRoute>} />
+            </Routes>
+          </AppLayout>
+        } />
+      </Routes>
     </Router>
   );
 };

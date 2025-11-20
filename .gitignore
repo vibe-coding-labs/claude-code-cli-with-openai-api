@@ -278,3 +278,53 @@ secrets/
 # Pipfile.lock
 # poetry.lock
 # uv.lock
+
+# ============================================
+# Node.js / Frontend
+# ============================================
+
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Build output
+frontend/build/
+frontend/dist/
+
+# Testing
+frontend/coverage/
+
+# Production
+frontend/.env.production.local
+
+# Misc
+.npm
+.eslintcache
+
+# ============================================
+# Project-specific
+# ============================================
+
+# Database files (runtime data)
+*.db
+*.db-shm
+*.db-wal
+
+# Test data
+data/test/
+data/tmp/
+
+# Reference projects (already covered above but being explicit)
+data/1rgs-claude-code-proxy/
+data/claude-code-router/
+data/claude-code-switch/
+
+# Claude CLI binary
+claude-code-cli-with-openai-api
+
+# Local test scripts (optional)
+test_*.sh
+*_test.sh
+
+# Runtime files
+*.pid

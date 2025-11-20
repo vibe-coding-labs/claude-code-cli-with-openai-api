@@ -94,6 +94,10 @@ func createTables() error {
 		duration_ms INTEGER DEFAULT 0,
 		status TEXT NOT NULL,
 		error_message TEXT,
+		request_body TEXT,
+		response_body TEXT,
+		request_summary TEXT,
+		response_preview TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (config_id) REFERENCES api_configs(id) ON DELETE CASCADE
 	);`
@@ -122,7 +126,56 @@ func createTables() error {
 	}
 
 	log.Println("✅ Database tables created successfully")
+
+	// Create users table
+	if err := CreateUserTable(); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	// Run migrations
+	if err := runMigrations(); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	return nil
+}
+
+// runMigrations runs database migrations
+func runMigrations() error {
+	// 迁移1: 为 request_logs 添加新字段（如果不存在）
+	migrations := []string{
+		`ALTER TABLE request_logs ADD COLUMN request_body TEXT;`,
+		`ALTER TABLE request_logs ADD COLUMN response_body TEXT;`,
+		`ALTER TABLE request_logs ADD COLUMN request_summary TEXT;`,
+		`ALTER TABLE request_logs ADD COLUMN response_preview TEXT;`,
+	}
+
+	for _, migration := range migrations {
+		// 忽略已存在的列错误
+		_, err := DB.Exec(migration)
+		if err != nil && !contains(err.Error(), "duplicate column name") {
+			// 如果不是重复列名错误，则记录但继续
+			log.Printf("⚠️  Migration warning: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
+		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			hasSubstring(s, substr)))
+}
+
+func hasSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 // IsInitialized checks if the database is initialized

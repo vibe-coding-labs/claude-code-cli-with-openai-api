@@ -234,7 +234,7 @@ func buildFrontend() error {
 
 func printUIStartupInfo(cfg *config.Config, actualPort int) {
 	// Header
-	color.New(color.FgCyan, color.Bold).Print("🚀 Claude-to-OpenAI API Proxy with Web UI (Golang) ")
+	color.New(color.FgCyan, color.Bold).Print("🚀 Use ClaudeCode CLI With OpenAI API ")
 	color.New(color.FgWhite).Printf("v%s\n", Version)
 
 	// Web UI section

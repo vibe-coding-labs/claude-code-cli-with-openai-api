@@ -21,7 +21,7 @@ func init() {
 }
 
 func printVersion() {
-	color.New(color.FgCyan, color.Bold).Println("Claude-to-OpenAI API Proxy (Golang)")
+	color.New(color.FgCyan, color.Bold).Println("Use ClaudeCode CLI With OpenAI API")
 	fmt.Println()
 
 	color.New(color.FgGreen, color.Bold).Print("Version:     ")

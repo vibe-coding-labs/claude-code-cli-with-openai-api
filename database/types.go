@@ -39,16 +39,20 @@ type TokenStats struct {
 
 // RequestLog represents a single API request log
 type RequestLog struct {
-	ID           int64     `json:"id"`
-	ConfigID     string    `json:"config_id"`
-	Model        string    `json:"model"`
-	InputTokens  int       `json:"input_tokens"`
-	OutputTokens int       `json:"output_tokens"`
-	TotalTokens  int       `json:"total_tokens"`
-	DurationMs   int       `json:"duration_ms"`
-	Status       string    `json:"status"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	ConfigID        string    `json:"config_id"`
+	Model           string    `json:"model"`
+	InputTokens     int       `json:"input_tokens"`
+	OutputTokens    int       `json:"output_tokens"`
+	TotalTokens     int       `json:"total_tokens"`
+	DurationMs      int       `json:"duration_ms"`
+	Status          string    `json:"status"`
+	ErrorMessage    string    `json:"error_message,omitempty"`
+	RequestBody     string    `json:"request_body,omitempty"`     // 原始请求体（JSON）
+	ResponseBody    string    `json:"response_body,omitempty"`    // 原始响应体（JSON）
+	RequestSummary  string    `json:"request_summary,omitempty"`  // 请求摘要（便于快速查看）
+	ResponsePreview string    `json:"response_preview,omitempty"` // 响应预览（前500字符）
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // ConfigStats represents aggregated statistics for a config

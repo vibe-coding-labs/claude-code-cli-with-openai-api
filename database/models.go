@@ -14,6 +14,34 @@ func CreateAPIConfig(config *APIConfig) error {
 		config.ID = uuid.New().String()
 	}
 
+	// Set Anthropic API Key if not provided
+	if config.AnthropicAPIKey == "" {
+		config.AnthropicAPIKey = uuid.New().String()
+	} else {
+		// Validate custom token
+		if len(config.AnthropicAPIKey) > 100 {
+			return fmt.Errorf("custom API token must be 100 characters or less")
+		}
+
+		for _, ch := range config.AnthropicAPIKey {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') || ch == '_') {
+				return fmt.Errorf("custom API token can only contain letters, numbers, and underscores")
+			}
+		}
+
+		// Check uniqueness
+		var count int
+		checkQuery := `SELECT COUNT(*) FROM api_configs WHERE anthropic_api_key = ?`
+		err := DB.QueryRow(checkQuery, config.AnthropicAPIKey).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("failed to check token uniqueness: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("this API token is already in use")
+		}
+	}
+
 	// Encrypt API key
 	encrypted, err := EncryptAPIKey(config.OpenAIAPIKey)
 	if err != nil {
@@ -74,6 +102,97 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
 
 	return config, nil
+}
+
+// GetConfigByAnthropicAPIKey retrieves an API configuration by Anthropic API key
+func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("empty API key")
+	}
+
+	query := `
+		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
+			big_model, middle_model, small_model, max_tokens_limit, request_timeout,
+			anthropic_api_key, enabled, created_at, updated_at
+		FROM api_configs 
+		WHERE anthropic_api_key = ? AND enabled = 1
+		LIMIT 1
+	`
+
+	config := &APIConfig{}
+	err := DB.QueryRow(query, apiKey).Scan(
+		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
+		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
+		&config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("config not found for API key")
+		}
+		return nil, fmt.Errorf("failed to query config: %w", err)
+	}
+
+	// Decrypt API key
+	decrypted, err := DecryptAPIKey(config.OpenAIAPIKeyEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt API key: %w", err)
+	}
+	config.OpenAIAPIKey = decrypted
+	config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
+
+	return config, nil
+}
+
+// RenewAnthropicAPIKey generates a new Anthropic API key for a config
+// customToken: optional custom token (max 100 chars, alphanumeric + underscore only)
+func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
+	var newAPIKey string
+
+	if customToken != "" {
+		// Validate custom token
+		if len(customToken) > 100 {
+			return "", fmt.Errorf("custom token must be 100 characters or less")
+		}
+
+		// Validate characters (alphanumeric + underscore only)
+		for _, ch := range customToken {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') || ch == '_') {
+				return "", fmt.Errorf("custom token can only contain letters, numbers, and underscores")
+			}
+		}
+
+		// Check uniqueness (excluding current config)
+		var count int
+		checkQuery := `SELECT COUNT(*) FROM api_configs WHERE anthropic_api_key = ? AND id != ?`
+		err := DB.QueryRow(checkQuery, customToken, configID).Scan(&count)
+		if err != nil {
+			return "", fmt.Errorf("failed to check token uniqueness: %w", err)
+		}
+		if count > 0 {
+			return "", fmt.Errorf("this API token is already in use by another configuration")
+		}
+
+		newAPIKey = customToken
+	} else {
+		// Generate UUID
+		newAPIKey = uuid.New().String()
+	}
+
+	query := `
+		UPDATE api_configs 
+		SET anthropic_api_key = ?, updated_at = datetime('now')
+		WHERE id = ?
+	`
+
+	_, err := DB.Exec(query, newAPIKey, configID)
+	if err != nil {
+		return "", fmt.Errorf("failed to renew API key: %w", err)
+	}
+
+	return newAPIKey, nil
 }
 
 // GetAllAPIConfigs retrieves all API configurations
@@ -175,13 +294,15 @@ func LogRequest(log *RequestLog) error {
 	query := `
 		INSERT INTO request_logs (
 			config_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			duration_ms, status, error_message, request_body, response_body,
+			request_summary, response_preview, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
 	_, err := DB.Exec(query,
 		log.ConfigID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
-		log.DurationMs, log.Status, log.ErrorMessage,
+		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
+		log.RequestSummary, log.ResponsePreview,
 	)
 
 	if err != nil {
@@ -271,7 +392,8 @@ func GetConfigStats(configID string, days int) (*ConfigStats, error) {
 func GetRecentLogs(configID string, limit int) ([]*RequestLog, error) {
 	query := `
 		SELECT id, config_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, created_at
+			duration_ms, status, error_message, request_body, response_body,
+			request_summary, response_preview, created_at
 		FROM request_logs
 		WHERE config_id = ?
 		ORDER BY created_at DESC
@@ -287,13 +409,30 @@ func GetRecentLogs(configID string, limit int) ([]*RequestLog, error) {
 	var logs []*RequestLog
 	for rows.Next() {
 		log := &RequestLog{}
+		var requestBody, responseBody, requestSummary, responsePreview sql.NullString
 		err := rows.Scan(
 			&log.ID, &log.ConfigID, &log.Model, &log.InputTokens, &log.OutputTokens,
-			&log.TotalTokens, &log.DurationMs, &log.Status, &log.ErrorMessage, &log.CreatedAt,
+			&log.TotalTokens, &log.DurationMs, &log.Status, &log.ErrorMessage,
+			&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
+
+		// 处理可空字段
+		if requestBody.Valid {
+			log.RequestBody = requestBody.String
+		}
+		if responseBody.Valid {
+			log.ResponseBody = responseBody.String
+		}
+		if requestSummary.Valid {
+			log.RequestSummary = requestSummary.String
+		}
+		if responsePreview.Valid {
+			log.ResponsePreview = responsePreview.String
+		}
+
 		logs = append(logs, log)
 	}
 

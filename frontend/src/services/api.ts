@@ -6,6 +6,7 @@ import {
   TestConfigResponse,
   ClaudeConfigFormat,
 } from '../types/api';
+import { getToken } from './auth';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:10086';
 
@@ -15,6 +16,32 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// Add auth token to requests
+api.interceptors.request.use(
+  (config) => {
+    const token = getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Redirect to login on auth error
+      window.location.href = '/ui/login';
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const configAPI = {
   // List all configurations

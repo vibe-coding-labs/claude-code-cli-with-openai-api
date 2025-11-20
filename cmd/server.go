@@ -135,10 +135,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 		v1.POST("/messages", h.CreateMessage)
 		v1.POST("/messages/count_tokens", h.CountTokens)
 
-		// Claude CLI 需要的认证端点
+		// 兼容端点
 		v1.GET("/me", h.GetMe)
 		v1.GET("/models", h.GetModels)
 		v1.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+
+		// Admin API endpoints - Claude CLI 实际使用 /v1/admin/me
+		admin := v1.Group("/admin")
+		{
+			admin.GET("/me", h.GetMe)
+			admin.GET("/models", h.GetModels)
+			admin.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+		}
 	}
 
 	// Per-config Claude API endpoints (每个配置独立的路径)
@@ -148,14 +156,31 @@ func runServer(cmd *cobra.Command, args []string) error {
 		proxyGroup.POST("/messages", h.CreateMessageWithConfig)
 		proxyGroup.POST("/messages/count_tokens", h.CountTokens)
 
-		// Claude CLI 需要的认证端点
+		// 兼容端点
 		proxyGroup.GET("/me", h.GetMe)
 		proxyGroup.GET("/models", h.GetModels)
 		proxyGroup.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+
+		// Admin API endpoints - Claude CLI 实际使用 /proxy/:id/v1/admin/me
+		proxyAdmin := proxyGroup.Group("/admin")
+		{
+			proxyAdmin.GET("/me", h.GetMe)
+			proxyAdmin.GET("/models", h.GetModels)
+			proxyAdmin.GET("/organizations/:org_id/usage", h.GetOrganizationUsage)
+		}
 	}
 
-	// Config management API (unprotected for UI access)
+	// Auth API (no auth required)
+	authAPI := router.Group("/api/auth")
+	{
+		authAPI.GET("/initialized", h.CheckInitialized)
+		authAPI.POST("/initialize", h.InitializeSystem)
+		authAPI.POST("/login", h.Login)
+	}
+
+	// Config management API (requires auth)
 	configAPI := router.Group("/api")
+	configAPI.Use(handler.AuthMiddleware())
 	{
 		// Config CRUD
 		configAPI.GET("/configs", h.GetAllConfigs)
@@ -167,8 +192,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 		// Stats and logs
 		configAPI.GET("/configs/:id/stats", h.GetConfigStats)
 		configAPI.GET("/configs/:id/logs", h.GetConfigLogs)
+		configAPI.DELETE("/configs/:id/logs", h.DeleteConfigLogs)
+		configAPI.GET("/configs/:id/logs/:log_id", h.GetLogDetail)
+		configAPI.GET("/configs/:id/models", h.GetAvailableModels)
 
 		// Test endpoint
+		configAPI.POST("/configs/:id/renew-key", h.RenewConfigAPIKey)
 		configAPI.POST("/configs/:id/test", h.TestConfig)
 	}
 
@@ -252,7 +281,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 func printStartupInfo(cfg *config.Config, actualPort int) {
 	// Header
-	color.New(color.FgCyan, color.Bold).Print("🚀 Claude-to-OpenAI API Proxy (Golang) ")
+	color.New(color.FgCyan, color.Bold).Print("🚀 Use ClaudeCode CLI With OpenAI API ")
 	color.New(color.FgWhite).Printf("v%s\n", Version)
 
 	// Configuration section

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
 
@@ -111,6 +112,35 @@ func (h *ConfigHandler) DeleteConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Config deleted successfully",
+	})
+}
+
+// RenewAPIKey updates the Anthropic API Key of a configuration
+func (h *ConfigHandler) RenewAPIKey(c *gin.Context) {
+	id := c.Param("id")
+
+	// Check if the configuration exists
+	_, err := h.manager.GetConfig(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Config not found",
+		})
+		return
+	}
+
+	// Generate new Anthropic API key (auto-generate UUID)
+	newAPIKey, err := database.RenewAnthropicAPIKey(id, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to renew API key: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"config_id":   id,
+		"new_api_key": newAPIKey,
+		"message":     "API key renewed successfully",
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues
@@ -71,15 +72,26 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 }
 
 func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*models.OpenAIResponse, error) {
+	logger := utils.GetLogger()
+	startTime := time.Now()
+
+	logger.Info("→ [OpenAIClient] Creating chat completion (non-streaming)")
+	logger.Debug("  Model: %s", openAIReq.Model)
+	logger.Debug("  Messages: %d", len(openAIReq.Messages))
+	logger.Debug("  MaxTokens: %d", openAIReq.MaxTokens)
+
 	reqBody, err := json.Marshal(openAIReq)
 	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to marshal request: %v", err)
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	logger.Debug("  Request body size: %d bytes", len(reqBody))
 
 	url := c.BaseURL
 	if !strings.HasSuffix(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
 	}
+	logger.Debug("  Target URL: %s", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -102,30 +114,53 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		req.Header.Set(key, value)
 	}
 
+	logger.Debug("  Sending request to OpenAI...")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to send request: %v", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+	logger.Debug("  Response status: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		errorMsg := string(body)
 		classifiedError := ClassifyOpenAIError(errorMsg)
+		logger.Error("← [OpenAIClient] OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
+		logger.Debug("  Raw error: %s", errorMsg)
 		// Return error with status code information for proper error handling
 		return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
 	}
 
 	var openAIResp models.OpenAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		logger.Error("← [OpenAIClient] Failed to decode response: %v", err)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	logger.Info("← [OpenAIClient] Chat completion successful (took %v)", time.Since(startTime))
+	if len(openAIResp.Choices) > 0 {
+		logger.Debug("  Response tokens: %+v", openAIResp.Usage)
 	}
 
 	return &openAIResp, nil
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
+	logger := utils.GetLogger()
+	logger.Info("→ [OpenAIClient] Creating chat completion (streaming)")
+	logger.Debug("  Model: %s", openAIReq.Model)
+	logger.Debug("  Messages: %d", len(openAIReq.Messages))
+
 	// Ensure stream is enabled
 	openAIReq.Stream = true
 	// Add stream options to include usage information
@@ -139,16 +174,20 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 
 	reqBody, err := json.Marshal(openAIReq)
 	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to marshal request: %v", err)
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	logger.Debug("  Request body size: %d bytes", len(reqBody))
 
 	url := c.BaseURL
 	if !strings.HasSuffix(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
 	}
+	logger.Debug("  Target URL: %s", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to create request: %v", err)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -169,19 +208,25 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		req.Header.Set(key, value)
 	}
 
+	logger.Debug("  Sending streaming request to OpenAI...")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to send request: %v", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
+	logger.Debug("  Response status: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		errorMsg := string(body)
 		classifiedError := ClassifyOpenAIError(errorMsg)
+		logger.Error("← [OpenAIClient] OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
+		logger.Debug("  Raw error: %s", errorMsg)
 		// Return error with status code information for proper error handling
 		return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
 	}
 
+	logger.Info("← [OpenAIClient] Streaming response started")
 	return resp.Body, nil
 }

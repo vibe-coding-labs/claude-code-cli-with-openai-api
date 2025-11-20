@@ -3,6 +3,8 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
@@ -10,6 +12,7 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // Handler 主处理器
@@ -70,30 +73,95 @@ func (h *Handler) ValidateAPIKey() gin.HandlerFunc {
 }
 
 // CreateMessage 处理 /v1/messages 端点
+// 通过 API key 识别使用哪个配置
 func (h *Handler) CreateMessage(c *gin.Context) {
-	h.handleMessageWithConfig(c, nil)
+	logger := utils.GetLogger()
+	startTime := time.Now()
+
+	// 提取 API key
+	apiKey := h.authHandler.extractAPIKey(c)
+	logger.Debug("  API Key extracted: %s", maskAPIKey(apiKey))
+
+	// API key 是必需的
+	if apiKey == "" {
+		logger.Warn("← [CreateMessage] Missing API key")
+		utils.GetLogger().LogResponse(http.StatusUnauthorized, time.Since(startTime))
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": map[string]interface{}{
+				"type":    "authentication_error",
+				"message": "Missing API key. Please provide a valid Anthropic API key.",
+			},
+		})
+		return
+	}
+
+	// 通过 API key 查找配置
+	dbConfig, err := database.GetConfigByAnthropicAPIKey(apiKey)
+	if err != nil || dbConfig == nil {
+		logger.Warn("← [CreateMessage] Invalid API key: %s", maskAPIKey(apiKey))
+		utils.GetLogger().LogResponse(http.StatusUnauthorized, time.Since(startTime))
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": map[string]interface{}{
+				"type":    "authentication_error",
+				"message": "Invalid API key. Please check your Anthropic API key and try again.",
+			},
+		})
+		return
+	}
+
+	logger.Info("  Found config by API key: %s (%s)", dbConfig.ID, dbConfig.Name)
+
+	// 检查配置是否启用
+	if !dbConfig.Enabled {
+		logger.Warn("← [CreateMessage] Config disabled: %s", dbConfig.ID)
+		utils.GetLogger().LogResponse(http.StatusForbidden, time.Since(startTime))
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": map[string]interface{}{
+				"type":    "permission_error",
+				"message": "This configuration is currently disabled.",
+			},
+		})
+		return
+	}
+
+	h.handleMessageWithConfig(c, dbConfig)
+}
+
+// maskAPIKey 掩码 API key 用于日志
+func maskAPIKey(key string) string {
+	if len(key) <= 12 {
+		return "****"
+	}
+	return key[:8] + "****" + key[len(key)-4:]
 }
 
 // CreateMessageWithConfig 处理 /v1/configs/:id/messages 端点
 func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
+	logger := utils.GetLogger()
+	startTime := time.Now()
+
 	configID := c.Param("id")
-	fmt.Printf("\n🔵 [CreateMessageWithConfig] Config ID: %s\n", configID)
-	fmt.Printf("   URL: %s\n", c.Request.URL.String())
-	fmt.Printf("   Method: %s\n", c.Request.Method)
+	logger.Info("→ [CreateMessageWithConfig] Request received")
+	logger.Debug("  Config ID: %s", configID)
+	logger.Debug("  URL: %s", c.Request.URL.String())
+	logger.Debug("  Method: %s", c.Request.Method)
+	logger.Debug("  Remote Address: %s", c.ClientIP())
 
 	authHeader := c.GetHeader("Authorization")
 	if len(authHeader) > 20 {
-		fmt.Printf("   Headers: Content-Type=%s, Authorization=%s...\n",
+		logger.Debug("  Headers: Content-Type=%s, Authorization=%s...",
 			c.GetHeader("Content-Type"), authHeader[:20])
 	} else {
-		fmt.Printf("   Headers: Content-Type=%s, Authorization=%s\n",
+		logger.Debug("  Headers: Content-Type=%s, Authorization=%s",
 			c.GetHeader("Content-Type"), authHeader)
 	}
 
 	// 从数据库获取配置
+	logger.Debug("  Fetching config from database...")
 	dbConfig, err := database.GetAPIConfig(configID)
 	if err != nil {
-		fmt.Printf("❌ [CreateMessageWithConfig] Config not found: %s, error: %v\n", configID, err)
+		logger.Error("← [CreateMessageWithConfig] Config not found: %s, error: %v", configID, err)
+		utils.GetLogger().LogResponse(http.StatusNotFound, time.Since(startTime))
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": map[string]interface{}{
 				"type":    "not_found",
@@ -102,10 +170,11 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 		})
 		return
 	}
-	fmt.Printf("✅ [CreateMessageWithConfig] Config loaded: %s\n", dbConfig.Name)
+	logger.Info("  Config loaded: %s (Enabled: %v)", dbConfig.Name, dbConfig.Enabled)
 
 	if !dbConfig.Enabled {
-		fmt.Printf("❌ [CreateMessageWithConfig] Config disabled: %s\n", configID)
+		logger.Warn("← [CreateMessageWithConfig] Config disabled: %s", configID)
+		utils.GetLogger().LogResponse(http.StatusBadRequest, time.Since(startTime))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": map[string]interface{}{
 				"type":    "invalid_request",
@@ -120,12 +189,16 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 
 // handleMessageWithConfig 处理消息请求的核心逻辑
 func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig) {
-	fmt.Printf("\n🟢 [handleMessageWithConfig] Starting...\n")
+	logger := utils.GetLogger()
+	startTime := time.Now()
+	logger.Info("→ [handleMessageWithConfig] Processing message request")
 
 	// 解析请求
+	logger.Debug("  Parsing request body...")
 	var req models.ClaudeMessagesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fmt.Printf("❌ [handleMessageWithConfig] Failed to parse request: %v\n", err)
+		logger.Error("← [handleMessageWithConfig] Failed to parse request: %v", err)
+		utils.GetLogger().LogResponse(http.StatusBadRequest, time.Since(startTime))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": map[string]interface{}{
 				"type":    "invalid_request_error",
@@ -134,6 +207,7 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 		})
 		return
 	}
+	logger.Debug("  Request parsed successfully: Model=%s, Stream=%v, Messages=%d", req.Model, req.Stream, len(req.Messages))
 
 	// 记录请求详情
 	h.requestValidator.LogRequestDetails(&req)
@@ -145,8 +219,10 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 	}
 
 	// 验证请求参数
+	logger.Debug("  Validating request...")
 	if err := h.requestValidator.ValidateRequest(&req); err != nil {
-		fmt.Printf("❌ [handleMessageWithConfig] Request validation failed: %v\n", err)
+		logger.Error("← [handleMessageWithConfig] Request validation failed: %v", err)
+		utils.GetLogger().LogResponse(http.StatusBadRequest, time.Since(startTime))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": map[string]interface{}{
 				"type":    "invalid_request_error",
@@ -155,14 +231,15 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 		})
 		return
 	}
+	logger.Debug("  Request validation passed")
 
 	// 配置设置
-	fmt.Printf("\n🔧 [Config Setup]\n")
+	logger.Debug("  Setting up configuration...")
 	var targetConfig *config.Config
 	var targetClient *client.OpenAIClient
 
 	if dbConfig != nil {
-		fmt.Printf("   Using database config: %s\n", dbConfig.Name)
+		logger.Debug("  Using database config: %s", dbConfig.Name)
 
 		// 验证 API Key
 		if valid, errorResp := h.authHandler.ValidateAPIKey(c, dbConfig); !valid {
@@ -183,20 +260,19 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
-		fmt.Printf("   Using default config\n")
+		logger.Debug("  Using default config")
 		targetConfig = h.config
 		targetClient = h.client
 	}
 
 	// 转换请求
-	fmt.Printf("\n🔄 [Request Conversion]\n")
-	fmt.Printf("   Converting Claude request to OpenAI format\n")
-	fmt.Printf("   Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s\n",
+	logger.Debug("  Converting Claude request to OpenAI format...")
+	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel)
 
 	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig)
-	fmt.Printf("   ✅ Converted to OpenAI model: %s\n", openAIReq.Model)
-	fmt.Printf("   OpenAI request: messages=%d, max_tokens=%d, stream=%v\n",
+	logger.Info("  Converted to OpenAI model: %s", openAIReq.Model)
+	logger.Debug("  OpenAI request: messages=%d, max_tokens=%d, stream=%v",
 		len(openAIReq.Messages), openAIReq.MaxTokens, openAIReq.Stream)
 
 	// 检查客户端是否断开
@@ -211,11 +287,20 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 	}
 
 	// 处理响应
-	if req.Stream {
-		h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req)
-	} else {
-		h.responseHandler.HandleNonStreamingResponse(c, targetClient, openAIReq, &req)
+	logger.Debug("  Handling response (stream=%v)...", req.Stream)
+
+	// 获取 config ID（如果有）
+	configID := ""
+	if dbConfig != nil {
+		configID = dbConfig.ID
 	}
+
+	if req.Stream {
+		h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime)
+	} else {
+		h.responseHandler.HandleNonStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime)
+	}
+	logger.Info("← [handleMessageWithConfig] Request completed in %v", time.Since(startTime))
 }
 
 // CountTokens 处理 /v1/messages/count_tokens 端点
@@ -264,8 +349,75 @@ func (h *Handler) Index(c *gin.Context) {
 }
 
 // Root 处理根路径（别名）
+// 如果是浏览器访问，重定向到 /ui/
+// 如果是API调用，返回JSON
 func (h *Handler) Root(c *gin.Context) {
+	userAgent := c.GetHeader("User-Agent")
+
+	// 检测是否是浏览器
+	if isBrowserUserAgent(userAgent) {
+		c.Redirect(http.StatusMovedPermanently, "/ui/")
+		return
+	}
+
+	// 非浏览器访问，返回JSON
 	h.Index(c)
+}
+
+// isBrowserUserAgent 检测User-Agent是否是浏览器
+func isBrowserUserAgent(ua string) bool {
+	if ua == "" {
+		return false
+	}
+
+	// 常见浏览器User-Agent关键字
+	browserKeywords := []string{
+		"Mozilla",
+		"Chrome",
+		"Safari",
+		"Firefox",
+		"Edge",
+		"Opera",
+		"MSIE",
+		"Trident",
+	}
+
+	// 排除一些API客户端
+	apiClientKeywords := []string{
+		"curl",
+		"wget",
+		"python",
+		"go-http-client",
+		"axios",
+		"okhttp",
+		"java",
+		"apache-httpclient",
+		"postman",
+		"insomnia",
+	}
+
+	// 先检查是否是API客户端
+	for _, keyword := range apiClientKeywords {
+		if containsIgnoreCase(ua, keyword) {
+			return false
+		}
+	}
+
+	// 再检查是否包含浏览器关键字
+	for _, keyword := range browserKeywords {
+		if containsIgnoreCase(ua, keyword) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsIgnoreCase 不区分大小写的字符串包含检查
+func containsIgnoreCase(s, substr string) bool {
+	s = strings.ToLower(s)
+	substr = strings.ToLower(substr)
+	return strings.Contains(s, substr)
 }
 
 // HealthCheck 处理健康检查（别名）

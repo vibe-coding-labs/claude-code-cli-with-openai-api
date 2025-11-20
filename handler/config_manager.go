@@ -202,36 +202,7 @@ func (h *Handler) GetConfigStats(c *gin.Context) {
 	})
 }
 
-// GetConfigLogs returns recent request logs for a config
-func (h *Handler) GetConfigLogs(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Config ID is required",
-		})
-		return
-	}
-
-	// Get limit parameter (default 100)
-	limit := 100
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
-		}
-	}
-
-	logs, err := database.GetRecentLogs(id, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to get logs: %v", err),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"logs": logs,
-	})
-}
+// Note: GetConfigLogs has been moved to config_api.go with enhanced functionality
 
 // TestConfig tests an API configuration by making a simple request
 func (h *Handler) TestConfig(c *gin.Context) {

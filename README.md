@@ -1,200 +1,197 @@
-# Claude Code CLI with OpenAI API
+# Claude-to-OpenAI API Proxy
 
-A Go-based proxy server that enables **Claude Code CLI** to work with OpenAI-compatible API providers. This is a Golang port of the [claude-code-proxy](https://github.com/fuergaosi233/claude-code-proxy) project.
+一个高性能的 Go 语言 API 代理服务器，可以将 Claude API 请求转换为 OpenAI 兼容格式，支持任意 OpenAI 兼容的 LLM 服务。
 
-## Features
+## ✨ 特性
 
-- **Full Claude API Compatibility**: Complete `/v1/messages` endpoint support
-- **Multiple Provider Support**: OpenAI, Azure OpenAI, local models (Ollama), and any OpenAI-compatible API
-- **Smart Model Mapping**: Configure BIG, MIDDLE, and SMALL models via environment variables
-- **Function Calling**: Complete tool use support with proper conversion
-- **Streaming Responses**: Real-time SSE streaming support
-- **Image Support**: Base64 encoded image input
-- **Custom Headers**: Automatic injection of custom HTTP headers for API requests
-- **Error Handling**: Comprehensive error handling and logging
-- **Auto Port Detection**: Automatically detects and uses available ports
+- 🔄 **完整的 API 转换** - 支持 Claude Messages API 到 OpenAI Chat Completion API 的双向转换
+- 🚀 **流式响应支持** - 完整支持 Server-Sent Events (SSE) 流式输出
+- 🔑 **多配置管理** - 支持多个独立的 API 配置，通过不同的 API Key 区分
+- 📊 **详细的请求日志** - 记录完整的请求/响应体、Token 统计和性能指标
+- 🖥️ **Web 管理界面** - 现代化的 React 管理界面，支持配置管理、在线测试和日志查看
+- 🔐 **安全认证** - 基于 API Key 的身份验证，确保服务安全
+- 💾 **SQLite 存储** - 轻量级数据库，支持配置、统计和日志持久化
 
-## 📚 Documentation
+## 🚀 快速开始
 
-- **[详细使用指南](./USAGE.md)** - 完整的使用说明，包括各种使用场景、配置详解、测试验证和常见问题
-- **[功能对比](./FEATURES.md)** - 与参考实现的功能对比
+### 1. 构建项目
 
-## Quick Start
-
-### 1. Build
-
-Using Makefile (recommended):
-```bash
-make build
-```
-
-Or manually:
 ```bash
 go build -o claude-with-openai-api
 ```
 
-### 2. Configure
+### 2. 配置环境变量
+
+创建 `.env` 文件：
 
 ```bash
-cp env.example .env
-# Edit .env and add your API configuration
+# 服务器配置
+PORT=8083
+HOST=0.0.0.0
+LOG_LEVEL=INFO
+
+# 数据库配置
+DB_PATH=./data/proxy.db
+
+# 默认 OpenAI API 配置（首次启动后建议通过 Web UI 管理）
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_BASE_URL=https://api.openai.com/v1
+BIG_MODEL=gpt-4o
+MIDDLE_MODEL=gpt-4o
+SMALL_MODEL=gpt-4o-mini
 ```
 
-### 3. Install (Optional)
-
-Install the binary to your PATH for easy access:
+### 3. 启动服务
 
 ```bash
-# Install to ~/.local/bin (recommended, no sudo required)
-make install
-
-# Or install to system directory (requires sudo)
-make install-system
+./claude-with-openai-api server
 ```
 
-After installation, you can run `claude-with-openai-api` from anywhere.
+服务启动后访问：
+- **API 端点**: `http://localhost:8083`
+- **管理界面**: `http://localhost:8083/ui`
+- **健康检查**: `http://localhost:8083/health`
 
-### 4. Start Server
+## 📖 使用方法
 
-Using Makefile:
-```bash
-make run    # Build and run
-# or
-make start  # Run existing binary
-```
+### 方式一：通过 Web UI 管理（推荐）
 
-Or manually:
-```bash
-# The server will automatically detect an available port starting from 10086
-./claude-with-openai-api
-# or if installed:
-claude-with-openai-api
-```
-
-### 5. Use with Claude Code CLI
+1. 访问 `http://localhost:8083/ui`
+2. 创建新的 API 配置
+3. 记录生成的 Anthropic API Key
+4. 配置 Claude CLI：
 
 ```bash
-# If ANTHROPIC_API_KEY is not set in the proxy:
-ANTHROPIC_BASE_URL=http://localhost:10086 ANTHROPIC_API_KEY="any-value" claude
-
-# If ANTHROPIC_API_KEY is set in the proxy:
-ANTHROPIC_BASE_URL=http://localhost:10086 ANTHROPIC_API_KEY="exact-matching-key" claude
+export ANTHROPIC_BASE_URL=http://localhost:8083
+export ANTHROPIC_API_KEY="your-anthropic-api-key"  # 从 Web UI 获取
+claude -p "Hello"
 ```
 
-> 💡 **提示**: 查看 [详细使用指南](./USAGE.md) 了解更多使用场景和配置选项。
-
-## Configuration
-
-The application automatically loads environment variables from a `.env` file in the project root. You can also set environment variables directly in your shell.
-
-### Environment Variables
-
-**Required:**
-
-- `OPENAI_API_KEY` - Your API key for the target provider
-
-**Security:**
-
-- `ANTHROPIC_API_KEY` - Expected Anthropic API key for client validation
-  - If set, clients must provide this exact API key to access the proxy
-  - If not set, any API key will be accepted
-
-**Model Configuration:**
-
-- `BIG_MODEL` - Model for Claude opus requests (default: `gpt-4o`)
-- `MIDDLE_MODEL` - Model for Claude sonnet requests (default: `gpt-4o`)
-- `SMALL_MODEL` - Model for Claude haiku requests (default: `gpt-4o-mini`)
-
-**API Configuration:**
-
-- `OPENAI_BASE_URL` - API base URL (default: `https://api.openai.com/v1`)
-- `AZURE_API_VERSION` - Azure API version (for Azure OpenAI)
-
-**Server Settings:**
-
-- `HOST` - Server host (default: `0.0.0.0`)
-- `PORT` - Server port (default: `10086`, auto-detects if busy)
-- `LOG_LEVEL` - Logging level (default: `INFO`)
-
-**Performance:**
-
-- `MAX_TOKENS_LIMIT` - Token limit (default: `4096`)
-- `MIN_TOKENS_LIMIT` - Minimum token limit (default: `100`)
-- `REQUEST_TIMEOUT` - Request timeout in seconds (default: `90`)
-
-**Custom Headers:**
-
-- `CUSTOM_HEADER_*` - Custom headers for API requests (e.g., `CUSTOM_HEADER_ACCEPT`, `CUSTOM_HEADER_AUTHORIZATION`)
-
-### Model Mapping
-
-The proxy maps Claude model requests to your configured models:
-
-| Claude Request          | Mapped To      | Environment Variable   |
-| ----------------------- | -------------- | ---------------------- |
-| Models with "haiku"     | `SMALL_MODEL`  | Default: `gpt-4o-mini` |
-| Models with "sonnet"    | `MIDDLE_MODEL` | Default: `gpt-4o`      |
-| Models with "opus"      | `BIG_MODEL`    | Default: `gpt-4o`      |
-
-## Development
-
-### Using Makefile
+### 方式二：使用 API
 
 ```bash
-# Install dependencies
-make deps
-
-# Build the application
-make build
-
-# Run the application (build + run)
-make run
-
-# Run existing binary
-make start
-
-# Format code
-make fmt
-
-# Run tests
-make test
-
-# Clean build artifacts
-make clean
-
-# Install to PATH
-make install
-
-# Uninstall from PATH
-make uninstall
-
-# Show help
-make help
+curl -X POST http://localhost:8083/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-anthropic-api-key" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Hello, Claude!"}
+    ]
+  }'
 ```
 
-### Manual Commands
+## 🎯 Web UI 功能
+
+### 配置管理
+- ✅ 创建、编辑、删除 API 配置
+- ✅ 为每个配置生成独立的 Anthropic API Key
+- ✅ 一键更新 API Key（Renew Key）
+- ✅ 启用/禁用配置
+
+### 在线测试
+- ✅ 独立的测试页面（`/ui/configs/:id/test`）
+- ✅ 自定义模型、Max Tokens、Temperature
+- ✅ 实时查看响应结果和 Token 统计
+
+### 请求日志
+- ✅ 详细的请求/响应记录
+- ✅ 支持 URL 路由切换标签（`?tab=logs`）
+- ✅ 查看完整的 JSON 请求体和响应体
+- ✅ Token 统计和性能分析
+
+### 统计分析
+- ✅ 请求总数、成功率
+- ✅ Token 使用统计（输入/输出/总计）
+- ✅ 平均响应时间
+- ✅ 错误统计
+
+## 🔧 API 端点
+
+### Claude API 兼容端点
+- `POST /v1/messages` - 创建消息（需要有效的 Anthropic API Key）
+- `POST /v1/messages/count_tokens` - 计算 Token 数量
+- `GET /v1/admin/me` - 获取用户信息（Claude CLI 兼容）
+
+### 配置管理 API
+- `GET /api/configs` - 获取所有配置
+- `GET /api/configs/:id` - 获取指定配置
+- `POST /api/configs` - 创建新配置
+- `PUT /api/configs/:id` - 更新配置
+- `DELETE /api/configs/:id` - 删除配置
+- `POST /api/configs/:id/renew-key` - 更新 API Key
+- `POST /api/configs/:id/test` - 测试配置
+
+### 统计和日志 API
+- `GET /api/configs/:id/stats` - 获取统计信息
+- `GET /api/configs/:id/logs` - 获取请求日志
+
+### 健康检查
+- `GET /health` - 服务健康状态
+
+## 🛠️ 开发
+
+### 项目结构
+
+```
+├── cmd/            # 命令行入口
+├── config/         # 配置管理
+├── converter/      # API 格式转换
+├── database/       # 数据库操作
+├── handler/        # HTTP 处理器
+├── models/         # 数据模型
+├── client/         # OpenAI 客户端
+├── utils/          # 工具函数
+├── frontend/       # React 管理界面
+└── main.go         # 程序入口
+```
+
+### 构建前端
 
 ```bash
-# Install dependencies
-go mod tidy
-
-# Run server
-go run main.go
-
-# Build
-go build -o claude-with-openai-api
-
-# Format code
-go fmt ./...
+cd frontend
+npm install
+npm run build
 ```
 
-## 📖 More Resources
+### 运行测试
 
-- [详细使用指南](./USAGE.md) - 完整的使用说明和示例
-- [功能对比文档](./FEATURES.md) - 功能实现状态
-- [参考实现](https://github.com/fuergaosi233/claude-code-proxy) - 原始 Python 实现
+```bash
+go test ./...
+```
 
-## License
+## 📝 配置说明
 
-MIT License
+### 模型映射
 
+代理会自动将 Claude 模型映射到配置的 OpenAI 模型：
+
+- `claude-3-opus-*` → `big_model`
+- `claude-3-5-sonnet-*` → `middle_model`
+- `claude-3-*-haiku-*` → `small_model`
+
+### 数据库
+
+使用 SQLite 存储：
+- API 配置（加密存储 OpenAI API Key）
+- Token 使用统计
+- 详细的请求日志
+
+数据库文件默认位置：`./data/proxy.db`
+
+## 🔐 安全特性
+
+- ✅ API Key 加密存储
+- ✅ 基于 API Key 的请求认证
+- ✅ 配置级别的访问控制
+- ✅ 无效 API Key 自动拒绝（401 Unauthorized）
+
+## 📄 许可证
+
+[MIT License](LICENSE)
+
+## 🙏 致谢
+
+本项目参考了社区中优秀的 Claude API 代理实现，并在此基础上进行了 Go 语言重写和功能增强。

@@ -15,8 +15,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "claude-with-openai-api",
-	Short: "Claude-to-OpenAI API Proxy (Golang)",
-	Long: `Claude-to-OpenAI API Proxy
+	Short: "Use ClaudeCode CLI With OpenAI API",
+	Long: `Use ClaudeCode CLI With OpenAI API
 
 A high-performance proxy server that translates Claude API requests to OpenAI API format.
 
