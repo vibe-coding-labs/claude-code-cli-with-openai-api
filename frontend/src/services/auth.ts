@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
-const API_BASE_URL = 'http://localhost:54988/api';
+const API_BASE_URL = 'http://127.0.0.1:54988/api';
 
 export interface User {
   id: number;

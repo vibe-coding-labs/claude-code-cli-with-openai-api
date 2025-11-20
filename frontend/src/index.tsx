@@ -8,7 +8,7 @@ import axios from 'axios';
 // ⚠️ 严禁随意修改端口！前后端端口配置需要保持一致！
 // 后端固定端口：54988，前端固定端口：54989
 // 配置axios全局baseURL指向后端
-axios.defaults.baseURL = 'http://localhost:54988';
+axios.defaults.baseURL = 'http://127.0.0.1:54988';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
