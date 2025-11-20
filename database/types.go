@@ -14,7 +14,8 @@ type APIConfig struct {
 	BigModel              string            `json:"big_model"`
 	MiddleModel           string            `json:"middle_model"`
 	SmallModel            string            `json:"small_model"`
-	ModelMappings         map[string]string `json:"model_mappings,omitempty"` // 高级模型映射
+	SupportedModels       []string          `json:"supported_models,omitempty"` // 支持的模型列表
+	ModelMappings         map[string]string `json:"model_mappings,omitempty"`   // 高级模型映射
 	MaxTokensLimit        int               `json:"max_tokens_limit"`
 	RequestTimeout        int               `json:"request_timeout"`
 	AnthropicAPIKey       string            `json:"anthropic_api_key,omitempty"`

@@ -132,7 +132,7 @@ claude
 - `POST /api/auth/initialize` - 初始化系统（创建首个用户）
 - `POST /api/auth/login` - 用户登录
 
-#### 配置管理（需要认证）
+#### OpenAI API 配置管理（需要认证）
 - `GET /api/configs` - 获取所有配置
 - `GET /api/configs/:id` - 获取单个配置
 - `POST /api/configs` - 创建配置

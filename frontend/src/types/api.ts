@@ -9,6 +9,7 @@ export interface APIConfig {
   big_model: string;
   middle_model: string;
   small_model: string;
+  supported_models?: string[];
   max_tokens_limit: number;
   min_tokens_limit: number;
   request_timeout: number;
@@ -31,6 +32,7 @@ export interface APIConfigRequest {
   big_model?: string;
   middle_model?: string;
   small_model?: string;
+  supported_models?: string[];
   max_tokens_limit?: number;
   min_tokens_limit?: number;
   request_timeout?: number;

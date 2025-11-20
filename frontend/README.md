@@ -40,12 +40,12 @@ npm run build
 
 3. 访问Web界面：
    - 打开浏览器访问 http://localhost:10086/ui
-   - 配置管理：创建、编辑、删除和管理多个OpenAI API配置
+   - OpenAI API配置：创建、编辑、删除和管理多个OpenAI API配置
    - API文档：查看API使用文档
 
 ## 功能
 
-- ✅ 配置管理（创建、编辑、删除）
+- ✅ OpenAI API配置管理（创建、编辑、删除）
 - ✅ 配置测试
 - ✅ 多配置支持
 - ✅ 默认配置设置

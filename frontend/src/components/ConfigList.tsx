@@ -164,7 +164,7 @@ const ConfigList: React.FC = () => {
     <Card>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Title level={4} style={{ margin: 0 }}>
-          配置管理
+          OpenAI API配置
         </Title>
         <Button
           type="primary"

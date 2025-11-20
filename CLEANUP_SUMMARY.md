@@ -55,7 +55,7 @@
 
 ```
 ├── cmd/            # 命令行入口
-├── config/         # 配置管理
+├── config/         # 系统配置
 ├── converter/      # API 格式转换
 ├── database/       # 数据库操作
 ├── handler/        # HTTP 处理器

@@ -67,7 +67,7 @@ const APIDocs: React.FC = () => {
           ))}
         </Panel>
 
-        <Panel header="配置管理端点" key="config_management">
+        <Panel header="OpenAI API配置管理端点" key="config_management">
           {docs.endpoints?.config_management?.endpoints?.map((endpoint: any, index: number) => (
             <Card key={index} style={{ marginBottom: 16 }}>
               <Space>

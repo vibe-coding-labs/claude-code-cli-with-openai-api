@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -48,17 +49,26 @@ func CreateAPIConfig(config *APIConfig) error {
 		return fmt.Errorf("failed to encrypt API key: %w", err)
 	}
 
+	// Serialize supported_models to JSON
+	var supportedModelsJSON []byte
+	if len(config.SupportedModels) > 0 {
+		supportedModelsJSON, err = json.Marshal(config.SupportedModels)
+		if err != nil {
+			return fmt.Errorf("failed to marshal supported models: %w", err)
+		}
+	}
+
 	query := `
 		INSERT INTO api_configs (
 			id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
 			anthropic_api_key, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
 		config.ID, config.Name, config.Description, encrypted, config.OpenAIBaseURL,
-		config.BigModel, config.MiddleModel, config.SmallModel, config.MaxTokensLimit,
+		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.AnthropicAPIKey, config.Enabled,
 	)
 
@@ -73,16 +83,17 @@ func CreateAPIConfig(config *APIConfig) error {
 func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
 
 	config := &APIConfig{}
+	var supportedModelsJSON sql.NullString
 	err := DB.QueryRow(query, id).Scan(
 		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -91,6 +102,14 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 			return nil, fmt.Errorf("config not found")
 		}
 		return nil, fmt.Errorf("failed to query config: %w", err)
+	}
+
+	// Deserialize supported_models from JSON
+	if supportedModelsJSON.Valid && supportedModelsJSON.String != "" {
+		err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal supported models: %w", err)
+		}
 	}
 
 	// Decrypt API key
@@ -112,7 +131,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs 
 		WHERE anthropic_api_key = ? AND enabled = 1
@@ -120,10 +139,11 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	`
 
 	config := &APIConfig{}
+	var supportedModelsJSON sql.NullString
 	err := DB.QueryRow(query, apiKey).Scan(
 		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -132,6 +152,14 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 			return nil, fmt.Errorf("config not found for API key")
 		}
 		return nil, fmt.Errorf("failed to query config: %w", err)
+	}
+
+	// Deserialize supported_models from JSON
+	if supportedModelsJSON.Valid && supportedModelsJSON.String != "" {
+		err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal supported models: %w", err)
+		}
 	}
 
 	// Decrypt API key
@@ -199,7 +227,7 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
@@ -213,14 +241,24 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 	var configs []*APIConfig
 	for rows.Next() {
 		config := &APIConfig{}
+		var supportedModelsJSON sql.NullString
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
 			&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan config: %w", err)
+		}
+
+		// Deserialize supported_models from JSON
+		if supportedModelsJSON.Valid && supportedModelsJSON.String != "" {
+			err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
+			if err != nil {
+				// 忽略反序列化错误，继续处理
+				config.SupportedModels = nil
+			}
 		}
 
 		// Decrypt and mask API key
@@ -259,17 +297,27 @@ func UpdateAPIConfig(config *APIConfig) error {
 		encrypted = existing.OpenAIAPIKeyEncrypted
 	}
 
+	// Serialize supported_models to JSON
+	var supportedModelsJSON []byte
+	var err error
+	if len(config.SupportedModels) > 0 {
+		supportedModelsJSON, err = json.Marshal(config.SupportedModels)
+		if err != nil {
+			return fmt.Errorf("failed to marshal supported models: %w", err)
+		}
+	}
+
 	query := `
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
-			big_model = ?, middle_model = ?, small_model = ?, max_tokens_limit = ?,
+			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, max_tokens_limit = ?,
 			request_timeout = ?, anthropic_api_key = ?, enabled = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
 
-	_, err := DB.Exec(query,
+	_, err = DB.Exec(query,
 		config.Name, config.Description, encrypted, config.OpenAIBaseURL,
-		config.BigModel, config.MiddleModel, config.SmallModel, config.MaxTokensLimit,
+		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.AnthropicAPIKey, config.Enabled, config.ID,
 	)
 

@@ -9,13 +9,12 @@ import {
   message,
   Card,
   Typography,
-  Modal,
-  Form,
-  Input,
-  InputNumber,
   Select,
   Row,
   Col,
+  Input,
+  Tooltip,
+  Switch,
 } from 'antd';
 import {
   PlusOutlined,
@@ -24,10 +23,12 @@ import {
   SearchOutlined,
   ReloadOutlined,
   FilterOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
-const { TextArea } = Input;
 const { Title } = Typography;
 const { Option } = Select;
 
@@ -40,9 +41,13 @@ interface Config {
   big_model: string;
   middle_model: string;
   small_model: string;
+  supported_models?: string[];
+  max_tokens_limit: number;
+  request_timeout: number;
   anthropic_api_key?: string;
   enabled: boolean;
   created_at: string;
+  updated_at: string;
 }
 
 const ConfigListV2: React.FC = () => {
@@ -50,12 +55,14 @@ const ConfigListV2: React.FC = () => {
   const [configs, setConfigs] = useState<Config[]>([]);
   const [filteredConfigs, setFilteredConfigs] = useState<Config[]>([]);
   const [loading, setLoading] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [form] = Form.useForm();
+  
+  // View mode: 'card' or 'list'
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
   
   // Filter states
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [modelFilter, setModelFilter] = useState<string>('');
   const [sortField, setSortField] = useState<string>('created_at');
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend');
 
@@ -84,7 +91,10 @@ const ConfigListV2: React.FC = () => {
       result = result.filter(config =>
         config.name.toLowerCase().includes(searchText.toLowerCase()) ||
         config.description?.toLowerCase().includes(searchText.toLowerCase()) ||
-        config.openai_base_url.toLowerCase().includes(searchText.toLowerCase())
+        config.openai_base_url.toLowerCase().includes(searchText.toLowerCase()) ||
+        config.big_model.toLowerCase().includes(searchText.toLowerCase()) ||
+        config.middle_model.toLowerCase().includes(searchText.toLowerCase()) ||
+        config.small_model.toLowerCase().includes(searchText.toLowerCase())
       );
     }
 
@@ -95,6 +105,15 @@ const ConfigListV2: React.FC = () => {
       result = result.filter(config => !config.enabled);
     }
 
+    // Model filter
+    if (modelFilter) {
+      result = result.filter(config =>
+        config.big_model.toLowerCase().includes(modelFilter.toLowerCase()) ||
+        config.middle_model.toLowerCase().includes(modelFilter.toLowerCase()) ||
+        config.small_model.toLowerCase().includes(modelFilter.toLowerCase())
+      );
+    }
+
     // Sorting
     result.sort((a, b) => {
       let aVal: any = a[sortField as keyof Config];
@@ -103,6 +122,9 @@ const ConfigListV2: React.FC = () => {
       if (sortField === 'created_at') {
         aVal = new Date(aVal).getTime();
         bVal = new Date(bVal).getTime();
+      } else if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = (bVal as string).toLowerCase();
       }
 
       if (sortOrder === 'ascend') {
@@ -113,14 +135,15 @@ const ConfigListV2: React.FC = () => {
     });
 
     setFilteredConfigs(result);
-  }, [configs, searchText, statusFilter, sortField, sortOrder]);
+  }, [configs, searchText, statusFilter, modelFilter, sortField, sortOrder]);
 
   const handleCreate = () => {
-    form.resetFields();
-    setModalVisible(true);
+    navigate('/ui/configs/create');
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, event?: React.MouseEvent) => {
+    // 阻止事件冒泡，避免触发卡片点击
+    event?.stopPropagation();
     try {
       await axios.delete(`/api/configs/${id}`);
       message.success('配置已删除');
@@ -130,21 +153,30 @@ const ConfigListV2: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (values: any) => {
+  const handleViewDetail = (id: string) => {
+    navigate(`/ui/configs/${id}`);
+  };
+
+  const handleEdit = (id: string, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    navigate(`/ui/configs/${id}/edit`);
+  };
+
+  const handleToggleEnabled = async (id: string, enabled: boolean, event?: React.MouseEvent) => {
+    event?.stopPropagation();
     try {
-      await axios.post('/api/configs', values);
-      message.success('配置创建成功');
-      setModalVisible(false);
-      form.resetFields();
+      await axios.put(`/api/configs/${id}`, { enabled });
+      message.success(enabled ? '配置已启用' : '配置已禁用');
       loadConfigs();
     } catch (error: any) {
-      message.error(error.response?.data?.error || '创建配置失败');
+      message.error('更新状态失败');
     }
   };
 
   const handleResetFilters = () => {
     setSearchText('');
     setStatusFilter('');
+    setModelFilter('');
     setSortField('created_at');
     setSortOrder('descend');
   };
@@ -170,11 +202,84 @@ const ConfigListV2: React.FC = () => {
       render: (text: string) => text || '-',
     },
     {
+      title: 'OpenAI API Key',
+      dataIndex: 'openai_api_key_masked',
+      key: 'openai_api_key_masked',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => (
+        <code style={{ fontSize: 11, background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+          {text || '-'}
+        </code>
+      ),
+    },
+    {
       title: 'Base URL',
       dataIndex: 'openai_base_url',
       key: 'openai_base_url',
       ellipsis: true,
       width: 250,
+    },
+    {
+      title: '大模型',
+      dataIndex: 'big_model',
+      key: 'big_model',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => (
+        <Tag color="purple" style={{ fontSize: 11 }}>{text}</Tag>
+      ),
+    },
+    {
+      title: '中模型',
+      dataIndex: 'middle_model',
+      key: 'middle_model',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => (
+        <Tag color="blue" style={{ fontSize: 11 }}>{text}</Tag>
+      ),
+    },
+    {
+      title: '小模型',
+      dataIndex: 'small_model',
+      key: 'small_model',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => (
+        <Tag color="cyan" style={{ fontSize: 11 }}>{text}</Tag>
+      ),
+    },
+    {
+      title: '支持的模型',
+      dataIndex: 'supported_models',
+      key: 'supported_models',
+      width: 120,
+      align: 'center' as const,
+      render: (models: string[]) => (
+        <Tooltip title={models && models.length > 0 ? models.join(', ') : '使用默认映射模型'}>
+          <Tag color={models && models.length > 0 ? 'green' : 'default'}>
+            {models && models.length > 0 ? `${models.length} 个` : '默认'}
+          </Tag>
+        </Tooltip>
+      ),
+    },
+    {
+      title: 'Token限制',
+      dataIndex: 'max_tokens_limit',
+      key: 'max_tokens_limit',
+      width: 100,
+      align: 'center' as const,
+      render: (value: number) => (
+        <span style={{ fontSize: 12 }}>{value?.toLocaleString() || '-'}</span>
+      ),
+    },
+    {
+      title: '超时(秒)',
+      dataIndex: 'request_timeout',
+      key: 'request_timeout',
+      width: 90,
+      align: 'center' as const,
     },
     {
       title: 'Anthropic Token',
@@ -192,20 +297,47 @@ const ConfigListV2: React.FC = () => {
       title: '状态',
       dataIndex: 'enabled',
       key: 'enabled',
-      width: 80,
+      width: 100,
       align: 'center' as const,
-      render: (enabled: boolean) => (
-        <Tag color={enabled ? 'success' : 'default'}>
-          {enabled ? '启用' : '禁用'}
-        </Tag>
+      render: (enabled: boolean, record: Config) => (
+        <Switch
+          checked={enabled}
+          onChange={(checked, e) => handleToggleEnabled(record.id, checked, e as any)}
+          checkedChildren="启用"
+          unCheckedChildren="禁用"
+          onClick={(checked, e) => e.stopPropagation()}
+        />
       ),
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 180,
-      render: (text: string) => new Date(text).toLocaleString('zh-CN'),
+      width: 160,
+      render: (text: string) => (
+        <span style={{ fontSize: 12 }}>{new Date(text).toLocaleString('zh-CN', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        })}</span>
+      ),
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updated_at',
+      key: 'updated_at',
+      width: 160,
+      render: (text: string) => (
+        <span style={{ fontSize: 12 }}>{new Date(text).toLocaleString('zh-CN', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        })}</span>
+      ),
     },
     {
       title: '操作',
@@ -242,164 +374,231 @@ const ConfigListV2: React.FC = () => {
     <Card>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Title level={4} style={{ margin: 0 }}>
-          配置管理
+          OpenAI API配置
         </Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={handleCreate}
-        >
-          新建配置
-        </Button>
+        <Space>
+          <Button.Group>
+            <Tooltip title="卡片视图">
+              <Button
+                icon={<AppstoreOutlined />}
+                type={viewMode === 'card' ? 'primary' : 'default'}
+                onClick={() => setViewMode('card')}
+              />
+            </Tooltip>
+            <Tooltip title="列表视图">
+              <Button
+                icon={<UnorderedListOutlined />}
+                type={viewMode === 'list' ? 'primary' : 'default'}
+                onClick={() => setViewMode('list')}
+              />
+            </Tooltip>
+          </Button.Group>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleCreate}
+          >
+            新建配置
+          </Button>
+        </Space>
       </Space>
 
       {/* Filters */}
       <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
         <Row gutter={[16, 16]} align="middle">
-          <Col flex="auto">
+          <Col xs={24} sm={24} md={12} lg={8}>
             <Input
-              placeholder="搜索名称、描述或Base URL"
+              placeholder="搜索名称、描述、URL、模型..."
               prefix={<SearchOutlined />}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               allowClear
             />
           </Col>
-          <Col>
+          <Col xs={12} sm={8} md={6} lg={4}>
             <Select
               placeholder="状态筛选"
               value={statusFilter}
               onChange={setStatusFilter}
-              style={{ width: 130 }}
+              style={{ width: '100%' }}
               allowClear
             >
               <Option value="enabled">仅启用</Option>
               <Option value="disabled">仅禁用</Option>
             </Select>
           </Col>
-          <Col>
+          <Col xs={12} sm={8} md={6} lg={4}>
+            <Input
+              placeholder="模型筛选"
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+              allowClear
+            />
+          </Col>
+          <Col xs={12} sm={8} md={6} lg={3}>
             <Select
               value={sortField}
               onChange={setSortField}
-              style={{ width: 130 }}
+              style={{ width: '100%' }}
             >
               <Option value="created_at">按时间</Option>
               <Option value="name">按名称</Option>
+              <Option value="openai_base_url">按URL</Option>
             </Select>
           </Col>
-          <Col>
+          <Col xs={12} sm={8} md={6} lg={2}>
             <Select
               value={sortOrder}
               onChange={setSortOrder}
-              style={{ width: 100 }}
+              style={{ width: '100%' }}
             >
               <Option value="descend">降序</Option>
               <Option value="ascend">升序</Option>
             </Select>
           </Col>
-          <Col>
-            <Button icon={<FilterOutlined />} onClick={handleResetFilters}>
+          <Col xs={12} sm={8} md={6} lg={2}>
+            <Button icon={<FilterOutlined />} onClick={handleResetFilters} style={{ width: '100%' }}>
               重置
             </Button>
           </Col>
-          <Col>
-            <Button icon={<ReloadOutlined />} onClick={loadConfigs}>
+          <Col xs={12} sm={8} md={6} lg={1}>
+            <Button icon={<ReloadOutlined />} onClick={loadConfigs} style={{ width: '100%' }}>
               刷新
             </Button>
           </Col>
         </Row>
-        <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+        <div style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
           共 {configs.length} 个配置，显示 {filteredConfigs.length} 个
+          {(searchText || statusFilter || modelFilter) && (
+            <span style={{ marginLeft: 8, color: '#1890ff' }}>
+              (已应用筛选条件)
+            </span>
+          )}
         </div>
       </Card>
 
-      <Table
-        columns={columns}
-        dataSource={filteredConfigs}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          pageSize: 10,
-          showSizeChanger: true,
-          showQuickJumper: true,
-          showTotal: (total) => `共 ${total} 条`,
-          pageSizeOptions: ['10', '20', '50', '100'],
-        }}
-        scroll={{ x: 1200 }}
-      />
-
-      <Modal
-        title="新建配置"
-        open={modalVisible}
-        onCancel={() => setModalVisible(false)}
-        onOk={() => form.submit()}
-        width={600}
-      >
-        <Form form={form} onFinish={handleSubmit} layout="vertical">
-          <Form.Item
-            name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入名称' }]}
-          >
-            <Input placeholder="例如: iFlow API" />
-          </Form.Item>
-          <Form.Item name="description" label="描述">
-            <TextArea rows={3} placeholder="配置描述" />
-          </Form.Item>
-          <Form.Item
-            name="anthropic_api_key"
-            label="Anthropic API Token (可选)"
-            help="留空将自动生成UUID，也可自定义（英文大小写、数字、下划线，最多100字符）"
-          >
-            <Input placeholder="留空自动生成，或输入自定义Token" maxLength={100} />
-          </Form.Item>
-          <Form.Item
-            name="openai_api_key"
-            label="OpenAI API Key"
-            rules={[{ required: true, message: '请输入API Key' }]}
-          >
-            <Input.Password placeholder="sk-xxx" />
-          </Form.Item>
-          <Form.Item
-            name="openai_base_url"
-            label="Base URL"
-            rules={[{ required: true, message: '请输入Base URL' }]}
-            initialValue="https://api.openai.com/v1"
-          >
-            <Input placeholder="https://api.openai.com/v1" />
-          </Form.Item>
-          <Form.Item
-            name="big_model"
-            label="大模型 (Opus)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
-            initialValue="gpt-4o"
-          >
-            <Input placeholder="gpt-4o" />
-          </Form.Item>
-          <Form.Item
-            name="middle_model"
-            label="中模型 (Sonnet)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
-            initialValue="gpt-4o"
-          >
-            <Input placeholder="gpt-4o" />
-          </Form.Item>
-          <Form.Item
-            name="small_model"
-            label="小模型 (Haiku)"
-            rules={[{ required: true, message: '请输入模型名称' }]}
-            initialValue="gpt-4o-mini"
-          >
-            <Input placeholder="gpt-4o-mini" />
-          </Form.Item>
-          <Form.Item name="max_tokens_limit" label="最大Token限制" initialValue={4096}>
-            <InputNumber min={1} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="request_timeout" label="请求超时(秒)" initialValue={90}>
-            <InputNumber min={1} style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {viewMode === 'list' ? (
+        <Table
+          columns={columns}
+          dataSource={filteredConfigs}
+          rowKey="id"
+          loading={loading}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条记录`,
+          }}
+          scroll={{ x: 2200 }}
+          onRow={(record) => ({
+            onClick: () => handleViewDetail(record.id),
+            style: { cursor: 'pointer' },
+          })}
+        />
+      ) : (
+        <Row gutter={[16, 16]}>
+          {filteredConfigs.map((config) => (
+            <Col xs={24} sm={12} md={8} lg={6} key={config.id}>
+              <Card
+                hoverable
+                onClick={() => handleViewDetail(config.id)}
+                style={{ height: '100%' }}
+                extra={
+                  <Switch
+                    checked={config.enabled}
+                    onChange={(checked, e) => handleToggleEnabled(config.id, checked, e as any)}
+                    size="small"
+                    onClick={(checked, e) => e.stopPropagation()}
+                  />
+                }
+                actions={[
+                  <Tooltip title="查看详情" key="view">
+                    <EyeOutlined onClick={(e) => { e.stopPropagation(); handleViewDetail(config.id); }} />
+                  </Tooltip>,
+                  <Tooltip title="编辑" key="edit">
+                    <EditOutlined onClick={(e) => handleEdit(config.id, e)} />
+                  </Tooltip>,
+                  <Popconfirm
+                    title="确定要删除这个配置吗？"
+                    onConfirm={(e) => handleDelete(config.id, e)}
+                    onCancel={(e) => e?.stopPropagation()}
+                    okText="确定"
+                    cancelText="取消"
+                    key="delete"
+                  >
+                    <DeleteOutlined onClick={(e) => e.stopPropagation()} />
+                  </Popconfirm>,
+                ]}
+              >
+                <Card.Meta
+                  title={
+                    <Space>
+                      <span>{config.name}</span>
+                      {!config.enabled && <Tag color="default">已禁用</Tag>}
+                    </Space>
+                  }
+                  description={
+                    <div style={{ minHeight: 120 }}>
+                      <div style={{ 
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        marginBottom: 8,
+                        color: '#666',
+                        fontSize: 12
+                      }}>
+                        {config.description || '暂无描述'}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3, lineHeight: '1.5' }}>
+                        <strong>URL:</strong> {config.openai_base_url.length > 30 ? config.openai_base_url.substring(0, 30) + '...' : config.openai_base_url}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
+                        <strong>模型:</strong> <Tag color="purple" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{config.big_model}</Tag>
+                        {config.supported_models && config.supported_models.length > 0 && (
+                          <Tag color="green" style={{ fontSize: 10, padding: '0 4px', marginLeft: 4 }}>
+                            +{config.supported_models.length}个
+                          </Tag>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
+                        <strong>限制:</strong> {config.max_tokens_limit?.toLocaleString()} tokens / {config.request_timeout}s
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999' }}>
+                        <strong>Token:</strong> <code style={{ fontSize: 10, background: '#f0f0f0', padding: '1px 4px' }}>{config.anthropic_api_key || '-'}</code>
+                      </div>
+                    </div>
+                  }
+                />
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                  <Space size={4} wrap>
+                    <Tag color={config.enabled ? 'success' : 'default'}>
+                      {config.enabled ? '启用' : '禁用'}
+                    </Tag>
+                    <Tooltip title={`创建: ${new Date(config.created_at).toLocaleString('zh-CN')}`}>
+                      <Tag color="blue" style={{ fontSize: 10 }}>
+                        创建 {new Date(config.created_at).toLocaleDateString('zh-CN')}
+                      </Tag>
+                    </Tooltip>
+                    <Tooltip title={`更新: ${new Date(config.updated_at).toLocaleString('zh-CN')}`}>
+                      <Tag color="orange" style={{ fontSize: 10 }}>
+                        更新 {new Date(config.updated_at).toLocaleDateString('zh-CN')}
+                      </Tag>
+                    </Tooltip>
+                  </Space>
+                </div>
+              </Card>
+            </Col>
+          ))}
+          {filteredConfigs.length === 0 && !loading && (
+            <Col span={24}>
+              <Card style={{ textAlign: 'center', padding: '40px 0' }}>
+                <Typography.Text type="secondary">暂无配置数据</Typography.Text>
+              </Card>
+            </Col>
+          )}
+        </Row>
+      )}
     </Card>
   );
 };

@@ -128,6 +128,14 @@ func (cm *ConfigManager) UpdateConfig(id string, req *models.APIConfigRequest) (
 	if req.AnthropicAPIKey != "" {
 		config.AnthropicAPIKey = req.AnthropicAPIKey
 	}
+	if len(req.SupportedModels) > 0 {
+		// Note: Empty array will clear the supported models
+		// To keep existing models, omit this field in the request
+		config.SupportedModels = req.SupportedModels
+	}
+
+	// Always update enabled status (it's a boolean, so we accept both true and false)
+	config.Enabled = req.Enabled
 
 	config.UpdatedAt = time.Now()
 

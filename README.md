@@ -8,7 +8,7 @@
 - 🚀 **流式响应支持** - 完整支持 Server-Sent Events (SSE) 流式输出
 - 🔑 **多配置管理** - 支持多个独立的 API 配置，通过不同的 API Key 区分
 - 📊 **详细的请求日志** - 记录完整的请求/响应体、Token 统计和性能指标
-- 🖥️ **Web 管理界面** - 现代化的 React 管理界面，支持配置管理、在线测试和日志查看
+- 🖥️ **Web 管理界面** - 现代化的 React 管理界面，支持 OpenAI API 配置管理、在线测试和日志查看
 - 🔐 **安全认证** - 基于 API Key 的身份验证，确保服务安全
 - 💾 **SQLite 存储** - 轻量级数据库，支持配置、统计和日志持久化
 
@@ -85,7 +85,7 @@ curl -X POST http://localhost:8083/v1/messages \
 
 ## 🎯 Web UI 功能
 
-### 配置管理
+### OpenAI API 配置管理
 - ✅ 创建、编辑、删除 API 配置
 - ✅ 为每个配置生成独立的 Anthropic API Key
 - ✅ 一键更新 API Key（Renew Key）
@@ -115,7 +115,7 @@ curl -X POST http://localhost:8083/v1/messages \
 - `POST /v1/messages/count_tokens` - 计算 Token 数量
 - `GET /v1/admin/me` - 获取用户信息（Claude CLI 兼容）
 
-### 配置管理 API
+### OpenAI API 配置管理 API
 - `GET /api/configs` - 获取所有配置
 - `GET /api/configs/:id` - 获取指定配置
 - `POST /api/configs` - 创建新配置
@@ -137,7 +137,7 @@ curl -X POST http://localhost:8083/v1/messages \
 
 ```
 ├── cmd/            # 命令行入口
-├── config/         # 配置管理
+├── config/         # 系统配置
 ├── converter/      # API 格式转换
 ├── database/       # 数据库操作
 ├── handler/        # HTTP 处理器

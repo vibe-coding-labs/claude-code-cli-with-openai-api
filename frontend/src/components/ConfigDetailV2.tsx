@@ -168,13 +168,6 @@ const ConfigDetailV2: React.FC = () => {
     setSearchParams({ tab: key });
   };
 
-  const copyClaudeConfig = () => {
-    const apiKey = config?.anthropic_api_key || config?.id || '';
-    const configText = `export ANTHROPIC_BASE_URL=${serverUrl}\nexport ANTHROPIC_API_KEY="${apiKey}"`;
-    navigator.clipboard.writeText(configText);
-    message.success('配置已复制到剪贴板');
-  };
-
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: 50 }}>
@@ -284,46 +277,110 @@ const ConfigDetailV2: React.FC = () => {
           </Card>
 
           <Card title="Claude Code CLI 配置" style={{ marginBottom: 16 }}>
-            <Paragraph style={{ marginBottom: 12 }}>
-              使用以下命令配置 Claude Code CLI（请根据实际端口调整）：
-            </Paragraph>
-            <pre style={{
-              background: '#f5f5f5',
-              padding: 16,
-              borderRadius: 4,
-              overflow: 'auto',
-              fontSize: 13,
-            }}>
-{`# 环境变量方式
-export ANTHROPIC_BASE_URL=${serverUrl}
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {/* 方式一：单次执行（推荐） */}
+              <div>
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                  📌 单次执行（推荐）- 直接复制执行：
+                </Typography.Text>
+                <Input.TextArea
+                  value={`ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" claude --dangerously-skip-permissions`}
+                  readOnly
+                  autoSize={{ minRows: 1, maxRows: 2 }}
+                  style={{
+                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                    fontSize: 12,
+                    background: '#f5f5f5',
+                  }}
+                />
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      `ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" claude --dangerously-skip-permissions`
+                    );
+                    message.success('已复制到剪贴板，可直接粘贴执行');
+                  }}
+                  style={{ marginTop: 8 }}
+                >
+                  复制命令
+                </Button>
+              </div>
+
+              {/* 方式二：添加到 shell 配置 */}
+              <div>
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                  🔧 永久配置（添加到 ~/.zshrc 或 ~/.bashrc）：
+                </Typography.Text>
+                <Input.TextArea
+                  value={`export ANTHROPIC_BASE_URL=${serverUrl}
 export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"
+alias claude='command claude --dangerously-skip-permissions'`}
+                  readOnly
+                  autoSize={{ minRows: 3, maxRows: 3 }}
+                  style={{
+                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                    fontSize: 12,
+                    background: '#f5f5f5',
+                  }}
+                />
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      `export ANTHROPIC_BASE_URL=${serverUrl}\nexport ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"\nalias claude='command claude --dangerously-skip-permissions'`
+                    );
+                    message.success('已复制，粘贴到 shell 配置文件后执行 source ~/.zshrc 生效');
+                  }}
+                  style={{ marginTop: 8 }}
+                >
+                  复制配置
+                </Button>
+              </div>
 
-# 或直接在命令中使用
-ANTHROPIC_BASE_URL=${serverUrl} \\
-ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" \\
-claude
+              {/* 方式三：一键配置脚本 */}
+              <div>
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                  ⚡ 一键配置脚本（自动追加到 shell 配置）：
+                </Typography.Text>
+                <Input.TextArea
+                  value={`echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`}
+                  readOnly
+                  autoSize={{ minRows: 1, maxRows: 2 }}
+                  style={{
+                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                    fontSize: 12,
+                    background: '#f5f5f5',
+                  }}
+                />
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      `echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`
+                    );
+                    message.success('已复制一键配置脚本');
+                  }}
+                  style={{ marginTop: 8 }}
+                >
+                  复制脚本
+                </Button>
+                <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                  （使用 bash 的话，将 ~/.zshrc 改为 ~/.bashrc）
+                </Typography.Text>
+              </div>
 
-# 如果服务运行在不同端口，请修改 URL
-# 例如: http://localhost:10086`}
-            </pre>
-            <Button
-              type="primary"
-              icon={<CopyOutlined />}
-              onClick={copyClaudeConfig}
-              style={{ marginTop: 8 }}
-            >
-              复制配置
-            </Button>
-            <div style={{ marginTop: 16, padding: 12, background: '#e6f7ff', borderRadius: 4, border: '1px solid #91d5ff' }}>
-              <Paragraph style={{ marginBottom: 4, fontSize: 13 }}>
-                <strong>💡 提示：</strong>
-              </Paragraph>
-              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
-                <li>当前服务地址：<code>{serverUrl}</code></li>
-                <li>使用配置的 Anthropic API Token，系统会自动路由到此配置</li>
-                <li>请确保端口号与实际运行的服务端口一致</li>
-              </ul>
-            </div>
+              {/* 提示信息 */}
+              <div style={{ padding: 12, background: '#fff7e6', borderRadius: 4, border: '1px solid #ffd591' }}>
+                <Typography.Text style={{ fontSize: 12 }}>
+                  💡 <strong>--dangerously-skip-permissions</strong> 参数会跳过权限确认，适合自动化场景
+                </Typography.Text>
+              </div>
+            </Space>
           </Card>
         </Tabs.TabPane>
 

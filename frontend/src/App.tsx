@@ -8,6 +8,7 @@ import {
 import ConfigList from './components/ConfigListV2';
 import ConfigDetailV2 from './components/ConfigDetailV2';
 import ConfigEdit from './components/ConfigEdit';
+import ConfigCreate from './components/ConfigCreate';
 import ConfigTestPage from './components/ConfigTestPage';
 import Login from './components/Login';
 import Initialize from './components/Initialize';
@@ -28,7 +29,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     {
       key: '/ui',
       icon: <SettingOutlined />,
-      label: <Link to="/ui">配置管理</Link>,
+      label: <Link to="/ui">OpenAI API配置</Link>,
     },
   ];
 
@@ -93,6 +94,7 @@ const App: React.FC = () => {
           <AppLayout>
             <Routes>
               <Route path="/" element={<ProtectedRoute><ConfigList /></ProtectedRoute>} />
+              <Route path="configs/create" element={<ProtectedRoute><ConfigCreate /></ProtectedRoute>} />
               <Route path="configs/:id" element={<ProtectedRoute><ConfigDetailV2 /></ProtectedRoute>} />
               <Route path="configs/:id/edit" element={<ProtectedRoute><ConfigEdit /></ProtectedRoute>} />
               <Route path="configs/:id/test" element={<ProtectedRoute><ConfigTestPage /></ProtectedRoute>} />
