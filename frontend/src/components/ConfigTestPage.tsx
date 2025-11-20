@@ -20,6 +20,8 @@ import {
   CopyOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -233,16 +235,17 @@ const ConfigTestPage: React.FC = () => {
                     </Button>
                   }
                 >
-                  <pre style={{ 
-                    background: '#f5f5f5', 
-                    padding: 12, 
-                    borderRadius: 4, 
-                    overflow: 'auto',
-                    fontSize: 12,
-                    fontFamily: 'monospace'
-                  }}>
+                  <SyntaxHighlighter
+                    language="bash"
+                    style={tomorrow}
+                    customStyle={{
+                      margin: 0,
+                      borderRadius: 4,
+                      fontSize: 13,
+                    }}
+                  >
                     {curlCommand}
-                  </pre>
+                  </SyntaxHighlighter>
                 </Panel>
                 
                 <Panel 
@@ -262,16 +265,17 @@ const ConfigTestPage: React.FC = () => {
                     </Button>
                   }
                 >
-                  <pre style={{ 
-                    background: '#f5f5f5', 
-                    padding: 12, 
-                    borderRadius: 4, 
-                    overflow: 'auto',
-                    fontSize: 12,
-                    fontFamily: 'monospace'
-                  }}>
+                  <SyntaxHighlighter
+                    language="json"
+                    style={tomorrow}
+                    customStyle={{
+                      margin: 0,
+                      borderRadius: 4,
+                      fontSize: 13,
+                    }}
+                  >
                     {JSON.stringify(requestPayload, null, 2)}
-                  </pre>
+                  </SyntaxHighlighter>
                 </Panel>
               </Collapse>
             )}
@@ -337,17 +341,19 @@ const ConfigTestPage: React.FC = () => {
                           </Button>
                         }
                       >
-                        <pre style={{ 
-                          background: '#f5f5f5', 
-                          padding: 12, 
-                          borderRadius: 4, 
-                          overflow: 'auto',
-                          maxHeight: 400,
-                          fontSize: 12,
-                          fontFamily: 'monospace'
-                        }}>
-                          {JSON.stringify(result, null, 2)}
-                        </pre>
+                        <div style={{ maxHeight: 400, overflow: 'auto' }}>
+                          <SyntaxHighlighter
+                            language="json"
+                            style={tomorrow}
+                            customStyle={{
+                              margin: 0,
+                              borderRadius: 4,
+                              fontSize: 13,
+                            }}
+                          >
+                            {JSON.stringify(result, null, 2)}
+                          </SyntaxHighlighter>
+                        </div>
                       </Panel>
                     </Collapse>
                   </>
@@ -359,17 +365,20 @@ const ConfigTestPage: React.FC = () => {
                     {result.response && (
                       <Collapse>
                         <Panel header="错误详情 (JSON)" key="error">
-                          <pre style={{ 
-                            background: '#fff2f0', 
-                            padding: 12, 
-                            borderRadius: 4, 
-                            overflow: 'auto',
-                            maxHeight: 400,
-                            fontSize: 12,
-                            fontFamily: 'monospace'
-                          }}>
-                            {JSON.stringify(result.response, null, 2)}
-                          </pre>
+                          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+                            <SyntaxHighlighter
+                              language="json"
+                              style={tomorrow}
+                              customStyle={{
+                                margin: 0,
+                                borderRadius: 4,
+                                fontSize: 13,
+                                background: '#fff2f0',
+                              }}
+                            >
+                              {JSON.stringify(result.response, null, 2)}
+                            </SyntaxHighlighter>
+                          </div>
                         </Panel>
                       </Collapse>
                     )}
