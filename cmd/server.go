@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/fatih/color"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
@@ -122,14 +121,24 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create Gin router
 	router := gin.Default()
 
-	// Enable CORS
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "x-api-key"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
+	// Enable CORS - 自定义中间件
+	router.Use(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin == "http://localhost:54989" || origin == "http://127.0.0.1:54989" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, x-api-key")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Expose-Headers", "Content-Length")
+		}
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
 
 	// Create handler
 	h := handler.NewHandler(cfg)
@@ -184,6 +193,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Auth API (no auth required)
 	authAPI := router.Group("/api/auth")
 	{
+		authAPI.OPTIONS("/initialized", func(c *gin.Context) { c.Status(http.StatusOK) })
+		authAPI.OPTIONS("/initialize", func(c *gin.Context) { c.Status(http.StatusOK) })
+		authAPI.OPTIONS("/login", func(c *gin.Context) { c.Status(http.StatusOK) })
+
 		authAPI.GET("/initialized", h.CheckInitialized)
 		authAPI.POST("/initialize", h.InitializeSystem)
 		authAPI.POST("/login", h.Login)
