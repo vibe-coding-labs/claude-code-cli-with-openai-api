@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/fatih/color"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
@@ -119,6 +120,15 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Create Gin router
 	router := gin.Default()
+
+	// Enable CORS
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "x-api-key"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
 	// Create handler
 	h := handler.NewHandler(cfg)

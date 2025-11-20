@@ -8,7 +8,7 @@ import {
 } from '../types/api';
 import { getToken } from './auth';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:10086';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8083';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
