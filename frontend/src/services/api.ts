@@ -8,7 +8,8 @@ import {
 } from '../types/api';
 import { getToken } from './auth';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8083';
+// ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:54988';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

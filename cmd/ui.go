@@ -44,8 +44,9 @@ func init() {
 	rootCmd.AddCommand(uiCmd)
 
 	// UI server configuration flags
+	// ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
 	uiCmd.Flags().StringVarP(&uiHost, "host", "H", "", "Server host (default: 0.0.0.0, or from HOST env var)")
-	uiCmd.Flags().IntVarP(&uiPort, "port", "p", 10086, "Server port (default: 10086, or from PORT env var)")
+	uiCmd.Flags().IntVarP(&uiPort, "port", "p", 54988, "Server port (default: 54988, or from PORT env var)")
 	uiCmd.Flags().StringVarP(&uiLogLevel, "log-level", "l", "", "Log level: DEBUG, INFO, WARN, ERROR (default: INFO)")
 }
 
@@ -65,8 +66,9 @@ func runUI(cmd *cobra.Command, args []string) error {
 	// Load default configuration (not required for UI mode)
 	// In UI mode, we can start without a default config since users can create multiple configs
 	cfg := &config.Config{
-		Host:            getEnvOrDefault("HOST", "0.0.0.0"),
-		Port:            getEnvAsInt("PORT", 10086),
+		Host: getEnvOrDefault("HOST", "0.0.0.0"),
+		// ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
+		Port:            getEnvAsInt("PORT", 54988),
 		LogLevel:        getEnvOrDefault("LOG_LEVEL", "INFO"),
 		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"), // Optional in UI mode
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),

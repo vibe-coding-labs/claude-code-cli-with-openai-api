@@ -50,8 +50,9 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 
 	// Server configuration flags
+	// ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
 	serverCmd.Flags().StringVarP(&host, "host", "H", "", "Server host (default: 0.0.0.0, or from HOST env var)")
-	serverCmd.Flags().IntVarP(&port, "port", "p", 10086, "Server port (default: 10086, or from PORT env var)")
+	serverCmd.Flags().IntVarP(&port, "port", "p", 54988, "Server port (default: 54988, or from PORT env var)")
 	serverCmd.Flags().StringVarP(&logLevel, "log-level", "l", "", "Log level: DEBUG, INFO, WARN, ERROR (default: INFO)")
 	serverCmd.Flags().StringVarP(&openaiURL, "openai-url", "u", "", "OpenAI API base URL (default: https://api.openai.com/v1)")
 	serverCmd.Flags().StringVarP(&bigModel, "big-model", "b", "", "Model for opus requests (default: gpt-4o)")
