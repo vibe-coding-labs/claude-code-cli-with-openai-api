@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, message, Space, Tooltip } from 'antd';
-import { UserOutlined, LockOutlined, CopyOutlined, GithubOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { Form, Input, Button, Card, Typography, message, Tooltip } from 'antd';
+import { UserOutlined, LockOutlined, GithubOutlined } from '@ant-design/icons';
+import { useNavigate, Link } from 'react-router-dom';
 import { login, setToken, setCurrentUser } from '../services/auth';
 
 const { Title, Paragraph } = Typography;
@@ -9,8 +9,6 @@ const { Title, Paragraph } = Typography;
 const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-
-  const resetCommand = './claude-code-cli-with-openai-api reset-password';
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true);
@@ -25,14 +23,6 @@ const Login: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleCopyCommand = () => {
-    navigator.clipboard.writeText(resetCommand).then(() => {
-      message.success('命令已复制到剪贴板');
-    }).catch(() => {
-      message.error('复制失败，请手动复制');
-    });
   };
 
   return (
@@ -108,32 +98,21 @@ const Login: React.FC = () => {
               登录
             </Button>
           </Form.Item>
-        </Form>
 
-        <div style={{ marginTop: 16, padding: 12, background: '#f6f8fa', borderRadius: 4 }}>
-          <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
-            忘记密码？请使用命令行工具重置：
-          </Paragraph>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              value={resetCommand}
-              readOnly
-              style={{ 
-                fontFamily: 'monospace',
-                fontSize: 12,
-                background: '#fff'
-              }}
-            />
-            <Tooltip title="复制命令">
-              <Button 
-                icon={<CopyOutlined />} 
-                onClick={handleCopyCommand}
+          <Form.Item style={{ marginBottom: 0 }}>
+            <div style={{ textAlign: 'center' }}>
+              <Link 
+                to="/ui/forgot-password" 
+                style={{ 
+                  color: '#1890ff',
+                  fontSize: 14,
+                }}
               >
-                复制
-              </Button>
-            </Tooltip>
-          </Space.Compact>
-        </div>
+                忘记密码？
+              </Link>
+            </div>
+          </Form.Item>
+        </Form>
       </Card>
     </div>
   );

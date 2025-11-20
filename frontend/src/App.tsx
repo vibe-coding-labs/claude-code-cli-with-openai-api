@@ -11,6 +11,7 @@ import ConfigEdit from './components/ConfigEdit';
 import ConfigCreate from './components/ConfigCreate';
 import ConfigTestPage from './components/ConfigTestPage';
 import Login from './components/Login';
+import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
 import ProtectedRoute from './components/ProtectedRoute';
 import { logout, getCurrentUser } from './services/auth';
@@ -89,6 +90,7 @@ const App: React.FC = () => {
     <Router>
       <Routes>
         <Route path="/ui/login" element={<Login />} />
+        <Route path="/ui/forgot-password" element={<ForgotPassword />} />
         <Route path="/ui/initialize" element={<Initialize />} />
         <Route path="/ui/*" element={
           <AppLayout>
