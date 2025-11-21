@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -20,15 +21,18 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	// Open database connection
-	db, err := sql.Open("sqlite3", dbPath)
+	// Open database connection with WAL mode for better concurrency
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Set connection pool settings
-	db.SetMaxOpenConns(1) // SQLite works better with a single connection
-	db.SetMaxIdleConns(1)
+	// Set connection pool settings for better concurrency
+	// WAL mode allows multiple readers with one writer
+	db.SetMaxOpenConns(25) // Allow up to 25 concurrent connections
+	db.SetMaxIdleConns(5)  // Keep 5 idle connections ready
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 
 	// Test connection
 	if err := db.Ping(); err != nil {

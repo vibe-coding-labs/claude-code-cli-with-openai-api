@@ -134,11 +134,19 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 }
 
 // GetConfigByAnthropicAPIKey retrieves an API configuration by Anthropic API key
+// Uses in-memory cache to reduce database load
 func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("empty API key")
 	}
 
+	// Try to get from cache first
+	cache := GetConfigCache()
+	if cached, found := cache.Get(apiKey); found {
+		return cached, nil
+	}
+
+	// Cache miss - query database
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
@@ -179,6 +187,9 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	}
 	config.OpenAIAPIKey = decrypted
 	config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
+
+	// Store in cache for future requests
+	cache.Set(apiKey, config)
 
 	return config, nil
 }
@@ -343,40 +354,35 @@ func UpdateAPIConfig(config *APIConfig) error {
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 
+	// Invalidate cache for this config's API key
+	cache := GetConfigCache()
+	cache.Invalidate(config.AnthropicAPIKey)
+
 	return nil
 }
 
 // DeleteAPIConfig deletes an API configuration
 func DeleteAPIConfig(id string) error {
-	_, err := DB.Exec("DELETE FROM api_configs WHERE id = ?", id)
+	// Get config first to invalidate cache
+	config, err := GetAPIConfig(id)
+	if err == nil && config != nil {
+		// Invalidate cache
+		cache := GetConfigCache()
+		cache.Invalidate(config.AnthropicAPIKey)
+	}
+
+	_, err = DB.Exec("DELETE FROM api_configs WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete config: %w", err)
 	}
 	return nil
 }
 
-// LogRequest logs an API request
+// LogRequest logs an API request asynchronously (non-blocking)
 func LogRequest(log *RequestLog) error {
-	query := `
-		INSERT INTO request_logs (
-			config_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, request_body, response_body,
-			request_summary, response_preview, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`
-
-	_, err := DB.Exec(query,
-		log.ConfigID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
-		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
-		log.RequestSummary, log.ResponsePreview,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to log request: %w", err)
-	}
-
-	// Update aggregated statistics
-	return updateTokenStats(log)
+	// Use async logging to avoid blocking the request handling
+	LogRequestAsync(log)
+	return nil
 }
 
 // updateTokenStats updates the aggregated token statistics

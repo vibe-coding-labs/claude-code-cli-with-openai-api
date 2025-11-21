@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,11 @@ import (
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues
 func ClassifyOpenAIError(errorDetail string) string {
+	// Handle empty error messages
+	if strings.TrimSpace(errorDetail) == "" {
+		return "Server error with no details provided. This may be a temporary issue, please retry."
+	}
+
 	errorStr := strings.ToLower(errorDetail)
 
 	// Region/country restrictions
@@ -68,6 +74,21 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		retryCount = 100
 	}
 
+	// Create HTTP client with optimized transport for connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:          100,              // Maximum idle connections across all hosts
+		MaxIdleConnsPerHost:   100,              // Maximum idle connections per host
+		MaxConnsPerHost:       0,                // No limit on total connections per host
+		IdleConnTimeout:       90 * time.Second, // How long an idle connection remains open
+		DisableKeepAlives:     false,            // Enable HTTP keep-alive
+		DisableCompression:    false,            // Enable compression
+		ForceAttemptHTTP2:     true,             // Try HTTP/2 when possible
+		TLSHandshakeTimeout:   10 * time.Second, // TLS handshake timeout
+		ResponseHeaderTimeout: 30 * time.Second, // Wait for response headers
+		ExpectContinueTimeout: 1 * time.Second,  // Expect: 100-continue timeout
+		// Note: No DialContext timeout - let individual requests control their timeouts
+	}
+
 	return &OpenAIClient{
 		APIKey:        cfg.OpenAIAPIKey,
 		BaseURL:       cfg.OpenAIBaseURL,
@@ -76,7 +97,10 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		APIVersion:    cfg.AzureAPIVersion,
 		RetryCount:    retryCount,
 		httpClient: &http.Client{
-			Timeout: time.Duration(cfg.RequestTimeout) * time.Second,
+			// Don't set a global timeout - we'll handle timeouts per-request
+			// to avoid timing out during long response body reads
+			Timeout:   0,
+			Transport: transport,
 		},
 	}
 }
@@ -126,7 +150,12 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			time.Sleep(backoffDuration)
 		}
 
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+		// Create context with timeout for this attempt
+		// Use 2x the configured timeout to allow for response body reading
+		ctx, cancel := context.WithTimeout(context.Background(), c.Timeout*2)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -162,14 +191,29 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			errorMsg := string(body)
+
+			// Provide more context when body is empty
+			if strings.TrimSpace(errorMsg) == "" {
+				errorMsg = fmt.Sprintf("HTTP %d error with no response body", resp.StatusCode)
+			}
+
 			classifiedError := ClassifyOpenAIError(errorMsg)
 
-			// Check if error is retryable (5xx, 429, network errors)
-			isRetryable := resp.StatusCode >= 500 || resp.StatusCode == 429
+			// Check if error is retryable
+			// Retryable: 5xx, 429 (rate limit), 408 (timeout), 406 (not acceptable), 502-504 (gateway errors)
+			isRetryable := resp.StatusCode >= 500 ||
+				resp.StatusCode == 429 ||
+				resp.StatusCode == 408 ||
+				resp.StatusCode == 406 ||
+				resp.StatusCode == 502 ||
+				resp.StatusCode == 503 ||
+				resp.StatusCode == 504
 
 			if !isRetryable || attempt >= c.RetryCount {
 				logger.Error("← [OpenAIClient] OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
-				logger.Debug("  Raw error: %s", errorMsg)
+				if len(body) > 0 {
+					logger.Debug("  Raw error: %s", string(body))
+				}
 				return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
 			}
 
@@ -181,14 +225,39 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		// Success!
 		var openAIResp models.OpenAIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
-			logger.Error("← [OpenAIClient] Failed to decode response: %v", err)
-			return nil, fmt.Errorf("failed to decode response: %w", err)
+			resp.Body.Close()
+			logger.Warn("← [OpenAIClient] Failed to decode response (attempt %d/%d): %v", attempt+1, c.RetryCount+1, err)
+
+			// Treat decode errors as retryable (could be partial/corrupted response)
+			if attempt < c.RetryCount {
+				lastErr = fmt.Errorf("failed to decode response: %w", err)
+				logger.Info("  Retrying due to decode error...")
+				continue
+			}
+
+			logger.Error("← [OpenAIClient] Failed to decode response after %d attempts", c.RetryCount+1)
+			return nil, fmt.Errorf("failed to decode response after %d attempts: %w", c.RetryCount+1, err)
+		}
+
+		// Check if response has valid choices
+		if len(openAIResp.Choices) == 0 {
+			logger.Warn("← [OpenAIClient] API returned empty choices (attempt %d/%d)", attempt+1, c.RetryCount+1)
+			logger.Debug("  Response body: ID=%s, Model=%s, Usage=%+v", openAIResp.ID, openAIResp.Model, openAIResp.Usage)
+
+			// Treat empty choices as retryable error
+			if attempt < c.RetryCount {
+				lastErr = fmt.Errorf("API returned empty choices")
+				logger.Info("  Retrying due to empty response...")
+				continue
+			}
+
+			// Last attempt, return error
+			logger.Error("← [OpenAIClient] API consistently returns empty choices after %d attempts", c.RetryCount+1)
+			return nil, fmt.Errorf("API returned empty choices after %d attempts", c.RetryCount+1)
 		}
 
 		logger.Info("← [OpenAIClient] Chat completion successful (took %v)", time.Since(startTime))
-		if len(openAIResp.Choices) > 0 {
-			logger.Debug("  Response tokens: %+v", openAIResp.Usage)
-		}
+		logger.Debug("  Response tokens: %+v", openAIResp.Usage)
 
 		return &openAIResp, nil
 	}
@@ -209,9 +278,13 @@ func min(a, b int) int {
 
 func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
 	logger := utils.GetLogger()
+	startTime := time.Now()
+	deadline := startTime.Add(c.Timeout)
+
 	logger.Info("→ [OpenAIClient] Creating chat completion (streaming)")
 	logger.Debug("  Model: %s", openAIReq.Model)
 	logger.Debug("  Messages: %d", len(openAIReq.Messages))
+	logger.Debug("  Retry count: %d", c.RetryCount)
 
 	// Ensure stream is enabled
 	openAIReq.Stream = true
@@ -237,48 +310,107 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 	}
 	logger.Debug("  Target URL: %s", url)
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
-	if err != nil {
-		logger.Error("← [OpenAIClient] Failed to create request: %v", err)
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	// Retry logic for streaming requests
+	var lastErr error
+	for attempt := 0; attempt <= c.RetryCount; attempt++ {
+		// Check if we've exceeded the timeout
+		if time.Now().After(deadline) {
+			logger.Error("← [OpenAIClient] Request timeout exceeded, aborting retries")
+			return nil, fmt.Errorf("request timeout exceeded after %d attempts", attempt)
+		}
+
+		if attempt > 0 {
+			// Calculate exponential backoff: 1s, 2s, 4s, 8s...
+			backoffDuration := time.Duration(1<<uint(attempt-1)) * time.Second
+			// Don't wait if it would exceed the deadline
+			if time.Now().Add(backoffDuration).After(deadline) {
+				logger.Error("← [OpenAIClient] Insufficient time for backoff, aborting retries")
+				break
+			}
+			logger.Info("  ⏱️  Retry attempt %d/%d after %v backoff", attempt, c.RetryCount, backoffDuration)
+			time.Sleep(backoffDuration)
+		}
+
+		// For streaming, don't set timeout on context as response body will be read over time
+		// Only use deadline check for connection establishment
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+		if err != nil {
+			logger.Error("← [OpenAIClient] Failed to create request: %v", err)
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// Set headers
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("Accept", "text/event-stream")
+
+		// Add Azure API version if set
+		if c.APIVersion != "" {
+			q := req.URL.Query()
+			q.Add("api-version", c.APIVersion)
+			req.URL.RawQuery = q.Encode()
+		}
+
+		// Add custom headers
+		for key, value := range c.CustomHeaders {
+			req.Header.Set(key, value)
+		}
+
+		if attempt == 0 {
+			logger.Debug("  Sending streaming request to OpenAI...")
+		}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			logger.Warn("← [OpenAIClient] Request failed (attempt %d/%d): %v", attempt+1, c.RetryCount+1, err)
+			continue
+		}
+		logger.Debug("  Response status: %d", resp.StatusCode)
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			errorMsg := string(body)
+
+			// Provide more context when body is empty
+			if strings.TrimSpace(errorMsg) == "" {
+				errorMsg = fmt.Sprintf("HTTP %d error with no response body", resp.StatusCode)
+			}
+
+			classifiedError := ClassifyOpenAIError(errorMsg)
+
+			// Check if error is retryable
+			// Retryable: 5xx, 429 (rate limit), 408 (timeout), 406 (not acceptable), 502-504 (gateway errors)
+			isRetryable := resp.StatusCode >= 500 ||
+				resp.StatusCode == 429 ||
+				resp.StatusCode == 408 ||
+				resp.StatusCode == 406 ||
+				resp.StatusCode == 502 ||
+				resp.StatusCode == 503 ||
+				resp.StatusCode == 504
+
+			if !isRetryable || attempt >= c.RetryCount {
+				logger.Error("← [OpenAIClient] OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
+				if len(body) > 0 {
+					logger.Debug("  Raw error: %s", string(body))
+				}
+				// Return error with status code information for proper error handling
+				return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
+			}
+
+			lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
+			logger.Warn("← [OpenAIClient] Retryable error (attempt %d/%d, status %d): %s", attempt+1, c.RetryCount+1, resp.StatusCode, classifiedError)
+			continue
+		}
+
+		// Success!
+		logger.Info("← [OpenAIClient] Streaming response started (took %v)", time.Since(startTime))
+		return resp.Body, nil
 	}
 
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	req.Header.Set("Accept", "text/event-stream")
-
-	// Add Azure API version if set
-	if c.APIVersion != "" {
-		q := req.URL.Query()
-		q.Add("api-version", c.APIVersion)
-		req.URL.RawQuery = q.Encode()
+	// All retries failed
+	if lastErr != nil {
+		return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
 	}
-
-	// Add custom headers
-	for key, value := range c.CustomHeaders {
-		req.Header.Set(key, value)
-	}
-
-	logger.Debug("  Sending streaming request to OpenAI...")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		logger.Error("← [OpenAIClient] Failed to send request: %v", err)
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	logger.Debug("  Response status: %d", resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		errorMsg := string(body)
-		classifiedError := ClassifyOpenAIError(errorMsg)
-		logger.Error("← [OpenAIClient] OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
-		logger.Debug("  Raw error: %s", errorMsg)
-		// Return error with status code information for proper error handling
-		return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
-	}
-
-	logger.Info("← [OpenAIClient] Streaming response started")
-	return resp.Body, nil
+	return nil, fmt.Errorf("all retry attempts failed")
 }

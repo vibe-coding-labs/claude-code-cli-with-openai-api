@@ -84,6 +84,14 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	}
 
 	claudeResp := converter.ConvertOpenAIToClaudeResponse(openAIResp, claudeReq)
+	if claudeResp == nil {
+		fmt.Printf("❌ [Non-Streaming] Failed to convert response - response is nil\n")
+		err := fmt.Errorf("failed to convert OpenAI response to Claude format: response or choices is empty")
+		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		return
+	}
+
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
 
 	// 记录请求日志（含详细请求和响应）

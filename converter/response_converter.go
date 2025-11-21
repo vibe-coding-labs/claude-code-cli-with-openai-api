@@ -17,6 +17,10 @@ import (
 
 // ConvertOpenAIToClaudeResponse converts OpenAI response to Claude format
 func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
+	if openAIResp == nil {
+		return nil
+	}
+
 	if len(openAIResp.Choices) == 0 {
 		return nil
 	}
@@ -157,6 +161,10 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 	sendSSE(c, models.EventPing, map[string]interface{}{
 		"type": models.EventPing,
 	})
+
+	// Start heartbeat to keep connection alive (ping every 5 seconds)
+	heartbeatStop := StartHeartbeat(c, ctx, 5*time.Second)
+	defer StopHeartbeat(heartbeatStop)
 
 	// Process streaming chunks
 	scanner := bufio.NewScanner(reader)
