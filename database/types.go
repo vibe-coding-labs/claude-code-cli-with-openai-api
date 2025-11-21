@@ -18,6 +18,7 @@ type APIConfig struct {
 	ModelMappings         map[string]string `json:"model_mappings,omitempty"`   // 高级模型映射
 	MaxTokensLimit        int               `json:"max_tokens_limit"`
 	RequestTimeout        int               `json:"request_timeout"`
+	RetryCount            int               `json:"retry_count"` // 重试次数，默认3次，最大100次
 	AnthropicAPIKey       string            `json:"anthropic_api_key,omitempty"`
 	CustomHeaders         map[string]string `json:"custom_headers,omitempty"` // 自定义请求头
 	Enabled               bool              `json:"enabled"`

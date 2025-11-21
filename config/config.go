@@ -11,18 +11,20 @@ import (
 
 type Config struct {
 	OpenAIAPIKey    string
-	AnthropicAPIKey string
 	OpenAIBaseURL   string
+	BigModel        string
+	MiddleModel     string
+	SmallModel      string
+	SupportedModels []string
+	MaxTokensLimit  int
+	RequestTimeout  int
+	RetryCount      int
+	AnthropicAPIKey string
 	AzureAPIVersion string
 	Host            string
 	Port            int
 	LogLevel        string
-	MaxTokensLimit  int
 	MinTokensLimit  int
-	RequestTimeout  int
-	BigModel        string
-	MiddleModel     string
-	SmallModel      string
 	CustomHeaders   map[string]string
 }
 
@@ -32,10 +34,8 @@ func LoadConfig() (*Config, error) {
 	// Try to load .env file (optional)
 	_ = godotenv.Load()
 
+	// OPENAI_API_KEY is optional since configs are managed through UI
 	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
-	if openAIAPIKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY not found in environment variables")
-	}
 
 	config := &Config{
 		OpenAIAPIKey:    openAIAPIKey,
@@ -49,6 +49,7 @@ func LoadConfig() (*Config, error) {
 		MaxTokensLimit: getEnvAsInt("MAX_TOKENS_LIMIT", 4096),
 		MinTokensLimit: getEnvAsInt("MIN_TOKENS_LIMIT", 100),
 		RequestTimeout: getEnvAsInt("REQUEST_TIMEOUT", 90),
+		RetryCount:     getEnvAsInt("RETRY_COUNT", 3),
 		BigModel:       getEnvOrDefault("BIG_MODEL", "gpt-4o"),
 		SmallModel:     getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
 		CustomHeaders:  make(map[string]string),

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { usePageTitle } from '../utils/pageTitle';
 import {
   Card,
   Input,
@@ -36,6 +37,7 @@ const ConfigTestPage: React.FC = () => {
   const [config, setConfig] = useState<any>(null);
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  usePageTitle(config ? `测试 ${config.name}` : '配置测试');
   const [curlCommand, setCurlCommand] = useState<string>('');
   const [requestPayload, setRequestPayload] = useState<any>(null);
 

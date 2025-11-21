@@ -1,0 +1,39 @@
+#!/bin/bash
+set -e
+
+# Docker image configuration
+IMAGE_NAME="${DOCKER_REGISTRY}/aigchub/claude-code-cli-openai-api"
+TAG="latest"
+
+# Kubernetes configuration
+NAMESPACE="${K8S_NAMESPACE}"
+
+# Deployment server
+SERVER="${DEPLOY_SERVER}"
+
+echo "=== Building Docker image ==="
+docker build -t ${IMAGE_NAME}:${TAG} .
+
+echo "=== Pushing to registry ==="
+docker push ${IMAGE_NAME}:${TAG}
+
+echo "=== Ensuring data directory exists ==="
+ssh ${SERVER} "mkdir -p /data/k8s-volumes/claude-code-cli-openai-api && chmod 755 /data/k8s-volumes/claude-code-cli-openai-api"
+
+echo "=== Deploying to k8s ==="
+ssh ${SERVER} "kubectl apply -f - <<EOF
+$(cat k8s/deployment.yaml)
+EOF"
+
+ssh ${SERVER} "kubectl apply -f - <<EOF
+$(cat k8s/ingress.yaml)
+EOF"
+
+echo "=== Restarting deployment ==="
+ssh ${SERVER} "kubectl rollout restart deployment/claude-code-cli-openai-api -n ${NAMESPACE}"
+
+echo "=== Waiting for deployment ==="
+ssh ${SERVER} "kubectl rollout status deployment/claude-code-cli-openai-api -n ${NAMESPACE}"
+
+echo "=== Done! ==="
+echo "Service URL: https://your-domain.example.com"

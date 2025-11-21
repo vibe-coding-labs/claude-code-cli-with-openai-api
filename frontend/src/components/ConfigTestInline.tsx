@@ -7,14 +7,18 @@ import {
   Typography,
   Divider,
   Alert,
+  Tabs,
 } from 'antd';
 import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import axios from 'axios';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
+const { TabPane } = Tabs;
 
 interface ConfigTestInlineProps {
   configId: string;
@@ -95,38 +99,98 @@ const ConfigTestInline: React.FC<ConfigTestInlineProps> = ({ configId }) => {
             >
               {result.success !== false ? (
                 <>
-                  <div style={{ marginBottom: 12 }}>
+                  <div style={{ marginBottom: 16 }}>
                     <Text strong>响应消息：</Text>
-                    <Paragraph style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>
-                      {result.response?.content || result.message || '无响应内容'}
+                    <Paragraph style={{ marginTop: 8, whiteSpace: 'pre-wrap', background: '#f5f5f5', padding: 12, borderRadius: 4 }}>
+                      {result.response?.content || result.response || result.message || '无响应内容'}
                     </Paragraph>
                   </div>
 
-                  {result.model && (
-                    <div style={{ marginBottom: 12 }}>
-                      <Text strong>使用模型：</Text>
-                      <Text style={{ marginLeft: 8 }}>{result.model}</Text>
-                    </div>
-                  )}
-
-                  {result.usage && (
-                    <div>
-                      <Text strong>Token使用：</Text>
-                      <div style={{ marginTop: 8 }}>
-                        <Text>输入: {result.usage.input_tokens || result.usage.prompt_tokens || 0}</Text>
-                        <Divider type="vertical" />
-                        <Text>输出: {result.usage.output_tokens || result.usage.completion_tokens || 0}</Text>
-                        <Divider type="vertical" />
-                        <Text>总计: {result.usage.total_tokens || 0}</Text>
+                  <div style={{ marginBottom: 16 }}>
+                    {result.model && (
+                      <div style={{ marginBottom: 8 }}>
+                        <Text strong>使用模型：</Text>
+                        <Text style={{ marginLeft: 8 }} code>{result.model}</Text>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {result.duration_ms && (
-                    <div style={{ marginTop: 12 }}>
-                      <Text strong>响应时间：</Text>
-                      <Text style={{ marginLeft: 8 }}>{result.duration_ms}ms</Text>
-                    </div>
+                    {result.usage && (
+                      <div style={{ marginBottom: 8 }}>
+                        <Text strong>Token使用：</Text>
+                        <div style={{ marginTop: 8 }}>
+                          <Text>输入: {result.usage.input_tokens || result.usage.prompt_tokens || 0}</Text>
+                          <Divider type="vertical" />
+                          <Text>输出: {result.usage.output_tokens || result.usage.completion_tokens || 0}</Text>
+                          <Divider type="vertical" />
+                          <Text>总计: {result.usage.total_tokens || 0}</Text>
+                        </div>
+                      </div>
+                    )}
+
+                    {result.duration_ms && (
+                      <div>
+                        <Text strong>响应时间：</Text>
+                        <Text style={{ marginLeft: 8 }}>{result.duration_ms}ms ({(result.duration_ms / 1000).toFixed(2)}s)</Text>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 请求体和响应体 */}
+                  {(result.request_body || result.response_body) && (
+                    <Tabs defaultActiveKey="1" style={{ marginTop: 16 }}>
+                      {result.request_body && (
+                        <TabPane tab="完整请求体" key="1">
+                          <SyntaxHighlighter
+                            language="json"
+                            style={vscDarkPlus}
+                            customStyle={{
+                              margin: 0,
+                              borderRadius: 4,
+                              fontSize: 12,
+                            }}
+                            wrapLines={true}
+                            wrapLongLines={true}
+                          >
+                            {(() => {
+                              try {
+                                const data = typeof result.request_body === 'string' 
+                                  ? JSON.parse(result.request_body)
+                                  : result.request_body;
+                                return JSON.stringify(data, null, 2);
+                              } catch (e) {
+                                return result.request_body;
+                              }
+                            })()}
+                          </SyntaxHighlighter>
+                        </TabPane>
+                      )}
+                      {result.response_body && (
+                        <TabPane tab="完整响应体" key="2">
+                          <SyntaxHighlighter
+                            language="json"
+                            style={vscDarkPlus}
+                            customStyle={{
+                              margin: 0,
+                              borderRadius: 4,
+                              fontSize: 12,
+                            }}
+                            wrapLines={true}
+                            wrapLongLines={true}
+                          >
+                            {(() => {
+                              try {
+                                const data = typeof result.response_body === 'string'
+                                  ? JSON.parse(result.response_body)
+                                  : result.response_body;
+                                return JSON.stringify(data, null, 2);
+                              } catch (e) {
+                                return result.response_body;
+                              }
+                            })()}
+                          </SyntaxHighlighter>
+                        </TabPane>
+                      )}
+                    </Tabs>
                   )}
                 </>
               ) : (

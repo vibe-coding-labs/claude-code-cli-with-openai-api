@@ -131,6 +131,23 @@ curl -X POST http://localhost:8083/v1/messages \
 ### 健康检查
 - `GET /health` - 服务健康状态
 
+## 🚀 生产部署
+
+详细的生产部署指南请参考 [DEPLOYMENT.md](DEPLOYMENT.md)
+
+快速部署步骤：
+
+```bash
+# 1. 复制模板文件
+cp deploy-prod.sh.template deploy-prod.sh
+cp k8s/deployment.yaml.template k8s/deployment.yaml
+cp k8s/ingress.yaml.template k8s/ingress.yaml
+
+# 2. 编辑配置文件，填入你的实际信息
+# 3. 执行部署
+./deploy-prod.sh
+```
+
 ## 🛠️ 开发
 
 ### 项目结构
@@ -183,10 +200,22 @@ go test ./...
 
 ## 🔐 安全特性
 
-- ✅ API Key 加密存储
+- ✅ API Key 加密存储（AES-256-GCM）
 - ✅ 基于 API Key 的请求认证
 - ✅ 配置级别的访问控制
 - ✅ 无效 API Key 自动拒绝（401 Unauthorized）
+- ✅ JWT 认证保护管理界面
+- ✅ 敏感数据文件自动排除版本控制
+
+### 安全最佳实践
+
+1. **环境变量**: 使用 `env.example` 创建你自己的 `.env` 文件，不要提交真实的 API 密钥
+2. **数据库权限**: 确保 `data/proxy.db` 文件权限正确（建议 600）
+3. **生产部署**: 始终使用 HTTPS
+4. **访问控制**: 在生产环境中配置防火墙规则
+5. **密码策略**: 使用强密码保护管理界面
+
+更多安全信息请参阅 [SECURITY.md](SECURITY.md)
 
 ## 📄 许可证
 

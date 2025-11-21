@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,12 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/handler"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
+)
+
+// These functions are implemented in frontend_embed.go (production) or frontend_dev.go (development)
+var (
+	getFrontendFS      func() (fs.FS, error)
+	isFrontendEmbedded func() bool
 )
 
 var (
@@ -103,12 +111,19 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load configuration
+	// Load configuration (OPENAI_API_KEY is optional for UI-managed configs)
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		color.New(color.FgRed, color.Bold).Print("❌ Configuration Error: ")
-		color.New(color.FgRed).Println(err)
-		return err
+		color.New(color.FgYellow, color.Bold).Print("⚠️  Configuration Warning: ")
+		color.New(color.FgYellow).Println(err)
+		color.New(color.FgCyan).Println("   The service will start without a default API configuration.")
+		color.New(color.FgCyan).Println("   You can manage configurations through the web UI.")
+		// Create minimal config for server startup
+		cfg = &config.Config{
+			Host:     "0.0.0.0",
+			Port:     54988,
+			LogLevel: "INFO",
+		}
 	}
 
 	// Set Gin mode based on log level
@@ -124,14 +139,30 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Enable CORS - 自定义中间件
 	router.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
+
+		// 检查是否允许该来源
+		allowed := false
 		if origin == "http://localhost:54989" || origin == "http://127.0.0.1:54989" {
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, x-api-key")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			c.Header("Access-Control-Expose-Headers", "Content-Length")
+			allowed = true
+		} else if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".zhaixingren.cn") {
+			allowed = true
 		}
 
+		// 调试日志
+		if origin != "" {
+			fmt.Printf("[CORS] Origin: %s, Allowed: %v\n", origin, allowed)
+		}
+
+		if allowed {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, x-api-key")
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length")
+			fmt.Printf("[CORS] Headers set for origin: %s\n", origin)
+		}
+
+		// 处理预检请求
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
@@ -228,49 +259,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.POST("/configs/:id/test", h.TestConfig)
 	}
 
-	// Serve UI static files
-	frontendBuildPath := filepath.Join(".", "frontend", "build")
-	if _, err := os.Stat(frontendBuildPath); err == nil {
-		// Serve static files
-		router.GET("/ui", func(c *gin.Context) {
-			c.Redirect(http.StatusMovedPermanently, "/ui/")
-		})
-
-		router.GET("/ui/*filepath", func(c *gin.Context) {
-			path := c.Param("filepath")
-
-			// Handle root path
-			if path == "/" || path == "" {
-				c.File(filepath.Join(frontendBuildPath, "index.html"))
-				return
-			}
-
-			// Remove leading slash
-			if len(path) > 0 && path[0] == '/' {
-				path = path[1:]
-			}
-
-			// Handle static files
-			if len(path) > 7 && path[:7] == "static/" {
-				staticPath := filepath.Join(frontendBuildPath, path)
-				if info, err := os.Stat(staticPath); err == nil && !info.IsDir() {
-					c.File(staticPath)
-					return
-				}
-				c.Status(http.StatusNotFound)
-				return
-			}
-
-			// Handle other files in build root
-			fullPath := filepath.Join(frontendBuildPath, path)
-			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
-				c.File(fullPath)
-				return
-			}
-
-			// For all other paths (React Router routes), serve index.html
-			c.File(filepath.Join(frontendBuildPath, "index.html"))
-		})
+	// Serve UI static files (embedded or from filesystem)
+	frontendFS, err := getFrontendFS()
+	if err == nil {
+		ServeFrontend(router, frontendFS, isFrontendEmbedded())
+		if isFrontendEmbedded() {
+			color.New(color.FgCyan).Println("📦 Using embedded frontend files")
+		} else {
+			color.New(color.FgCyan).Println("📁 Using filesystem frontend files (development mode)")
+		}
+	} else {
+		color.New(color.FgYellow).Printf("⚠️  Frontend files not available: %v\n", err)
 	}
 
 	// Find available port

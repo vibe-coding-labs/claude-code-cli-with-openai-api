@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Form, Input, Button, Card, Typography, message, Space, Tooltip } from 'antd';
 import { UserOutlined, LockOutlined, CopyOutlined, GithubOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { usePageTitle } from '../utils/pageTitle';
 import { initializeSystem, setToken, setCurrentUser } from '../services/auth';
 
 const { Title, Paragraph } = Typography;
 
 const Initialize: React.FC = () => {
+  usePageTitle('系统初始化');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 

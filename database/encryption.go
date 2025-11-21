@@ -13,7 +13,11 @@ import (
 var encryptionKey []byte
 
 // InitEncryption initializes the encryption key
-// The key is hardcoded for simplicity and consistency
+// The key is hardcoded for simplicity and consistency across deployments
+// NOTE: This is a design tradeoff - it ensures that API keys encrypted by one instance
+// can be decrypted by another, but means all deployments share the same encryption key.
+// For higher security, consider using environment-based keys per deployment,
+// but this will require data migration when moving databases between instances.
 func InitEncryption() error {
 	// Use a fixed key to ensure data encrypted with one instance can be decrypted by another
 	keyStr := "claude-with-openai-api-fixed-encryption-key-2024"

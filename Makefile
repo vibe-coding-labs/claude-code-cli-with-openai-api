@@ -1,4 +1,4 @@
-.PHONY: build run clean test help install uninstall
+.PHONY: build run clean test help install uninstall build-frontend build-prod build-dev
 
 # Binary name
 BINARY_NAME=claude-with-openai-api
@@ -8,13 +8,28 @@ INSTALL_DIR?=~/.local/bin
 SYSTEM_INSTALL_DIR=/usr/local/bin
 
 # Default target
-all: build
+all: build-prod
 
-# Build the application
-build:
-	@echo "Building claude-with-openai-api..."
-	@go build -o claude-with-openai-api main.go
-	@echo "Build complete!"
+# Build frontend (React app)
+build-frontend:
+	@echo "Building frontend..."
+	@cd frontend && npm run build
+	@echo "Frontend build complete!"
+
+# Build for production (with embedded frontend)
+build-prod: build-frontend
+	@echo "Building claude-with-openai-api (production with embedded frontend)..."
+	@go build -o $(BINARY_NAME) .
+	@echo "Production build complete! Frontend files are embedded in the binary."
+
+# Build for development (without embedded frontend)
+build-dev:
+	@echo "Building claude-with-openai-api (development mode)..."
+	@go build -tags dev -o $(BINARY_NAME) .
+	@echo "Development build complete! Will use filesystem frontend files."
+
+# Build the application (production by default)
+build: build-prod
 
 # Run the application
 run: build
@@ -155,15 +170,18 @@ uninstall:
 # Display help
 help:
 	@echo "Available targets:"
-	@echo "  build         - Build the application"
-	@echo "  run           - Build and run the application"
-	@echo "  start         - Run existing binary"
-	@echo "  clean         - Remove build artifacts"
-	@echo "  deps          - Download and tidy dependencies"
-	@echo "  fmt           - Format code"
-	@echo "  test          - Run tests"
-	@echo "  install       - Install binary to ~/.local/bin (or system directory if needed)"
+	@echo "  build          - Build for production (with embedded frontend)"
+	@echo "  build-prod     - Build for production (with embedded frontend)"
+	@echo "  build-dev      - Build for development (use filesystem frontend)"
+	@echo "  build-frontend - Build frontend only"
+	@echo "  run            - Build and run the application"
+	@echo "  start          - Run existing binary"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  deps           - Download and tidy dependencies"
+	@echo "  fmt            - Format code"
+	@echo "  test           - Run tests"
+	@echo "  install        - Install binary to ~/.local/bin (or system directory if needed)"
 	@echo "  install-system - Install binary to /usr/local/bin (requires sudo)"
-	@echo "  uninstall     - Remove binary from PATH"
-	@echo "  help          - Show this help message"
+	@echo "  uninstall      - Remove binary from PATH"
+	@echo "  help           - Show this help message"
 

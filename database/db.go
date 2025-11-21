@@ -61,6 +61,7 @@ func createTables() error {
 		small_model TEXT NOT NULL,
 		max_tokens_limit INTEGER DEFAULT 16384,
 		request_timeout INTEGER DEFAULT 180,
+		retry_count INTEGER DEFAULT 3,
 		anthropic_api_key TEXT,
 		enabled BOOLEAN DEFAULT 1,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -148,6 +149,7 @@ func runMigrations() error {
 		`ALTER TABLE request_logs ADD COLUMN response_body TEXT;`,
 		`ALTER TABLE request_logs ADD COLUMN request_summary TEXT;`,
 		`ALTER TABLE request_logs ADD COLUMN response_preview TEXT;`,
+		`ALTER TABLE api_configs ADD COLUMN retry_count INTEGER DEFAULT 3;`,
 		// 迁移2: 为 api_configs 添加 supported_models 字段（JSON格式存储模型列表）
 		`ALTER TABLE api_configs ADD COLUMN supported_models TEXT;`,
 	}

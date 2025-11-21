@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-code-cli-openai-api
+  namespace: ${K8S_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: claude-code-cli-openai-api
+  template:
+    metadata:
+      labels:
+        app: claude-code-cli-openai-api
+    spec:
+      containers:
+      - name: claude-code-cli-openai-api
+        image: ${DOCKER_REGISTRY}/aigchub/claude-code-cli-openai-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 54988
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+      volumes:
+      - name: data
+        hostPath:
+          path: /data/k8s-volumes/claude-code-cli-openai-api
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-code-cli-openai-api-service
+  namespace: ${K8S_NAMESPACE}
+spec:
+  selector:
+    app: claude-code-cli-openai-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 54988
+  type: ClusterIP

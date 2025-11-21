@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { usePageTitle } from '../utils/pageTitle';
+import { getPreference, setPreference, PREFERENCE_KEYS } from '../utils/storage';
 import {
   Table,
   Button,
@@ -29,7 +31,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 const { Option } = Select;
 
 interface Config {
@@ -51,6 +53,7 @@ interface Config {
 }
 
 const ConfigListV2: React.FC = () => {
+  usePageTitle('配置列表');
   const navigate = useNavigate();
   const [configs, setConfigs] = useState<Config[]>([]);
   const [filteredConfigs, setFilteredConfigs] = useState<Config[]>([]);
@@ -58,6 +61,7 @@ const ConfigListV2: React.FC = () => {
   
   // View mode: 'card' or 'list'
   const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
+  const [isPreferenceLoaded, setIsPreferenceLoaded] = useState(false);
   
   // Filter states
   const [searchText, setSearchText] = useState('');
@@ -78,7 +82,40 @@ const ConfigListV2: React.FC = () => {
     }
   };
 
+  // Load user preferences on mount
   useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const savedViewMode = await getPreference<'card' | 'list'>(
+          PREFERENCE_KEYS.CONFIG_LIST_VIEW_MODE,
+          'list'
+        );
+        const savedSortField = await getPreference<string>(
+          PREFERENCE_KEYS.CONFIG_LIST_SORT_FIELD,
+          'created_at'
+        );
+        const savedSortOrder = await getPreference<'ascend' | 'descend'>(
+          PREFERENCE_KEYS.CONFIG_LIST_SORT_ORDER,
+          'descend'
+        );
+
+        if (savedViewMode) {
+          setViewMode(savedViewMode);
+        }
+        if (savedSortField) {
+          setSortField(savedSortField);
+        }
+        if (savedSortOrder) {
+          setSortOrder(savedSortOrder);
+        }
+      } catch (error) {
+        console.error('Failed to load preferences:', error);
+      } finally {
+        setIsPreferenceLoaded(true);
+      }
+    };
+
+    loadPreferences();
     loadConfigs();
   }, []);
 
@@ -173,12 +210,50 @@ const ConfigListV2: React.FC = () => {
     }
   };
 
-  const handleResetFilters = () => {
+  const handleResetFilters = async () => {
     setSearchText('');
     setStatusFilter('');
     setModelFilter('');
     setSortField('created_at');
     setSortOrder('descend');
+    
+    // Save reset preferences
+    try {
+      await setPreference(PREFERENCE_KEYS.CONFIG_LIST_SORT_FIELD, 'created_at');
+      await setPreference(PREFERENCE_KEYS.CONFIG_LIST_SORT_ORDER, 'descend');
+    } catch (error) {
+      console.error('Failed to save preferences:', error);
+    }
+  };
+
+  // Handle view mode change with preference saving
+  const handleViewModeChange = async (mode: 'card' | 'list') => {
+    setViewMode(mode);
+    try {
+      await setPreference(PREFERENCE_KEYS.CONFIG_LIST_VIEW_MODE, mode);
+    } catch (error) {
+      console.error('Failed to save view mode preference:', error);
+    }
+  };
+
+  // Handle sort field change with preference saving
+  const handleSortFieldChange = async (field: string) => {
+    setSortField(field);
+    try {
+      await setPreference(PREFERENCE_KEYS.CONFIG_LIST_SORT_FIELD, field);
+    } catch (error) {
+      console.error('Failed to save sort field preference:', error);
+    }
+  };
+
+  // Handle sort order change with preference saving
+  const handleSortOrderChange = async (order: 'ascend' | 'descend') => {
+    setSortOrder(order);
+    try {
+      await setPreference(PREFERENCE_KEYS.CONFIG_LIST_SORT_ORDER, order);
+    } catch (error) {
+      console.error('Failed to save sort order preference:', error);
+    }
   };
 
   const columns = [
@@ -382,14 +457,14 @@ const ConfigListV2: React.FC = () => {
               <Button
                 icon={<AppstoreOutlined />}
                 type={viewMode === 'card' ? 'primary' : 'default'}
-                onClick={() => setViewMode('card')}
+                onClick={() => handleViewModeChange('card')}
               />
             </Tooltip>
             <Tooltip title="列表视图">
               <Button
                 icon={<UnorderedListOutlined />}
                 type={viewMode === 'list' ? 'primary' : 'default'}
-                onClick={() => setViewMode('list')}
+                onClick={() => handleViewModeChange('list')}
               />
             </Tooltip>
           </Button.Group>
@@ -404,77 +479,93 @@ const ConfigListV2: React.FC = () => {
       </Space>
 
       {/* Filters */}
-      <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
-        <Row gutter={[16, 16]} align="middle">
-          <Col xs={24} sm={24} md={12} lg={8}>
-            <Input
-              placeholder="搜索名称、描述、URL、模型..."
-              prefix={<SearchOutlined />}
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              allowClear
-            />
+      <Card title="筛选和排序" size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]}>
+          {/* 第一行：搜索和筛选 */}
+          <Col xs={24} sm={12} md={8} lg={8}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12 }}>关键词搜索</Text>
+              <Input
+                placeholder="搜索名称、描述、URL、模型..."
+                prefix={<SearchOutlined />}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+              />
+            </Space>
           </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Select
-              placeholder="状态筛选"
-              value={statusFilter}
-              onChange={setStatusFilter}
-              style={{ width: '100%' }}
-              allowClear
-            >
-              <Option value="enabled">仅启用</Option>
-              <Option value="disabled">仅禁用</Option>
-            </Select>
+          
+          <Col xs={12} sm={6} md={4} lg={3}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12 }}>状态筛选</Text>
+              <Select
+                placeholder="全部状态"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                style={{ width: '100%' }}
+                allowClear
+              >
+                <Option value="enabled">✓ 仅启用</Option>
+                <Option value="disabled">✗ 仅禁用</Option>
+              </Select>
+            </Space>
           </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Input
-              placeholder="模型筛选"
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-              allowClear
-            />
+
+          <Col xs={12} sm={6} md={5} lg={4}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12 }}>模型筛选</Text>
+              <Input
+                placeholder="输入模型名称"
+                value={modelFilter}
+                onChange={(e) => setModelFilter(e.target.value)}
+                allowClear
+              />
+            </Space>
           </Col>
-          <Col xs={12} sm={8} md={6} lg={3}>
-            <Select
-              value={sortField}
-              onChange={setSortField}
-              style={{ width: '100%' }}
-            >
-              <Option value="created_at">按时间</Option>
-              <Option value="name">按名称</Option>
-              <Option value="openai_base_url">按URL</Option>
-            </Select>
+
+          <Col xs={12} sm={6} md={4} lg={3}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12 }}>排序字段</Text>
+              <Select
+                value={sortField}
+                onChange={handleSortFieldChange}
+                style={{ width: '100%' }}
+              >
+                <Option value="created_at">⏰ 创建时间</Option>
+                <Option value="name">📝 配置名称</Option>
+                <Option value="openai_base_url">🔗 Base URL</Option>
+              </Select>
+            </Space>
           </Col>
-          <Col xs={12} sm={8} md={6} lg={2}>
-            <Select
-              value={sortOrder}
-              onChange={setSortOrder}
-              style={{ width: '100%' }}
-            >
-              <Option value="descend">降序</Option>
-              <Option value="ascend">升序</Option>
-            </Select>
+
+          <Col xs={12} sm={6} md={3} lg={2}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12 }}>排序方式</Text>
+              <Select
+                value={sortOrder}
+                onChange={handleSortOrderChange}
+                style={{ width: '100%' }}
+              >
+                <Option value="descend">↓ 降序</Option>
+                <Option value="ascend">↑ 升序</Option>
+              </Select>
+            </Space>
           </Col>
-          <Col xs={12} sm={8} md={6} lg={2}>
-            <Button icon={<FilterOutlined />} onClick={handleResetFilters} style={{ width: '100%' }}>
-              重置
-            </Button>
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={1}>
-            <Button icon={<ReloadOutlined />} onClick={loadConfigs} style={{ width: '100%' }}>
-              刷新
-            </Button>
+
+          <Col xs={24} sm={12} md={7} lg={4}>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text strong style={{ fontSize: 12, opacity: 0 }}>操作</Text>
+              <Space style={{ width: '100%' }}>
+                <Button icon={<FilterOutlined />} onClick={handleResetFilters} style={{ flex: 1 }}>
+                  重置
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={loadConfigs} type="primary" style={{ flex: 1 }}>
+                  刷新
+                </Button>
+              </Space>
+            </Space>
           </Col>
         </Row>
-        <div style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
-          共 {configs.length} 个配置，显示 {filteredConfigs.length} 个
-          {(searchText || statusFilter || modelFilter) && (
-            <span style={{ marginLeft: 8, color: '#1890ff' }}>
-              (已应用筛选条件)
-            </span>
-          )}
-        </div>
       </Card>
 
       {viewMode === 'list' ? (

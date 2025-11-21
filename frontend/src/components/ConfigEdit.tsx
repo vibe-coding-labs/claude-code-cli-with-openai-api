@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { usePageTitle } from '../utils/pageTitle';
 import {
   Card,
   Form,
@@ -30,6 +31,7 @@ interface Config {
   small_model: string;
   max_tokens_limit: number;
   request_timeout: number;
+  retry_count: number;
   enabled: boolean;
 }
 
@@ -37,8 +39,11 @@ const ConfigEdit: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [form] = Form.useForm();
+  const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  
+  usePageTitle(config ? `编辑 ${config.name}` : '编辑配置');
 
   useEffect(() => {
     fetchConfig();
@@ -47,8 +52,9 @@ const ConfigEdit: React.FC = () => {
   const fetchConfig = async () => {
     try {
       const response = await axios.get(`/api/configs/${id}`);
-      const config = response.data.config;
-      form.setFieldsValue(config);
+      const configData = response.data.config;
+      setConfig(configData);
+      form.setFieldsValue(configData);
       setLoading(false);
     } catch (error) {
       message.error('获取配置失败');
@@ -201,6 +207,16 @@ const ConfigEdit: React.FC = () => {
             tooltip="请求超时时间定义了等待API响应的最长时间，超过此时间未收到响应则请求失败。合理设置超时时间能够：1) 避免无限等待 - 当API服务异常时及时终止请求；2) 提升用户体验 - 防止Claude CLI长时间无响应；3) 资源管理 - 释放被挂起的连接资源。建议值：简单请求60-90秒、复杂推理120-180秒、长文本/代码生成180-300秒。默认180秒（3分钟）可以应对大部分复杂场景，包括长代码生成和深度分析任务。注意：设置过短可能导致正常的长响应被中断，设置过长则可能在网络故障时浪费时间。最大支持600秒（10分钟）。"
           >
             <InputNumber min={1} max={600} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            name="retry_count"
+            label="失败重试次数"
+            rules={[{ required: true, message: '请输入失败重试次数' }]}
+            initialValue={3}
+            tooltip="失败重试次数定义了当OpenAI API调用失败时，系统自动重试的次数。合理的重试机制能够：1) 提高成功率 - 应对网络抖动或API临时故障；2) 改善用户体验 - 避免因偶发错误导致请求失败；3) 节省成本 - 减少因临时问题导致的手动重试。建议值：稳定环境3次、不稳定网络5次、高可用需求5-10次。默认3次可以应对大多数场景。注意：设置过少可能导致偶发故障影响使用，设置过多则可能在API持续故障时增加响应延迟。每次重试之间会有短暂延迟（指数退避），最大支持100次重试。"
+          >
+            <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="默认为3次" />
           </Form.Item>
 
           <Form.Item

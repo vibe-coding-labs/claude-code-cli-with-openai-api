@@ -10,6 +10,7 @@ import ConfigDetailV2 from './components/ConfigDetailV2';
 import ConfigEdit from './components/ConfigEdit';
 import ConfigCreate from './components/ConfigCreate';
 import ConfigTestPage from './components/ConfigTestPage';
+import LogDetail from './components/LogDetail';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
@@ -100,6 +101,7 @@ const App: React.FC = () => {
               <Route path="configs/:id" element={<ProtectedRoute><ConfigDetailV2 /></ProtectedRoute>} />
               <Route path="configs/:id/edit" element={<ProtectedRoute><ConfigEdit /></ProtectedRoute>} />
               <Route path="configs/:id/test" element={<ProtectedRoute><ConfigTestPage /></ProtectedRoute>} />
+              <Route path="configs/:id/logs/:log_id" element={<ProtectedRoute><LogDetail /></ProtectedRoute>} />
             </Routes>
           </AppLayout>
         } />

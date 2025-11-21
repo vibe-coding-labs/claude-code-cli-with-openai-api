@@ -328,3 +328,8 @@ test_*.sh
 
 # Runtime files
 *.pid
+
+# Deployment files (contain infrastructure information)
+deploy-prod.sh
+k8s/deployment.yaml
+k8s/ingress.yaml

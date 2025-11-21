@@ -3,10 +3,12 @@ import { Form, Input, Button, Card, Typography, message, Tooltip } from 'antd';
 import { UserOutlined, LockOutlined, GithubOutlined } from '@ant-design/icons';
 import { useNavigate, Link } from 'react-router-dom';
 import { login, setToken, setCurrentUser } from '../services/auth';
+import { usePageTitle } from '../utils/pageTitle';
 
 const { Title, Paragraph } = Typography;
 
 const Login: React.FC = () => {
+  usePageTitle('登录');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 

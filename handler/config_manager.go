@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -238,6 +239,17 @@ func (h *Handler) TestConfig(c *gin.Context) {
 	// Create client
 	testClient := client.NewOpenAIClient(cfg)
 
+	// Parse request body if provided
+	var testMessage string
+	var reqBody struct {
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&reqBody); err == nil && reqBody.Message != "" {
+		testMessage = reqBody.Message
+	} else {
+		testMessage = "Hello, this is a test message. Please respond with 'OK'."
+	}
+
 	// Make test request
 	startTime := time.Now()
 	testReq := &models.OpenAIRequest{
@@ -245,19 +257,24 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		Messages: []models.OpenAIMessage{
 			{
 				Role:    models.RoleUser,
-				Content: "Hello, this is a test message. Please respond with 'OK'.",
+				Content: testMessage,
 			},
 		},
-		MaxTokens: 10,
+		MaxTokens: 500,
 	}
+
+	// Serialize request for logging
+	requestBodyJSON, _ := json.Marshal(testReq)
+	requestBody := string(requestBodyJSON)
 
 	resp, err := testClient.CreateChatCompletion(testReq)
 	duration := time.Since(startTime).Milliseconds()
 
 	// Prepare request and response details for logging
 	var responseContent string
-	var requestSummary = "配置测试请求"
+	var requestSummary = testMessage
 	var responsePreview string
+	var responseBody string
 
 	// Log the request
 	logEntry := &database.RequestLog{
@@ -266,6 +283,7 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		DurationMs:     int(duration),
 		Status:         "success",
 		RequestSummary: requestSummary,
+		RequestBody:    requestBody,
 	}
 
 	if err != nil {
@@ -275,12 +293,17 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		_ = database.LogRequest(logEntry)
 
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status":      "failed",
-			"error":       err.Error(),
-			"duration_ms": duration,
+			"status":       "failed",
+			"error":        err.Error(),
+			"duration_ms":  duration,
+			"request_body": requestBody,
 		})
 		return
 	}
+
+	// Serialize response for logging
+	responseBodyJSON, _ := json.Marshal(resp)
+	responseBody = string(responseBodyJSON)
 
 	// Extract response content and prepare preview
 	if resp != nil && len(resp.Choices) > 0 {
@@ -300,14 +323,17 @@ func (h *Handler) TestConfig(c *gin.Context) {
 	}
 
 	logEntry.ResponsePreview = responsePreview
+	logEntry.ResponseBody = responseBody
 	_ = database.LogRequest(logEntry)
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":      "success",
-		"message":     "Test completed successfully",
-		"duration_ms": duration,
-		"model":       cfg.SmallModel,
-		"response":    responseContent,
+		"status":        "success",
+		"message":       "Test completed successfully",
+		"duration_ms":   duration,
+		"model":         cfg.SmallModel,
+		"response":      responseContent,
+		"request_body":  requestBody,
+		"response_body": responseBody,
 		"usage": gin.H{
 			"input_tokens":  logEntry.InputTokens,
 			"output_tokens": logEntry.OutputTokens,

@@ -9,7 +9,8 @@ import {
 import { getToken } from './auth';
 
 // ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:54988';
+// 前端由后端服务器提供时，使用相对路径即可
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

@@ -5,5 +5,9 @@ import (
 )
 
 func main() {
+	// Inject frontend filesystem functions
+	cmd.SetFrontendFunctions(GetFrontendFS, IsFrontendEmbedded)
+
+	// Execute CLI
 	cmd.Execute()
 }

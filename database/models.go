@@ -60,10 +60,18 @@ func CreateAPIConfig(config *APIConfig) error {
 		}
 	}
 
+	// Set default retry count if not provided
+	if config.RetryCount <= 0 {
+		config.RetryCount = 3
+	}
+	if config.RetryCount > 100 {
+		config.RetryCount = 100
+	}
+
 	query := `
 		INSERT INTO api_configs (
 			id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
@@ -71,7 +79,7 @@ func CreateAPIConfig(config *APIConfig) error {
 	_, err = DB.Exec(query,
 		config.ID, config.Name, config.Description, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.AnthropicAPIKey, config.Enabled,
+		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled,
 	)
 
 	if err != nil {
@@ -85,7 +93,7 @@ func CreateAPIConfig(config *APIConfig) error {
 func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
@@ -95,7 +103,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	err := DB.QueryRow(query, id).Scan(
 		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -133,7 +141,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs 
 		WHERE anthropic_api_key = ? AND enabled = 1
@@ -145,7 +153,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	err := DB.QueryRow(query, apiKey).Scan(
 		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -229,7 +237,7 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
@@ -247,7 +255,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.AnthropicAPIKey,
+			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 			&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if err != nil {
@@ -309,18 +317,26 @@ func UpdateAPIConfig(config *APIConfig) error {
 		}
 	}
 
+	// Validate retry count
+	if config.RetryCount <= 0 {
+		config.RetryCount = 3
+	}
+	if config.RetryCount > 100 {
+		config.RetryCount = 100
+	}
+
 	query := `
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
 			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, max_tokens_limit = ?,
-			request_timeout = ?, anthropic_api_key = ?, enabled = ?, updated_at = datetime('now')
+			request_timeout = ?, retry_count = ?, anthropic_api_key = ?, enabled = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
 
 	_, err = DB.Exec(query,
 		config.Name, config.Description, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.AnthropicAPIKey, config.Enabled, config.ID,
+		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ID,
 	)
 
 	if err != nil {
@@ -499,6 +515,7 @@ func (a *APIConfig) ToConfig() *config.Config {
 		SmallModel:      a.SmallModel,
 		MaxTokensLimit:  a.MaxTokensLimit,
 		RequestTimeout:  a.RequestTimeout,
+		RetryCount:      a.RetryCount,
 		AnthropicAPIKey: a.AnthropicAPIKey,
 	}
 }
