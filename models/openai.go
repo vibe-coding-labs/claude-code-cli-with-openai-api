@@ -60,12 +60,19 @@ type OpenAIFunctionCall struct {
 }
 
 type OpenAIResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Created int64          `json:"created"`
-	Model   string         `json:"model"`
-	Choices []OpenAIChoice `json:"choices"`
-	Usage   OpenAIUsage    `json:"usage"`
+	ID      string          `json:"id"`
+	Object  string          `json:"object"`
+	Created int64           `json:"created"`
+	Model   string          `json:"model"`
+	Choices []OpenAIChoice  `json:"choices"`
+	Usage   OpenAIUsage     `json:"usage"`
+	Error   *OpenAIAPIError `json:"error,omitempty"`
+}
+
+type OpenAIAPIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code,omitempty"`
 }
 
 type OpenAIChoice struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -139,8 +140,16 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		}
 
 		if attempt > 0 {
-			// Calculate exponential backoff: 1s, 2s, 4s, 8s...
-			backoffDuration := time.Duration(1<<uint(attempt-1)) * time.Second
+			// Calculate exponential backoff with longer delays for unstable APIs
+			// Base delay: 3 seconds, exponential growth: 3s, 6s, 12s, 24s, 48s...
+			// Maximum delay: 30 seconds to avoid excessive waiting
+			baseDelay := 3 * time.Second
+			backoffDuration := time.Duration(1<<uint(attempt-1)) * baseDelay
+			maxBackoff := 30 * time.Second
+			if backoffDuration > maxBackoff {
+				backoffDuration = maxBackoff
+			}
+
 			// Don't wait if it would exceed the deadline
 			if time.Now().Add(backoffDuration).After(deadline) {
 				logger.Error("← [OpenAIClient] Insufficient time for backoff, aborting retries")
@@ -244,6 +253,15 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			logger.Warn("← [OpenAIClient] API returned empty choices (attempt %d/%d)", attempt+1, c.RetryCount+1)
 			logger.Debug("  Response body: ID=%s, Model=%s, Usage=%+v", openAIResp.ID, openAIResp.Model, openAIResp.Usage)
 
+			// Log the full response for debugging
+			respJSON, _ := json.Marshal(openAIResp)
+			logger.Warn("  Full response JSON: %s", string(respJSON))
+
+			// Check for finish_reason that might explain empty choices
+			if openAIResp.Error != nil {
+				logger.Warn("  API Error in response: %+v", openAIResp.Error)
+			}
+
 			// Treat empty choices as retryable error
 			if attempt < c.RetryCount {
 				lastErr = fmt.Errorf("API returned empty choices")
@@ -251,9 +269,14 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 				continue
 			}
 
-			// Last attempt, return error
+			// Last attempt, return error with more context
 			logger.Error("← [OpenAIClient] API consistently returns empty choices after %d attempts", c.RetryCount+1)
-			return nil, fmt.Errorf("API returned empty choices after %d attempts", c.RetryCount+1)
+			errorMsg := fmt.Sprintf("API returned empty choices after %d attempts. Response ID: %s, Model: %s",
+				c.RetryCount+1, openAIResp.ID, openAIResp.Model)
+			if openAIResp.Error != nil {
+				errorMsg += fmt.Sprintf(", API Error: %v", openAIResp.Error)
+			}
+			return nil, errors.New(errorMsg)
 		}
 
 		logger.Info("← [OpenAIClient] Chat completion successful (took %v)", time.Since(startTime))
@@ -320,8 +343,16 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		}
 
 		if attempt > 0 {
-			// Calculate exponential backoff: 1s, 2s, 4s, 8s...
-			backoffDuration := time.Duration(1<<uint(attempt-1)) * time.Second
+			// Calculate exponential backoff with longer delays for unstable APIs
+			// Base delay: 3 seconds, exponential growth: 3s, 6s, 12s, 24s, 48s...
+			// Maximum delay: 30 seconds to avoid excessive waiting
+			baseDelay := 3 * time.Second
+			backoffDuration := time.Duration(1<<uint(attempt-1)) * baseDelay
+			maxBackoff := 30 * time.Second
+			if backoffDuration > maxBackoff {
+				backoffDuration = maxBackoff
+			}
+
 			// Don't wait if it would exceed the deadline
 			if time.Now().Add(backoffDuration).After(deadline) {
 				logger.Error("← [OpenAIClient] Insufficient time for backoff, aborting retries")
