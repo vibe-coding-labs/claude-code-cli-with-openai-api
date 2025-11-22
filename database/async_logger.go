@@ -74,14 +74,14 @@ func LogRequestSync(log *RequestLog) error {
 		INSERT INTO request_logs (
 			config_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
-			request_summary, response_preview, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			request_summary, response_preview, client_ip, user_agent, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
 	_, err := DB.Exec(query,
 		log.ConfigID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
 		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
-		log.RequestSummary, log.ResponsePreview,
+		log.RequestSummary, log.ResponsePreview, log.ClientIP, log.UserAgent,
 	)
 
 	if err != nil {

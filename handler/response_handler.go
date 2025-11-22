@@ -39,7 +39,7 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	if err != nil {
 		fmt.Printf("❌ [Streaming] Failed to create stream: %v\n", err)
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
 		return
 	}
 	defer reader.Close()
@@ -50,10 +50,10 @@ func (r *ResponseHandler) HandleStreamingResponse(
 
 	// 记录请求日志（使用收集的流式响应数据）
 	if streamResult != nil {
-		r.logRequestWithStreamingDetails(configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
+		r.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
 	} else {
 		// 如果streamResult为nil，说明发生了错误，记录基本信息
-		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
 	}
 }
 
@@ -73,7 +73,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	if err != nil {
 		fmt.Printf("❌ [Non-Streaming] Request failed: %v\n", err)
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
 		return
 	}
 
@@ -88,14 +88,14 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 		fmt.Printf("❌ [Non-Streaming] Failed to convert response - response is nil\n")
 		err := fmt.Errorf("failed to convert OpenAI response to Claude format: response or choices is empty")
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
 		return
 	}
 
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
 
 	// 记录请求日志（含详细请求和响应）
-	r.logRequestWithDetails(configID, openAIReq.Model,
+	r.logRequestWithDetails(c, configID, openAIReq.Model,
 		claudeResp.Usage.InputTokens,
 		claudeResp.Usage.OutputTokens,
 		startTime, "success", "", claudeReq, claudeResp)
@@ -106,6 +106,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 
 // logRequestWithStreamingDetails 记录流式请求日志到数据库
 func (r *ResponseHandler) logRequestWithStreamingDetails(
+	c *gin.Context,
 	configID string,
 	model string,
 	streamResult *converter.StreamingResult,
@@ -164,6 +165,9 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 		}
 	}
 
+	// 获取客户端信息
+	clientIP, userAgent := GetClientInfo(c)
+
 	log := &database.RequestLog{
 		ConfigID:        configID,
 		Model:           model,
@@ -177,6 +181,8 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 		ResponseBody:    streamResult.Content, // 存储完整的响应内容
 		RequestSummary:  requestSummary,
 		ResponsePreview: responsePreview,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
 	}
 
 	if err := database.LogRequest(log); err != nil {
@@ -187,6 +193,7 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 
 // logRequestWithDetails 记录请求日志到数据库（含详细请求和响应）
 func (r *ResponseHandler) logRequestWithDetails(
+	c *gin.Context,
 	configID string,
 	model string,
 	inputTokens int,
@@ -256,6 +263,9 @@ func (r *ResponseHandler) logRequestWithDetails(
 		}
 	}
 
+	// 获取客户端信息
+	clientIP, userAgent := GetClientInfo(c)
+
 	log := &database.RequestLog{
 		ConfigID:        configID,
 		Model:           model,
@@ -265,6 +275,8 @@ func (r *ResponseHandler) logRequestWithDetails(
 		DurationMs:      int(duration.Milliseconds()),
 		Status:          status,
 		ErrorMessage:    errorMsg,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
 		RequestBody:     requestBody,
 		ResponseBody:    responseBody,
 		RequestSummary:  requestSummary,

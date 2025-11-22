@@ -246,6 +246,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		// Stats and logs
 		configAPI.GET("/configs/:id/stats", h.GetConfigStats)
+		configAPI.GET("/configs/:id/client-stats", h.GetClientStats)
 		configAPI.GET("/configs/:id/logs", h.GetConfigLogs)
 		configAPI.DELETE("/configs/:id/logs", h.DeleteConfigLogs)
 		configAPI.GET("/configs/:id/logs/:log_id", h.GetLogDetail)

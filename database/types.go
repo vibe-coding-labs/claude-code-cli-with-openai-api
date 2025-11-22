@@ -22,6 +22,7 @@ type APIConfig struct {
 	AnthropicAPIKey       string            `json:"anthropic_api_key,omitempty"`
 	CustomHeaders         map[string]string `json:"custom_headers,omitempty"` // 自定义请求头
 	Enabled               bool              `json:"enabled"`
+	ExpiresAt             *time.Time        `json:"expires_at,omitempty"` // API密钥过期时间（可选）
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 }
@@ -54,7 +55,29 @@ type RequestLog struct {
 	ResponseBody    string    `json:"response_body,omitempty"`    // 原始响应体（JSON）
 	RequestSummary  string    `json:"request_summary,omitempty"`  // 请求摘要（便于快速查看）
 	ResponsePreview string    `json:"response_preview,omitempty"` // 响应预览（前500字符）
+	ClientIP        string    `json:"client_ip,omitempty"`        // 客户端IP地址
+	UserAgent       string    `json:"user_agent,omitempty"`       // 客户端User-Agent
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ActiveClient represents an active Claude Code client
+type ActiveClient struct {
+	ClientIP      string    `json:"client_ip"`
+	UserAgent     string    `json:"user_agent"`
+	LastRequestAt time.Time `json:"last_request_at"`
+	RequestCount  int       `json:"request_count"`
+	IsActive      bool      `json:"is_active"` // 最近5分钟内有请求
+}
+
+// ClientStats represents statistics about active clients for a config
+type ClientStats struct {
+	ConfigID         string         `json:"config_id"`
+	ActiveClients    int            `json:"active_clients"`    // 活跃客户端数（最近5分钟，基于IP+UA）
+	EstimatedClients int            `json:"estimated_clients"` // 估算的实际客户端数（考虑并发）
+	TotalClients     int            `json:"total_clients"`     // 总客户端数（最近24小时）
+	HasConcurrent    bool           `json:"has_concurrent"`    // 是否检测到并发连接
+	Clients          []ActiveClient `json:"clients"`
+	LastRequestAt    *time.Time     `json:"last_request_at,omitempty"` // 最后一次请求时间
 }
 
 // ConfigStats represents aggregated statistics for a config

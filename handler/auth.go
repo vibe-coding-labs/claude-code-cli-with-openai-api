@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
@@ -19,6 +20,19 @@ func NewAuthHandler() *AuthHandler {
 // ValidateAPIKey 验证 API Key
 // 返回: (通过验证, 错误响应)
 func (a *AuthHandler) ValidateAPIKey(c *gin.Context, dbConfig *database.APIConfig) (bool, *gin.H) {
+	// 检查API密钥是否已过期
+	if dbConfig.ExpiresAt != nil {
+		if time.Now().After(*dbConfig.ExpiresAt) {
+			fmt.Printf("❌ [Auth] API key has expired (expired at: %s)\n", dbConfig.ExpiresAt.Format("2006-01-02 15:04:05"))
+			return false, &gin.H{
+				"error": map[string]interface{}{
+					"type":    "authentication_error",
+					"message": fmt.Sprintf("API key has expired on %s. Please contact the administrator to renew the key.", dbConfig.ExpiresAt.Format("2006-01-02 15:04:05")),
+				},
+			}
+		}
+	}
+
 	// 如果配置没有设置 API Key，则不需要验证
 	if dbConfig.AnthropicAPIKey == "" {
 		fmt.Printf("   ℹ️ No API key validation required for this config\n")

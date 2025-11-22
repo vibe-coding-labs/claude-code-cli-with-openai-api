@@ -72,14 +72,14 @@ func CreateAPIConfig(config *APIConfig) error {
 		INSERT INTO api_configs (
 			id, name, description, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
-			anthropic_api_key, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+			anthropic_api_key, enabled, expires_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
 		config.ID, config.Name, config.Description, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled,
+		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
 	)
 
 	if err != nil {
@@ -94,18 +94,23 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
-			anthropic_api_key, enabled, created_at, updated_at
+			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
 
 	config := &APIConfig{}
 	var supportedModelsJSON sql.NullString
+	var expiresAt sql.NullTime
 	err := DB.QueryRow(query, id).Scan(
 		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
-		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
+		&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 	)
+
+	if expiresAt.Valid {
+		config.ExpiresAt = &expiresAt.Time
+	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -244,12 +249,11 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 	return newAPIKey, nil
 }
 
-// GetAllAPIConfigs retrieves all API configurations
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
-			anthropic_api_key, enabled, created_at, updated_at
+			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
 
@@ -263,12 +267,16 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 	for rows.Next() {
 		config := &APIConfig{}
 		var supportedModelsJSON sql.NullString
+		var expiresAt sql.NullTime
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
-			&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
+			&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
+		if expiresAt.Valid {
+			config.ExpiresAt = &expiresAt.Time
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan config: %w", err)
 		}
@@ -340,14 +348,14 @@ func UpdateAPIConfig(config *APIConfig) error {
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
 			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, max_tokens_limit = ?,
-			request_timeout = ?, retry_count = ?, anthropic_api_key = ?, enabled = ?, updated_at = datetime('now')
+			request_timeout = ?, retry_count = ?, anthropic_api_key = ?, enabled = ?, expires_at = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
 
 	_, err = DB.Exec(query,
 		config.Name, config.Description, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ID,
+		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt, config.ID,
 	)
 
 	if err != nil {

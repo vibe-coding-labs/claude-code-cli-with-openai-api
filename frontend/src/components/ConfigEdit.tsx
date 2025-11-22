@@ -13,10 +13,12 @@ import {
   Spin,
   Typography,
   Divider,
+  DatePicker,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import ModelSelector from './ModelSelector';
+import dayjs from 'dayjs';
 
 const { TextArea } = Input;
 const { Title, Paragraph } = Typography;
@@ -33,6 +35,7 @@ interface Config {
   request_timeout: number;
   retry_count: number;
   enabled: boolean;
+  expires_at?: string;
 }
 
 const ConfigEdit: React.FC = () => {
@@ -54,7 +57,12 @@ const ConfigEdit: React.FC = () => {
       const response = await axios.get(`/api/configs/${id}`);
       const configData = response.data.config;
       setConfig(configData);
-      form.setFieldsValue(configData);
+      // 处理过期时间
+      const formData = {
+        ...configData,
+        expires_at: configData.expires_at ? dayjs(configData.expires_at) : null
+      };
+      form.setFieldsValue(formData);
       setLoading(false);
     } catch (error) {
       message.error('获取配置失败');
@@ -65,7 +73,12 @@ const ConfigEdit: React.FC = () => {
   const handleSubmit = async (values: any) => {
     setSubmitting(true);
     try {
-      await axios.put(`/api/configs/${id}`, values);
+      // 处理过期时间
+      const submitData = {
+        ...values,
+        expires_at: values.expires_at ? values.expires_at.toISOString() : null
+      };
+      await axios.put(`/api/configs/${id}`, submitData);
       message.success('保存成功');
       navigate(`/ui/configs/${id}`);
     } catch (error: any) {
@@ -217,6 +230,20 @@ const ConfigEdit: React.FC = () => {
             tooltip="失败重试次数定义了当OpenAI API调用失败时，系统自动重试的次数。合理的重试机制能够：1) 提高成功率 - 应对网络抖动或API临时故障；2) 改善用户体验 - 避免因偶发错误导致请求失败；3) 节省成本 - 减少因临时问题导致的手动重试。建议值：稳定环境3次、不稳定网络5次、高可用需求5-10次。默认3次可以应对大多数场景。注意：设置过少可能导致偶发故障影响使用，设置过多则可能在API持续故障时增加响应延迟。每次重试之间会有短暂延迟（指数退避），最大支持100次重试。"
           >
             <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="默认为3次" />
+          </Form.Item>
+
+          <Form.Item
+            name="expires_at"
+            label="API密钥过期时间"
+            tooltip="API密钥过期时间是可选配置，用于管理临时API密钥的生命周期。当设置了过期时间后，系统会在认证时检查密钥是否已过期，过期的密钥将无法使用。使用场景：1) 临时合作项目 - 为外部合作者设置有限期访问；2) 测试环境 - 为测试密钥设置自动过期；3) 安全管理 - 定期轮换API密钥增强安全性。如果不设置，密钥将永久有效。建议对临时密钥设置合理的过期时间，避免长期暴露风险。"
+            help="可选，设置后密钥将在指定时间后自动过期无法使用"
+          >
+            <DatePicker 
+              showTime 
+              format="YYYY-MM-DD HH:mm:ss"
+              style={{ width: '100%' }}
+              placeholder="选择过期时间（可选）"
+            />
           </Form.Item>
 
           <Form.Item

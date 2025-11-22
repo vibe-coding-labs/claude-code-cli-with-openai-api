@@ -203,6 +203,27 @@ func (h *Handler) GetConfigStats(c *gin.Context) {
 	})
 }
 
+// GetClientStats returns client activity statistics for a config
+func (h *Handler) GetClientStats(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Config ID is required",
+		})
+		return
+	}
+
+	clientStats, err := database.GetClientStats(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get client stats: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, clientStats)
+}
+
 // Note: GetConfigLogs has been moved to config_api.go with enhanced functionality
 
 // TestConfig tests an API configuration by making a simple request

@@ -156,6 +156,11 @@ func runMigrations() error {
 		`ALTER TABLE api_configs ADD COLUMN retry_count INTEGER DEFAULT 3;`,
 		// 迁移2: 为 api_configs 添加 supported_models 字段（JSON格式存储模型列表）
 		`ALTER TABLE api_configs ADD COLUMN supported_models TEXT;`,
+		// 迁移3: 为 request_logs 添加客户端追踪字段
+		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT;`,
+		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT;`,
+		// 迁移4: 为 api_configs 添加密钥过期时间字段
+		`ALTER TABLE api_configs ADD COLUMN expires_at DATETIME;`,
 	}
 
 	for _, migration := range migrations {

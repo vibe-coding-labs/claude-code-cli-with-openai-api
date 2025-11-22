@@ -44,6 +44,7 @@ interface Config {
   request_timeout: number;
   retry_count: number;
   enabled: boolean;
+  expires_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +61,7 @@ const ConfigDetailV2: React.FC = () => {
   usePageTitle(config ? `${config.name} - 配置详情` : '配置详情');
   const [renewingKey, setRenewingKey] = useState(false);
   const [promptText, setPromptText] = useState('Hello, Claude!');
+  const [clientStats, setClientStats] = useState<any>(null);
 
   // Get server info from window.location
   const protocol = window.location.protocol; // 'http:' or 'https:'
@@ -76,6 +78,10 @@ const ConfigDetailV2: React.FC = () => {
 
   useEffect(() => {
     fetchConfigDetail();
+    fetchClientStats();
+    // 定期刷新客户端统计（30秒）
+    const interval = setInterval(fetchClientStats, 30000);
+    return () => clearInterval(interval);
   }, [id]);
 
   const fetchConfigDetail = async () => {
@@ -86,6 +92,15 @@ const ConfigDetailV2: React.FC = () => {
     } catch (error) {
       message.error('获取配置详情失败');
       setLoading(false);
+    }
+  };
+
+  const fetchClientStats = async () => {
+    try {
+      const response = await axios.get(`/api/configs/${id}/client-stats`);
+      setClientStats(response.data);
+    } catch (error) {
+      console.error('获取客户端统计失败:', error);
     }
   };
 
@@ -379,6 +394,125 @@ const ConfigDetailV2: React.FC = () => {
         )}
       </div>
 
+      {/* 客户端活跃状态 Banner */}
+      {clientStats && (
+        <div style={{ marginBottom: 16 }}>
+          {clientStats.active_clients > 0 ? (
+            <div style={{
+              padding: '12px 20px',
+              background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+              borderRadius: 8,
+              boxShadow: '0 2px 8px rgba(82, 196, 26, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 20 }}>🟢</span>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>
+                    {clientStats.has_concurrent ? (
+                      <>至少有 {clientStats.estimated_clients} 个 Claude Code 客户端正在使用此配置</>
+                    ) : (
+                      <>有 {clientStats.active_clients} 个 Claude Code 客户端正在使用此配置</>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', marginTop: 4 }}>
+                    最近5分钟内活跃 · 最后请求: {clientStats.last_request_at ? new Date(clientStats.last_request_at).toLocaleString('zh-CN') : '-'}
+                    {clientStats.has_concurrent && (
+                      <span style={{ marginLeft: 8, opacity: 0.9 }}>⚠️ 检测到并发连接，实际数量可能更多</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <Tag color="success" style={{ fontSize: 13, padding: '4px 12px', margin: 0 }}>
+                活跃中
+              </Tag>
+            </div>
+          ) : clientStats.total_clients > 0 ? (
+            <div style={{
+              padding: '12px 20px',
+              background: 'linear-gradient(135deg, #faad14 0%, #d48806 100%)',
+              borderRadius: 8,
+              boxShadow: '0 2px 8px rgba(250, 173, 20, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 20 }}>🟡</span>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>
+                    最近24小时内有 {clientStats.total_clients} 个客户端使用过此配置
+                  </div>
+                  <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', marginTop: 4 }}>
+                    当前无活跃连接 · 最后请求: {clientStats.last_request_at ? new Date(clientStats.last_request_at).toLocaleString('zh-CN') : '-'}
+                  </div>
+                </div>
+              </div>
+              <Tag color="warning" style={{ fontSize: 13, padding: '4px 12px', margin: 0 }}>
+                空闲中
+              </Tag>
+            </div>
+          ) : (
+            <div style={{
+              padding: '12px 20px',
+              background: 'linear-gradient(135deg, #d9d9d9 0%, #bfbfbf 100%)',
+              borderRadius: 8,
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 20 }}>⚪</span>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#595959' }}>
+                    暂无 Claude Code 客户端使用此配置
+                  </div>
+                  <div style={{ fontSize: 13, color: '#8c8c8c', marginTop: 4 }}>
+                    最近24小时内无使用记录
+                  </div>
+                </div>
+              </div>
+              <Tag color="default" style={{ fontSize: 13, padding: '4px 12px', margin: 0 }}>
+                未使用
+              </Tag>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* API密钥过期警告 Banner */}
+      {config.expires_at && new Date(config.expires_at) < new Date() && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            padding: '12px 20px',
+            background: 'linear-gradient(135deg, #ff4d4f 0%, #cf1322 100%)',
+            borderRadius: 8,
+            boxShadow: '0 2px 8px rgba(255, 77, 79, 0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 20 }}>⚠️</span>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>
+                  API 密钥已于 {new Date(config.expires_at).toLocaleString('zh-CN')} 过期
+                </div>
+                <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', marginTop: 4 }}>
+                  此配置无法继续使用，所有API调用将被拒绝。请联系管理员更新密钥。
+                </div>
+              </div>
+            </div>
+            <Tag color="error" style={{ fontSize: 13, padding: '4px 12px', margin: 0 }}>
+              已过期
+            </Tag>
+          </div>
+        </div>
+      )}
+
       <Tabs activeKey={activeTab} onChange={handleTabChange}>
         {/* Overview Tab */}
         <Tabs.TabPane tab="详情" key="overview">
@@ -399,6 +533,20 @@ const ConfigDetailV2: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="更新时间">
                 {new Date(config.updated_at).toLocaleString('zh-CN')}
+              </Descriptions.Item>
+              <Descriptions.Item label="密钥过期时间" span={2}>
+                {config.expires_at ? (
+                  <span>
+                    {new Date(config.expires_at).toLocaleString('zh-CN')}
+                    {new Date(config.expires_at) < new Date() ? (
+                      <Tag color="error" style={{ marginLeft: 8 }}>已过期</Tag>
+                    ) : (
+                      <Tag color="success" style={{ marginLeft: 8 }}>有效</Tag>
+                    )}
+                  </span>
+                ) : (
+                  <span style={{ color: '#999' }}>永久有效</span>
+                )}
               </Descriptions.Item>
             </Descriptions>
           </Card>
