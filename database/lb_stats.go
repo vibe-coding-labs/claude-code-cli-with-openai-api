@@ -52,8 +52,8 @@ func GetLoadBalancerStats(loadBalancerID string, timeWindow string) (*LoadBalanc
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
-			SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_requests,
-			SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests,
+			COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_requests,
+			COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as failed_requests,
 			COALESCE(AVG(duration_ms), 0) as avg_response_time_ms
 		FROM load_balancer_request_logs
 		WHERE load_balancer_id = ? AND request_time >= ?
@@ -172,7 +172,7 @@ func GetNodeStatsByLoadBalancer(loadBalancerID string, startTime time.Time) ([]N
 		query := `
 			SELECT
 				COUNT(*) as request_count,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
 				COALESCE(AVG(duration_ms), 0) as avg_response_time_ms
 			FROM load_balancer_request_logs
 			WHERE load_balancer_id = ? AND selected_config_id = ? AND request_time >= ?
@@ -239,8 +239,8 @@ func AggregateStatsForTimeBucket(loadBalancerID string, timeBucket time.Time) er
 		query := `
 			SELECT
 				COUNT(*) as request_count,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
-				SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_count,
+				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as failed_count,
 				COALESCE(SUM(duration_ms), 0) as total_duration_ms
 			FROM load_balancer_request_logs
 			WHERE load_balancer_id = ? AND selected_config_id = ?
@@ -329,7 +329,7 @@ func GetNodeStatsForTimeWindow(loadBalancerID, configID, timeWindow string) (*No
 	query := `
 		SELECT
 			COUNT(*) as request_count,
-			SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+			COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
 			COALESCE(AVG(duration_ms), 0) as avg_response_time_ms
 		FROM load_balancer_request_logs
 		WHERE load_balancer_id = ? AND selected_config_id = ? AND request_time >= ?
@@ -385,13 +385,13 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 
 	// Calculate metrics for the last 60 seconds
 	startTime := time.Now().Add(-60 * time.Second)
-	
+
 	// Get request stats for the last 60 seconds
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
-			SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_requests,
-			SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests,
+			COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_requests,
+			COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as failed_requests,
 			COALESCE(AVG(duration_ms), 0) as avg_response_time_ms
 		FROM load_balancer_request_logs
 		WHERE load_balancer_id = ? AND request_time >= ?
@@ -399,7 +399,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 
 	var totalRequests, successRequests, failedRequests int64
 	var avgResponseTime float64
-	
+
 	err = DB.QueryRow(query, loadBalancerID, startTime).Scan(
 		&totalRequests, &successRequests, &failedRequests, &avgResponseTime,
 	)
@@ -419,12 +419,12 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 	// Count healthy nodes
 	healthyNodes := 0
 	totalNodes := len(lb.ConfigNodes)
-	
+
 	for _, node := range lb.ConfigNodes {
 		if !node.Enabled {
 			continue
 		}
-		
+
 		healthStatus, err := GetHealthStatus(node.ConfigID)
 		if err == nil && healthStatus.Status == "healthy" {
 			healthyNodes++
@@ -437,7 +437,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 		FROM load_balancer_request_logs
 		WHERE load_balancer_id = ? AND request_time >= ?
 	`
-	
+
 	var activeConnections int
 	err = DB.QueryRow(activeConnectionsQuery, loadBalancerID, time.Now().Add(-5*time.Second)).Scan(&activeConnections)
 	if err != nil {
@@ -475,7 +475,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 		nodeQuery := `
 			SELECT
 				COUNT(*) as request_count,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
 				COALESCE(AVG(duration_ms), 0) as avg_response_time_ms,
 				MAX(request_time) as last_request_time
 			FROM load_balancer_request_logs
@@ -485,7 +485,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 		var requestCount, successCount int64
 		var nodeAvgResponseTime float64
 		var lastRequestTime *time.Time
-		
+
 		err = DB.QueryRow(nodeQuery, loadBalancerID, node.ConfigID, startTime).Scan(
 			&requestCount, &successCount, &nodeAvgResponseTime, &lastRequestTime,
 		)

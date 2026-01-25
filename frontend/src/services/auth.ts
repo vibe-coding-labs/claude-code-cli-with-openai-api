@@ -1,10 +1,9 @@
 import axios from 'axios';
+import { getApiOrigin } from './apiBase';
 
 // ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
 // 开发模式下使用绝对路径，避免 homepage 影响
-const API_BASE_URL = process.env.NODE_ENV === 'development' 
-  ? 'http://localhost:54988/api' 
-  : '/api';
+const API_BASE_URL = `${getApiOrigin()}/api`;
 
 export interface User {
   id: number;

@@ -444,8 +444,8 @@ func GetConfigStats(configID string, days int) (*ConfigStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
-			SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_requests,
-			SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_requests,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_requests,
+			COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error_requests,
 			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
 			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,

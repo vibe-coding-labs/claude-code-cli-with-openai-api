@@ -272,12 +272,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		// Load Balancer Enhanced Features
 		configAPI.GET("/load-balancers/:id/health", handler.GetLoadBalancerHealthStatus)
-		configAPI.POST("/load-balancers/:id/health/trigger", handler.TriggerHealthCheck)
+		configAPI.POST("/load-balancers/:id/health/check", handler.TriggerHealthCheck)
 		configAPI.GET("/load-balancers/:id/circuit-breakers", handler.GetLoadBalancerCircuitBreakers)
 		configAPI.POST("/load-balancers/:id/circuit-breakers/:config_id/reset", handler.ResetCircuitBreaker)
-		configAPI.GET("/load-balancers/:id/enhanced-stats", handler.GetLoadBalancerEnhancedStats)
+		configAPI.GET("/load-balancers/:id/stats/enhanced", handler.GetLoadBalancerEnhancedStats)
 		configAPI.GET("/load-balancers/:id/metrics/realtime", handler.GetLoadBalancerRealTimeMetrics)
-		configAPI.GET("/load-balancers/:id/request-logs", handler.GetLoadBalancerRequestLogs)
+		configAPI.GET("/load-balancers/:id/logs", handler.GetLoadBalancerRequestLogs)
 		configAPI.GET("/load-balancers/:id/alerts", handler.GetLoadBalancerAlerts)
 		configAPI.POST("/load-balancers/:id/alerts/:alert_id/acknowledge", handler.AcknowledgeAlert)
 	}
