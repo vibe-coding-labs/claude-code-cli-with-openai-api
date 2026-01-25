@@ -52,6 +52,568 @@
   padding-top: 24px;
 }
 
+/* 节点拖动时的视觉反馈 */
+.load-balancer-editor .react-flow__node.dragging {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  transform: scale(1.05);
+  opacity: 0.9;
+  z-index: 1000;
+  transition: all 0.2s ease;
+}
+
+/* 节点选中时的视觉反馈 */
+.load-balancer-editor .react-flow__node.selected {
+  box-shadow: 0 0 0 3px #1890ff, 0 4px 12px rgba(24, 144, 255, 0.3);
+  transform: scale(1.02);
+  transition: all 0.2s ease;
+}
+
+/* 节点添加时的动画效果 */
+@keyframes nodeAdd {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.load-balancer-editor .react-flow__node.adding {
+  animation: nodeAdd 0.4s ease-out;
+}
+
+/* 节点删除时的动画效果 */
+@keyframes nodeDelete {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+.load-balancer-editor .react-flow__node.deleting {
+  animation: nodeDelete 0.3s ease-in;
+}
+
+/* 节点更新时的动画效果 */
+@keyframes nodeUpdate {
+  0% {
+    background-color: #52c41a;
+  }
+  50% {
+    background-color: #1890ff;
+  }
+  100% {
+    background-color: #52c41a;
+  }
+}
+
+.load-balancer-editor .react-flow__node.updating {
+  animation: nodeUpdate 0.5s ease;
+}
+
+/* 连接线拖动时的视觉反馈 */
+.load-balancer-editor .react-flow__edge.dragging {
+  stroke-width: 3;
+  stroke: #1890ff;
+  opacity: 0.8;
+}
+
+/* 连接线创建时的动画效果 */
+@keyframes edgeAdd {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.load-balancer-editor .react-flow__edge.adding {
+  animation: edgeAdd 0.5s ease-out;
+}
+
+/* 连接线删除时的动画效果 */
+@keyframes edgeDelete {
+  0% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -100;
+  }
+}
+
+.load-balancer-editor .react-flow__edge.deleting {
+  animation: edgeDelete 0.3s ease-in;
+}
+
+/* 节点拖动时的光标样式 */
+.load-balancer-editor .react-flow__node {
+  cursor: grab;
+}
+
+.load-balancer-editor .react-flow__node:active {
+  cursor: grabbing;
+}
+
+/* 网格背景 */
+.load-balancer-editor .react-flow__background-pattern-dots {
+  background-size: 20px 20px;
+  background-image: radial-gradient(circle, #d9d9d9 1px, transparent 1px);
+}
+
+/* 节点拖动时的边界限制 */
+.load-balancer-editor .react-flow__node {
+  min-width: 100px;
+  min-height: 60px;
+}
+
+/* 节点拖动时的对齐线 */
+.load-balancer-editor .react-flow__node.snap-line {
+  border: 2px dashed #1890ff;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* 节点拖动时的距离提示 */
+.load-balancer-editor .react-flow__node.distance-tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 1001;
+}
+
+/* 节点拖动时的坐标显示 */
+.load-balancer-editor .react-flow__node.coordinate-display {
+  position: absolute;
+  bottom: -25px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(24, 144, 255, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .coordinate-display,
+.load-balancer-editor .react-flow__node.dragging .coordinate-display {
+  opacity: 1;
+}
+
+/* 节点拖动时的状态提示 */
+.load-balancer-editor .react-flow__node.status-indicator {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #52c41a;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.load-balancer-editor .react-flow__node.status-indicator.disabled {
+  background: #d9d9d9;
+}
+
+.load-balancer-editor .react-flow__node.status-indicator.error {
+  background: #ff4d4f;
+}
+
+/* 节点拖动时的操作提示 */
+.load-balancer-editor .react-flow__node.action-hint {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .action-hint,
+.load-balancer-editor .react-flow__node.dragging .action-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的禁止拖动区域 */
+.load-balancer-editor .react-flow__node.no-drag {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* 节点拖动时的速度限制 */
+.load-balancer-editor .react-flow__node.speed-limited {
+  transition: transform 0.1s ease;
+}
+
+/* 节点拖动时的惯性效果 */
+@keyframes inertia {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(var(--inertia-x), var(--inertia-y));
+  }
+}
+
+.load-balancer-editor .react-flow__node.inertia {
+  animation: inertia 0.5s ease-out;
+}
+
+/* 节点拖动时的弹性效果 */
+@keyframes elastic {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  75% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.load-balancer-editor .react-flow__node.elastic {
+  animation: elastic 0.4s ease-out;
+}
+
+/* 节点拖动时的阻尼效果 */
+.load-balancer-editor .react-flow__node.damping {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 节点拖动时的摩擦力效果 */
+.load-balancer-editor .react-flow__node.friction {
+  transition: transform 0.5s ease-out;
+}
+
+/* 节点拖动时的重力效果 */
+@keyframes gravity {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(var(--gravity-distance));
+  }
+}
+
+.load-balancer-editor .react-flow__node.gravity {
+  animation: gravity 0.3s ease-in;
+}
+
+/* 节点拖动时的磁吸效果 */
+.load-balancer-editor .react-flow__node.magnetic {
+  transition: transform 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.magnetic.snap {
+  box-shadow: 0 0 0 3px #1890ff;
+}
+
+/* 节点拖动时的对齐线效果 */
+.load-balancer-editor .react-flow__node.alignment-line {
+  position: absolute;
+  background: #1890ff;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: 999;
+}
+
+.load-balancer-editor .react-flow__node.alignment-line.horizontal {
+  height: 1px;
+  width: 100%;
+  left: 0;
+}
+
+.load-balancer-editor .react-flow__node.alignment-line.vertical {
+  width: 1px;
+  height: 100%;
+  top: 0;
+}
+
+/* 节点拖动时的辅助线效果 */
+.load-balancer-editor .react-flow__node.helper-line {
+  position: absolute;
+  background: #52c41a;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: 998;
+}
+
+/* 节点拖动时的参考线效果 */
+.load-balancer-editor .react-flow__node.reference-line {
+  position: absolute;
+  background: #ff4d4f;
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 997;
+}
+
+/* 节点拖动时的对齐提示 */
+.load-balancer-editor .react-flow__node.alignment-hint {
+  position: absolute;
+  background: rgba(24, 144, 255, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.aligned .alignment-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的距离提示 */
+.load-balancer-editor .react-flow__node.distance-hint {
+  position: absolute;
+  background: rgba(82, 196, 26, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.measuring .distance-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的角度提示 */
+.load-balancer-editor .react-flow__node.angle-hint {
+  position: absolute;
+  background: rgba(250, 140, 22, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.angled .angle-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的位置提示 */
+.load-balancer-editor .react-flow__node.position-hint {
+  position: absolute;
+  background: rgba(114, 46, 209, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.positioned .position-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的尺寸提示 */
+.load-balancer-editor .react-flow__node.size-hint {
+  position: absolute;
+  background: rgba(0, 150, 136, 0.9);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.sized .size-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的状态提示 */
+.load-balancer-editor .react-flow__node.state-hint {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.stated .state-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的操作提示 */
+.load-balancer-editor .react-flow__node.operation-hint {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.operated .operation-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的快捷键支持 */
+.load-balancer-editor .react-flow__node.shortcut-hint {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .shortcut-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的撤销重做功能 */
+.load-balancer-editor .react-flow__node.undo-redo-hint {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .undo-redo-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的复制粘贴功能 */
+.load-balancer-editor .react-flow__node.copy-paste-hint {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .copy-paste-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的剪切粘贴功能 */
+.load-balancer-editor .react-flow__node.cut-paste-hint {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node:hover .cut-paste-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的全选功能 */
+.load-balancer-editor .react-flow__node.select-all-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.load-balancer-editor .react-flow__node.multi-select .select-all-hint {
+  opacity: 1;
+}
+
+/* 节点拖动时的多选功能 */
+.load-balancer-editor .react-flow__node.multi-selected {
+  box-shadow: 0 0 0 2px #1890ff;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .load-balancer-editor .react-flow {
