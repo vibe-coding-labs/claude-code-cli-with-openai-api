@@ -66,6 +66,12 @@ interface NodeData {
   weight?: number;
   enabled?: boolean;
   type?: 'start' | 'config';
+  comment?: string;
+  tags?: string[];
+  icon?: string;
+  color?: string;
+  size?: 'small' | 'medium' | 'large';
+  shape?: 'rectangle' | 'circle' | 'diamond';
 }
 
 const LoadBalancerEditor: React.FC = () => {
@@ -128,6 +134,21 @@ const LoadBalancerEditor: React.FC = () => {
   // 节点分组状态
   const [nodeGroups, setNodeGroups] = useState<Record<string, string>>({});
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+
+  // 拖动状态
+  const [draggingNode, setDraggingNode] = useState<Node<NodeData> | null>(null);
+  const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
+  const [showDragInfo, setShowDragInfo] = useState(false);
+  const [dragDistance, setDragDistance] = useState(0);
+  const [dragAngle, setDragAngle] = useState(0);
+
+  // 网格配置
+  const [gridSize, setGridSize] = useState(20);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+
+  // 撤销重做历史
+  const [history, setHistory] = useState<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
   // 键盘快捷键处理
   useEffect(() => {
@@ -205,9 +226,16 @@ const LoadBalancerEditor: React.FC = () => {
         event.preventDefault();
       }
 
-      // Escape键：关闭右键菜单
-      if (event.key === 'Escape') {
-        handleContextMenuClose();
+      // Ctrl+Z：撤销
+      if (event.ctrlKey && event.key === 'z') {
+        handleUndo();
+        event.preventDefault();
+      }
+
+      // Ctrl+Y 或 Ctrl+Shift+Z：重做
+      if ((event.ctrlKey && event.key === 'y') || (event.ctrlKey && event.shiftKey && event.key === 'z')) {
+        handleRedo();
+        event.preventDefault();
       }
     };
 
@@ -342,6 +370,12 @@ const LoadBalancerEditor: React.FC = () => {
           weight: node.weight,
           enabled: node.enabled,
           type: 'config',
+          comment: '',
+          tags: [],
+          icon: 'ApiOutlined',
+          color: '#52c41a',
+          size: 'medium',
+          shape: 'rectangle',
         },
         position: { x: 100 + index * 200, y: 200 },
         style: {
@@ -400,6 +434,91 @@ const LoadBalancerEditor: React.FC = () => {
       setDrawerVisible(true);
     }
   }, [nodeForm, setNodes]);
+
+  const onNodeDragStart = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
+    if (node.data.type === 'config') {
+      setDraggingNode(node);
+      setShowDragInfo(true);
+      setDragPosition({ x: node.position.x, y: node.position.y });
+      setDragDistance(0);
+      setDragAngle(0);
+    }
+  }, []);
+
+  const onNodeDrag = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
+    if (node.data.type === 'config' && draggingNode?.id === node.id) {
+      let newX = node.position.x;
+      let newY = node.position.y;
+
+      // 网格吸附
+      if (snapToGrid) {
+        newX = Math.round(newX / gridSize) * gridSize;
+        newY = Math.round(newY / gridSize) * gridSize;
+      }
+
+      // 边界限制
+      newX = Math.max(0, newX);
+      newY = Math.max(0, newY);
+
+      // 计算拖动距离
+      const dx = newX - dragPosition.x;
+      const dy = newY - dragPosition.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      setDragDistance(distance);
+
+      // 计算拖动角度
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      setDragAngle(angle);
+
+      // 碰撞检测
+      const otherNodes = nodes.filter(n => n.id !== node.id && n.data.type === 'config');
+      const collision = otherNodes.some(other => {
+        const nodeDx = Math.abs(newX - other.position.x);
+        const nodeDy = Math.abs(newY - other.position.y);
+        return nodeDx < 100 && nodeDy < 50;
+      });
+
+      if (!collision) {
+        setDragPosition({ x: newX, y: newY });
+      }
+    }
+  }, [draggingNode, snapToGrid, gridSize, nodes, dragPosition]);
+
+  const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
+    if (node.data.type === 'config') {
+      setDraggingNode(null);
+      setShowDragInfo(false);
+
+      // 保存到历史记录
+      const currentSnapshot = { nodes, edges };
+      setHistory((prev) => [...prev.slice(0, historyIndex + 1), currentSnapshot]);
+      setHistoryIndex((prev) => prev + 1);
+    }
+  }, [nodes, edges, historyIndex]);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndex > 0) {
+      const previousState = history[historyIndex - 1];
+      setNodes(previousState.nodes);
+      setEdges(previousState.edges);
+      setHistoryIndex(historyIndex - 1);
+      message.success('已撤销');
+    } else {
+      message.warning('没有可撤销的操作');
+    }
+  }, [history, historyIndex]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextState = history[historyIndex + 1];
+      setNodes(nextState.nodes);
+      setEdges(nextState.edges);
+      setHistoryIndex(historyIndex + 1);
+      message.success('已重做');
+    } else {
+      message.warning('没有可重做的操作');
+    }
+  }, [history, historyIndex]);
 
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
     event.preventDefault();
@@ -689,6 +808,12 @@ const LoadBalancerEditor: React.FC = () => {
         weight: 1,
         enabled: true,
         type: 'config',
+        comment: '',
+        tags: [],
+        icon: 'ApiOutlined',
+        color: '#52c41a',
+        size: 'medium',
+        shape: 'rectangle',
       },
       position: { x: 100 + (nodes.length - 1) * 200, y: 200 },
       style: {
@@ -1130,7 +1255,7 @@ const LoadBalancerEditor: React.FC = () => {
           </Space>
 
           {/* 流程图画布 */}
-          <div style={{ height: '500px', border: '1px solid #d9d9d9', borderRadius: '4px' }}>
+          <div style={{ height: '500px', border: '1px solid #d9d9d9', borderRadius: '4px', position: 'relative' }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -1139,6 +1264,9 @@ const LoadBalancerEditor: React.FC = () => {
               onConnect={onConnect}
               onNodeClick={onNodeClick}
               onNodeContextMenu={onNodeContextMenu}
+              onNodeDragStart={onNodeDragStart}
+              onNodeDrag={onNodeDrag}
+              onNodeDragStop={onNodeDragStop}
               selectionMode={SelectionMode.Partial}
               fitView
             >
@@ -1152,6 +1280,27 @@ const LoadBalancerEditor: React.FC = () => {
                 </Card>
               </Panel>
             </ReactFlow>
+
+            {/* 拖动信息显示 */}
+            {showDragInfo && draggingNode && (
+              <div style={{
+                position: 'absolute',
+                top: 10,
+                left: 10,
+                background: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                zIndex: 1000,
+                pointerEvents: 'none',
+              }}>
+                <div>坐标: X: {dragPosition.x}, Y: {dragPosition.y}</div>
+                <div>距离: {dragDistance.toFixed(2)}px</div>
+                <div>角度: {dragAngle.toFixed(2)}°</div>
+                <div>网格: {snapToGrid ? '已启用' : '已禁用'}</div>
+              </div>
+            )}
           </div>
 
           {/* 右键菜单 */}
