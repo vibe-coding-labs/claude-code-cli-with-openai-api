@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { Layout, Menu, Typography, Button } from 'antd';
 import {
   SettingOutlined,
@@ -99,6 +99,7 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
+        <Route path="/" element={<Navigate to="/ui" replace />} />
         <Route path="/ui/login" element={<Login />} />
         <Route path="/ui/forgot-password" element={<ForgotPassword />} />
         <Route path="/ui/initialize" element={<Initialize />} />
@@ -118,6 +119,7 @@ const App: React.FC = () => {
             </Routes>
           </AppLayout>
         } />
+        <Route path="*" element={<Navigate to="/ui" replace />} />
       </Routes>
     </Router>
   );

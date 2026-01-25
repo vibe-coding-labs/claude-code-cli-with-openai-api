@@ -159,7 +159,10 @@ export interface Alert {
   created_at: string;
 }
 
-const API_BASE = '/api';
+// 开发模式下使用绝对路径，避免 homepage 影响
+const API_BASE = process.env.NODE_ENV === 'development' 
+  ? 'http://localhost:54988/api' 
+  : '/api';
 
 export const loadBalancerApi = {
   // Get all load balancers

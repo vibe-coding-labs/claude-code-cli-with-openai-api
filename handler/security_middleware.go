@@ -20,7 +20,7 @@ type SecurityMiddleware struct {
 	ipFilter      security.IPFilter
 	hmacVerifier  security.HMACVerifier
 	quotaManager  *security.QuotaManager
-	auditLogger   *security.AuditLogger
+	auditLogger   security.AuditLogger
 	enabled       bool
 }
 
@@ -32,7 +32,7 @@ func NewSecurityMiddleware(
 	ipFilter security.IPFilter,
 	hmacVerifier security.HMACVerifier,
 	quotaManager *security.QuotaManager,
-	auditLogger *security.AuditLogger,
+	auditLogger security.AuditLogger,
 ) *SecurityMiddleware {
 	return &SecurityMiddleware{
 		tenantManager: tenantManager,
@@ -69,7 +69,7 @@ func (sm *SecurityMiddleware) AuthenticationMiddleware() gin.HandlerFunc {
 		// Extract API key from Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			sm.auditLogger.LogAuthenticationFailure(ctx, "", "unknown", c.ClientIP(), "Missing Authorization header")
+			sm.logAuthFailure(ctx, "", "unknown", c.ClientIP(), "Missing Authorization header")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Missing Authorization header",
 			})
@@ -80,7 +80,7 @@ func (sm *SecurityMiddleware) AuthenticationMiddleware() gin.HandlerFunc {
 		// Parse Bearer token
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			sm.auditLogger.LogAuthenticationFailure(ctx, "", "unknown", c.ClientIP(), "Invalid Authorization header format")
+			sm.logAuthFailure(ctx, "", "unknown", c.ClientIP(), "Invalid Authorization header format")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid Authorization header format",
 			})
@@ -93,7 +93,7 @@ func (sm *SecurityMiddleware) AuthenticationMiddleware() gin.HandlerFunc {
 		// Validate API key
 		validatedKey, err := sm.apiKeyManager.ValidateKey(ctx, apiKey)
 		if err != nil {
-			sm.auditLogger.LogAuthenticationFailure(ctx, "", apiKey, c.ClientIP(), fmt.Sprintf("Invalid API key: %v", err))
+			sm.logAuthFailure(ctx, "", apiKey, c.ClientIP(), fmt.Sprintf("Invalid API key: %v", err))
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid or expired API key",
 			})
@@ -139,7 +139,7 @@ func (sm *SecurityMiddleware) IPFilterMiddleware() gin.HandlerFunc {
 		}
 
 		if !allowed {
-			sm.auditLogger.LogIPBlocked(ctx, tenantIDStr, clientIP, "IP address blocked by filter")
+			sm.logIPBlocked(ctx, tenantIDStr, clientIP, "IP address blocked by filter")
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "Access denied: IP address blocked",
 			})
@@ -208,7 +208,7 @@ func (sm *SecurityMiddleware) RateLimitMiddleware() gin.HandlerFunc {
 			}
 
 			if !allowed {
-				sm.auditLogger.LogRateLimitViolation(ctx, tenantIDStr, apiKeyIDStr, c.ClientIP(),
+				sm.logRateLimitViolation(ctx, tenantIDStr, apiKeyIDStr, c.ClientIP(),
 					fmt.Sprintf("Rate limit exceeded: %s", limit.Dimension))
 
 				c.Header("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
@@ -265,7 +265,7 @@ func (sm *SecurityMiddleware) HMACVerificationMiddleware() gin.HandlerFunc {
 		// Verify signature
 		valid, err := sm.hmacVerifier.VerifySignature(ctx, c.Request, signature, tenantIDStr)
 		if err != nil || !valid {
-			sm.auditLogger.LogAuthenticationFailure(ctx, tenantIDStr, "hmac", c.ClientIP(),
+			sm.logAuthFailure(ctx, tenantIDStr, "hmac", c.ClientIP(),
 				fmt.Sprintf("HMAC verification failed: %v", err))
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid HMAC signature",
@@ -314,7 +314,7 @@ func (sm *SecurityMiddleware) QuotaCheckMiddleware() gin.HandlerFunc {
 		}
 
 		if !allowed {
-			sm.auditLogger.LogQuotaExceeded(ctx, tenantIDStr, "", c.ClientIP(),
+			sm.logQuotaExceeded(ctx, tenantIDStr, "", c.ClientIP(),
 				fmt.Sprintf("Quota exceeded: %s", quota.QuotaType))
 
 			c.JSON(http.StatusTooManyRequests, gin.H{
@@ -398,6 +398,70 @@ func (sm *SecurityMiddleware) UsageTrackingMiddleware(usageTracker *security.Usa
 }
 
 // Helper functions
+
+func (sm *SecurityMiddleware) logAuthFailure(ctx context.Context, tenantID, actor, ipAddress, message string) {
+	if sm.auditLogger != nil {
+		event := security.NewAuditEvent(
+			tenantID,
+			"authentication",
+			actor,
+			"api_key",
+			"validate",
+			"failure",
+			map[string]string{"message": message},
+			ipAddress,
+		)
+		sm.auditLogger.LogEvent(ctx, event)
+	}
+}
+
+func (sm *SecurityMiddleware) logIPBlocked(ctx context.Context, tenantID, ipAddress, message string) {
+	if sm.auditLogger != nil {
+		event := security.NewAuditEvent(
+			tenantID,
+			"ip_filter",
+			"system",
+			"ip_address",
+			"block",
+			"blocked",
+			map[string]string{"message": message},
+			ipAddress,
+		)
+		sm.auditLogger.LogEvent(ctx, event)
+	}
+}
+
+func (sm *SecurityMiddleware) logRateLimitViolation(ctx context.Context, tenantID, apiKeyID, ipAddress, message string) {
+	if sm.auditLogger != nil {
+		event := security.NewAuditEvent(
+			tenantID,
+			"rate_limit",
+			apiKeyID,
+			"rate_limit",
+			"check",
+			"exceeded",
+			map[string]string{"message": message},
+			ipAddress,
+		)
+		sm.auditLogger.LogEvent(ctx, event)
+	}
+}
+
+func (sm *SecurityMiddleware) logQuotaExceeded(ctx context.Context, tenantID, apiKeyID, ipAddress, message string) {
+	if sm.auditLogger != nil {
+		event := security.NewAuditEvent(
+			tenantID,
+			"quota",
+			apiKeyID,
+			"quota",
+			"check",
+			"exceeded",
+			map[string]string{"message": message},
+			ipAddress,
+		)
+		sm.auditLogger.LogEvent(ctx, event)
+	}
+}
 
 func getStringOrDefault(value interface{}, defaultValue string) string {
 	if value == nil {

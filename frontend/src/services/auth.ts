@@ -1,8 +1,10 @@
 import axios from 'axios';
 
 // ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
-// 前端由后端服务器提供时，使用相对路径即可
-const API_BASE_URL = '/api';
+// 开发模式下使用绝对路径，避免 homepage 影响
+const API_BASE_URL = process.env.NODE_ENV === 'development' 
+  ? 'http://localhost:54988/api' 
+  : '/api';
 
 export interface User {
   id: number;

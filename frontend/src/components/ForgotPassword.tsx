@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Card, Typography, Input, Button, Space, message, Steps, Tooltip } from 'antd';
 import { ArrowLeftOutlined, CopyOutlined, SafetyOutlined, GithubOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import './ForgotPassword.css';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -21,35 +22,20 @@ const ForgotPassword: React.FC = () => {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      position: 'relative',
-      padding: '20px',
-    }}>
+    <div className="forgot-password">
       {/* GitHub链接 */}
       <Tooltip title="访问GitHub仓库">
         <a
           href="https://github.com/vibe-coding-labs/claude-code-cli-with-openai-api"
           target="_blank"
           rel="noopener noreferrer"
-          style={{
-            position: 'fixed',
-            top: 24,
-            right: 24,
-            fontSize: 32,
-            color: '#fff',
-            transition: 'all 0.3s',
-          }}
+          className="forgot-password__github"
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = '#f0f0f0';
+            e.currentTarget.style.color = '#1f1f1f';
             e.currentTarget.style.transform = 'scale(1.1)';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.color = '#1f1f1f';
             e.currentTarget.style.transform = 'scale(1)';
           }}
         >
@@ -57,14 +43,7 @@ const ForgotPassword: React.FC = () => {
         </a>
       </Tooltip>
 
-      <Card 
-        style={{ 
-          width: '100%',
-          maxWidth: 650,
-          boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-          borderRadius: 12,
-        }}
-      >
+      <Card className="forgot-password__card">
         {/* 返回按钮 */}
         <div style={{ marginBottom: 24 }}>
           <Button 
@@ -77,9 +56,9 @@ const ForgotPassword: React.FC = () => {
         </div>
 
         {/* 标题 */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <SafetyOutlined style={{ fontSize: 48, color: '#667eea', marginBottom: 16 }} />
-          <Title level={2} style={{ marginBottom: 8 }}>重置密码</Title>
+        <div className="forgot-password__header">
+          <SafetyOutlined className="forgot-password__icon" />
+          <Title level={2} className="forgot-password__title">重置密码</Title>
           <Paragraph type="secondary">
             使用命令行工具快速重置管理员密码
           </Paragraph>
@@ -88,7 +67,7 @@ const ForgotPassword: React.FC = () => {
         {/* 步骤指示器 */}
         <Steps 
           current={currentStep} 
-          style={{ marginBottom: 32 }}
+          className="forgot-password__steps"
           items={[
             {
               title: '复制命令',
@@ -106,14 +85,8 @@ const ForgotPassword: React.FC = () => {
         />
 
         {/* 命令区域 */}
-        <Card 
-          style={{ 
-            background: '#f6f8fa',
-            marginBottom: 24,
-            border: '1px solid #e1e4e8',
-          }}
-        >
-          <Paragraph strong style={{ marginBottom: 12, fontSize: 14 }}>
+        <Card className="forgot-password__command">
+          <Paragraph strong className="forgot-password__command-title">
             步骤 1：复制以下命令
           </Paragraph>
           <Space.Compact style={{ width: '100%' }}>
@@ -121,12 +94,7 @@ const ForgotPassword: React.FC = () => {
               value={resetCommand}
               readOnly
               size="large"
-              style={{ 
-                fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-                fontSize: 14,
-                background: '#fff',
-                fontWeight: 500,
-              }}
+              className="forgot-password__command-input"
             />
             <Button 
               icon={<CopyOutlined />} 
@@ -142,8 +110,7 @@ const ForgotPassword: React.FC = () => {
         {/* 使用说明 */}
         <Card 
           title={<Text strong>步骤 2：在服务器终端执行命令</Text>}
-          style={{ marginBottom: 24 }}
-          headStyle={{ background: '#fafafa' }}
+          className="forgot-password__section"
         >
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             <div>
@@ -156,12 +123,7 @@ const ForgotPassword: React.FC = () => {
               <Input
                 value="cd /path/to/claude-code-cli-with-openai-api"
                 readOnly
-                style={{ 
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  marginBottom: 12,
-                  background: '#f5f5f5',
-                }}
+                className="forgot-password__path-input"
               />
               <Paragraph style={{ marginBottom: 8 }}>
                 3. 粘贴并执行刚才复制的命令
@@ -171,20 +133,15 @@ const ForgotPassword: React.FC = () => {
               </Paragraph>
             </div>
 
-            <div style={{ 
-              padding: 12, 
-              background: '#fff7e6', 
-              borderRadius: 4,
-              border: '1px solid #ffd591',
-            }}>
-              <Text strong style={{ color: '#fa8c16' }}>⚠️ 注意事项</Text>
-              <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
-                <li style={{ marginBottom: 4 }}>
+            <div className="forgot-password__notice">
+              <Text strong className="forgot-password__notice-title">⚠️ 注意事项</Text>
+              <ul className="forgot-password__notice-list">
+                <li className="forgot-password__notice-item">
                   <Text style={{ fontSize: 13 }}>
                     该命令必须在<strong>服务器本地</strong>执行，不能远程执行
                   </Text>
                 </li>
-                <li style={{ marginBottom: 4 }}>
+                <li className="forgot-password__notice-item">
                   <Text style={{ fontSize: 13 }}>
                     执行前请确保有足够的权限
                   </Text>
@@ -202,7 +159,7 @@ const ForgotPassword: React.FC = () => {
         {/* 完成提示 */}
         <Card 
           title={<Text strong>步骤 3：使用新密码登录</Text>}
-          headStyle={{ background: '#fafafa' }}
+          className="forgot-password__section"
         >
           <Space direction="vertical" style={{ width: '100%' }}>
             <Paragraph>
@@ -220,17 +177,11 @@ const ForgotPassword: React.FC = () => {
         </Card>
 
         {/* 帮助信息 */}
-        <div style={{ 
-          marginTop: 24, 
-          padding: 16, 
-          background: '#e6f7ff',
-          borderRadius: 4,
-          border: '1px solid #91d5ff',
-        }}>
-          <Paragraph style={{ marginBottom: 4, fontSize: 13 }}>
+        <div className="forgot-password__help">
+          <Paragraph className="forgot-password__help-title">
             <Text strong>💡 需要帮助？</Text>
           </Paragraph>
-          <Paragraph style={{ marginBottom: 0, fontSize: 12 }}>
+          <Paragraph className="forgot-password__help-text">
             如果遇到问题，请查看 <a href="https://github.com/vibe-coding-labs/claude-code-cli-with-openai-api" target="_blank" rel="noopener noreferrer">GitHub 文档</a> 或提交 Issue
           </Paragraph>
         </div>

@@ -17,9 +17,9 @@ type SecurityComponents struct {
 	HMACVerifier  security.HMACVerifier
 	QuotaManager  *security.QuotaManager
 	UsageTracker  *security.UsageTracker
-	AuditLogger   *security.AuditLogger
-	BillingEngine *security.BillingEngine
-	AlertManager  *security.AlertManager
+	AuditLogger   security.AuditLogger
+	BillingEngine security.BillingEngine
+	AlertManager  security.AlertManager
 }
 
 // InitializeSecurityComponents initializes all security components
@@ -39,9 +39,15 @@ func InitializeSecurityComponents(db *sql.DB) (*SecurityComponents, error) {
 	usageTracker := security.NewUsageTracker(db)
 	
 	// Initialize supporting services (BillingEngine needs UsageTracker)
-	auditLogger := security.NewAuditLogger(db)
-	billingEngine := security.NewBillingEngine(db, usageTracker)
-	alertManager := security.NewAlertManager(db, quotaManager)
+	auditLogger := security.NewAuditLogger(security.AuditLoggerConfig{
+		DB: db,
+	})
+	billingEngine := security.NewBillingEngine(security.BillingEngineConfig{
+		DB: db,
+	})
+	alertManager := security.NewAlertManager(security.AlertManagerConfig{
+		DB: db,
+	})
 	
 	// Create security middleware
 	middleware := NewSecurityMiddleware(
@@ -78,8 +84,8 @@ func (sc *SecurityComponents) Close() error {
 	}
 	
 	if sc.AuditLogger != nil {
-		if err := sc.AuditLogger.Close(); err != nil {
-			return fmt.Errorf("failed to close audit logger: %w", err)
+		if err := sc.AuditLogger.Stop(); err != nil {
+			return fmt.Errorf("failed to stop audit logger: %w", err)
 		}
 	}
 	

@@ -142,7 +142,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		// 检查是否允许该来源
 		allowed := false
-		if origin == "http://localhost:54989" || origin == "http://127.0.0.1:54989" {
+		if origin == "http://localhost:54989" || origin == "http://127.0.0.1:54989" ||
+			origin == "http://localhost:54990" || origin == "http://127.0.0.1:54990" {
 			allowed = true
 		} else if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".zhaixingren.cn") {
 			allowed = true
