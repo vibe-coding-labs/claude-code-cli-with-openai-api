@@ -25,6 +25,7 @@ import {
   Card,
   Space,
   Typography,
+  Modal,
   Input,
   Drawer,
   Form,
@@ -887,6 +888,33 @@ const LoadBalancerEditor: React.FC = () => {
     setNodeGroups(newGroups);
     message.success(`已取消${ungroupedCount}个节点的分组`);
   }, [nodes, nodeGroups]);
+
+  const handleDeleteSelectedEdges = useCallback(() => {
+    const selectedEdges = edges.filter(e => e.selected);
+    if (selectedEdges.length === 0) {
+      message.warning('请选择要删除的连接线');
+      return;
+    }
+
+    setEdges((eds) => eds.filter(e => !e.selected));
+    message.success(`已删除${selectedEdges.length}条连接线`);
+  }, [edges, setEdges]);
+
+  const handleDeleteAllEdges = useCallback(() => {
+    if (edges.length === 0) {
+      message.warning('没有可删除的连接线');
+      return;
+    }
+
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除所有${edges.length}条连接线吗？`,
+      onOk: () => {
+        setEdges([]);
+        message.success('已删除所有连接线');
+      },
+    });
+  }, [edges, setEdges]);
 
   const handleAutoLayout = useCallback(() => {
     const configNodes = nodes.filter(n => n.data.type === 'config');
