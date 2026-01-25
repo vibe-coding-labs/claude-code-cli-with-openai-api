@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ReactFlow, {
   Node,
@@ -11,6 +11,7 @@ import ReactFlow, {
   Connection,
   MarkerType,
   Panel,
+  SelectionMode,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
@@ -26,12 +27,24 @@ import {
   Form,
   Switch,
   Spin,
+  Dropdown,
+  Menu,
 } from 'antd';
 import {
   SaveOutlined,
   PlusOutlined,
   DeleteOutlined,
   SettingOutlined,
+  CopyOutlined,
+  ScissorOutlined,
+  SnippetsOutlined,
+  LockOutlined,
+  UnlockOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+  FolderOutlined,
+  FolderOpenOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import { loadBalancerApi, LoadBalancer } from '../services/loadBalancerApi';
 import api from '../services/api';
@@ -102,6 +115,103 @@ const LoadBalancerEditor: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<Node<NodeData> | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [nodeForm] = Form.useForm();
+
+  // 剪贴板状态
+  const [clipboardNode, setClipboardNode] = useState<Node<NodeData> | null>(null);
+  const [clipboardAction, setClipboardAction] = useState<'copy' | 'cut'>('copy');
+
+  // 右键菜单状态
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [contextMenuNode, setContextMenuNode] = useState<Node<NodeData> | null>(null);
+
+  // 键盘快捷键处理
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Delete键：删除选中的节点
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length > 0) {
+          selectedNodes.forEach(node => {
+            if (node.data.type === 'config') {
+              handleDeleteNode(node.id);
+            }
+          });
+          event.preventDefault();
+        }
+      }
+
+      // Ctrl+C：复制节点
+      if (event.ctrlKey && event.key === 'c') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length === 1 && selectedNodes[0].data.type === 'config') {
+          setClipboardNode(selectedNodes[0]);
+          setClipboardAction('copy');
+          message.success('节点已复制');
+          event.preventDefault();
+        }
+      }
+
+      // Ctrl+V：粘贴节点
+      if (event.ctrlKey && event.key === 'v') {
+        if (clipboardNode) {
+          handlePasteNode();
+          event.preventDefault();
+        }
+      }
+
+      // Ctrl+X：剪切节点
+      if (event.ctrlKey && event.key === 'x') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length === 1 && selectedNodes[0].data.type === 'config') {
+          setClipboardNode(selectedNodes[0]);
+          setClipboardAction('cut');
+          message.success('节点已剪切');
+          event.preventDefault();
+        }
+      }
+
+      // Ctrl+A：全选节点
+      if (event.ctrlKey && event.key === 'a') {
+        const configNodes = nodes.filter(n => n.data.type === 'config');
+        setNodes((nds) => nds.map(n => {
+          if (n.data.type === 'config') {
+            return { ...n, selected: true };
+          }
+          return n;
+        }));
+        event.preventDefault();
+      }
+
+      // Ctrl+D：取消选择
+      if (event.ctrlKey && event.key === 'd') {
+        setNodes((nds) => nds.map(n => ({ ...n, selected: false })));
+        event.preventDefault();
+      }
+
+      // Ctrl+I：反选节点
+      if (event.ctrlKey && event.key === 'i') {
+        setNodes((nds) => nds.map(n => {
+          if (n.data.type === 'config') {
+            return { ...n, selected: !n.selected };
+          }
+          return n;
+        }));
+        message.success('已反选节点');
+        event.preventDefault();
+      }
+
+      // Escape键：关闭右键菜单
+      if (event.key === 'Escape') {
+        handleContextMenuClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [nodes, clipboardNode, clipboardAction, setNodes]);
 
   // 加载API配置列表
   useEffect(() => {
@@ -265,6 +375,18 @@ const LoadBalancerEditor: React.FC = () => {
   );
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
+    // Shift+点击：多选节点
+    if (event.shiftKey && node.data.type === 'config') {
+      setNodes((nds) => nds.map(n => {
+        if (n.id === node.id) {
+          return { ...n, selected: !n.selected };
+        }
+        return n;
+      }));
+      return;
+    }
+
+    // 普通点击：单选节点
     if (node.data.type === 'config') {
       setSelectedNode(node);
       nodeForm.setFieldsValue({
@@ -273,7 +395,241 @@ const LoadBalancerEditor: React.FC = () => {
       });
       setDrawerVisible(true);
     }
-  }, [nodeForm]);
+  }, [nodeForm, setNodes]);
+
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (node.data.type === 'config') {
+      setContextMenuNode(node);
+      setContextMenuPosition({ x: event.clientX, y: event.clientY });
+      setContextMenuVisible(true);
+    }
+  }, []);
+
+  const handleContextMenuClose = useCallback(() => {
+    setContextMenuVisible(false);
+    setContextMenuNode(null);
+  }, []);
+
+  const handleCopyNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    setClipboardNode(contextMenuNode);
+    setClipboardAction('copy');
+    message.success('节点已复制');
+    handleContextMenuClose();
+  }, [contextMenuNode]);
+
+  const handleCutNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    setClipboardNode(contextMenuNode);
+    setClipboardAction('cut');
+    message.success('节点已剪切');
+    handleContextMenuClose();
+  }, [contextMenuNode]);
+
+  const handlePasteNode = useCallback(() => {
+    if (!clipboardNode) {
+      message.warning('剪贴板为空');
+      return;
+    }
+    
+    const config = configs.find(c => c.id === clipboardNode.id);
+    if (!config) {
+      message.error('配置不存在');
+      return;
+    }
+
+    const newNodeId = `copy-${clipboardNode.id}-${Date.now()}`;
+    const newNode: Node<NodeData> = {
+      ...clipboardNode,
+      id: newNodeId,
+      data: {
+        ...clipboardNode.data,
+        configId: config.id,
+        label: `${config.name}\n权重: ${clipboardNode.data.weight || 1}`,
+      },
+      position: {
+        x: clipboardNode.position.x + 50,
+        y: clipboardNode.position.y + 50,
+      },
+    };
+
+    setNodes((nds) => [...nds, newNode]);
+    
+    if (clipboardAction === 'cut') {
+      setNodes((nds) => nds.filter(n => n.id !== clipboardNode.id));
+      setEdges((eds) => eds.filter(e => e.source !== clipboardNode.id && e.target !== clipboardNode.id));
+      setClipboardNode(null);
+      message.success('节点已粘贴');
+    } else {
+      message.success('节点已复制');
+    }
+    
+    handleContextMenuClose();
+  }, [clipboardNode, clipboardAction, configs, setNodes, setEdges]);
+
+  const handleLockNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    const updatedNode = {
+      ...contextMenuNode,
+      draggable: false,
+    };
+    setNodes((nds) => nds.map(n => n.id === contextMenuNode.id ? updatedNode : n));
+    message.success('节点已锁定');
+    handleContextMenuClose();
+  }, [contextMenuNode, setNodes]);
+
+  const handleUnlockNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    const updatedNode = {
+      ...contextMenuNode,
+      draggable: true,
+    };
+    setNodes((nds) => nds.map(n => n.id === contextMenuNode.id ? updatedNode : n));
+    message.success('节点已解锁');
+    handleContextMenuClose();
+  }, [contextMenuNode, setNodes]);
+
+  const handleHideNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    const updatedNode = {
+      ...contextMenuNode,
+      hidden: true,
+    };
+    setNodes((nds) => nds.map(n => n.id === contextMenuNode.id ? updatedNode : n));
+    message.success('节点已隐藏');
+    handleContextMenuClose();
+  }, [contextMenuNode, setNodes]);
+
+  const handleShowNode = useCallback(() => {
+    if (!contextMenuNode) return;
+    const updatedNode = {
+      ...contextMenuNode,
+      hidden: false,
+    };
+    setNodes((nds) => nds.map(n => n.id === contextMenuNode.id ? updatedNode : n));
+    message.success('节点已显示');
+    handleContextMenuClose();
+  }, [contextMenuNode, setNodes]);
+
+  const handleDeleteNodeFromMenu = useCallback(() => {
+    if (!contextMenuNode) return;
+    handleDeleteNode(contextMenuNode.id);
+    handleContextMenuClose();
+  }, [contextMenuNode]);
+
+  const handleAlignNodes = useCallback((alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+    const selectedNodes = nodes.filter(n => n.selected && n.data.type === 'config');
+    if (selectedNodes.length < 2) {
+      message.warning('请至少选择2个节点');
+      return;
+    }
+
+    let targetX: number | null = null;
+    let targetY: number | null = null;
+
+    if (alignment === 'left') {
+      const minX = Math.min(...selectedNodes.map(n => n.position.x));
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, x: minX } };
+        }
+        return n;
+      }));
+      message.success('已左对齐');
+    } else if (alignment === 'center') {
+      const centerX = selectedNodes.reduce((sum, n) => sum + n.position.x, 0) / selectedNodes.length;
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, x: centerX } };
+        }
+        return n;
+      }));
+      message.success('已水平居中');
+    } else if (alignment === 'right') {
+      const maxX = Math.max(...selectedNodes.map(n => n.position.x));
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, x: maxX } };
+        }
+        return n;
+      }));
+      message.success('已右对齐');
+    } else if (alignment === 'top') {
+      const minY = Math.min(...selectedNodes.map(n => n.position.y));
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, y: minY } };
+        }
+        return n;
+      }));
+      message.success('已顶对齐');
+    } else if (alignment === 'middle') {
+      const centerY = selectedNodes.reduce((sum, n) => sum + n.position.y, 0) / selectedNodes.length;
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, y: centerY } };
+        }
+        return n;
+      }));
+      message.success('已垂直居中');
+    } else if (alignment === 'bottom') {
+      const maxY = Math.max(...selectedNodes.map(n => n.position.y));
+      setNodes((nds) => nds.map(n => {
+        if (n.selected && n.data.type === 'config') {
+          return { ...n, position: { ...n.position, y: maxY } };
+        }
+        return n;
+      }));
+      message.success('已底对齐');
+    }
+  }, [nodes, setNodes]);
+
+  const handleDistributeNodes = useCallback((direction: 'horizontal' | 'vertical') => {
+    const selectedNodes = nodes.filter(n => n.selected && n.data.type === 'config');
+    if (selectedNodes.length < 2) {
+      message.warning('请至少选择2个节点');
+      return;
+    }
+
+    const sortedNodes = [...selectedNodes].sort((a, b) => {
+      if (direction === 'horizontal') {
+        return a.position.x - b.position.x;
+      } else {
+        return a.position.y - b.position.y;
+      }
+    });
+
+    if (direction === 'horizontal') {
+      const firstX = sortedNodes[0].position.x;
+      const lastX = sortedNodes[sortedNodes.length - 1].position.x;
+      const spacing = (lastX - firstX) / (sortedNodes.length - 1);
+      
+      setNodes((nds) => nds.map(n => {
+        const index = sortedNodes.findIndex(sn => sn.id === n.id);
+        if (index !== -1) {
+          return { ...n, position: { ...n.position, x: firstX + index * spacing } };
+        }
+        return n;
+      }));
+      message.success('已水平分布');
+    } else {
+      const firstY = sortedNodes[0].position.y;
+      const lastY = sortedNodes[sortedNodes.length - 1].position.y;
+      const spacing = (lastY - firstY) / (sortedNodes.length - 1);
+      
+      setNodes((nds) => nds.map(n => {
+        const index = sortedNodes.findIndex(sn => sn.id === n.id);
+        if (index !== -1) {
+          return { ...n, position: { ...n.position, y: firstY + index * spacing } };
+        }
+        return n;
+      }));
+      message.success('已垂直分布');
+    }
+  }, [nodes, setNodes]);
 
   const handleAddConfig = (configId: string) => {
     const config = configs.find(c => c.id === configId);
@@ -743,6 +1099,8 @@ const LoadBalancerEditor: React.FC = () => {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onNodeClick={onNodeClick}
+              onNodeContextMenu={onNodeContextMenu}
+              selectionMode={SelectionMode.Partial}
               fitView
             >
               <Background />
@@ -756,6 +1114,80 @@ const LoadBalancerEditor: React.FC = () => {
               </Panel>
             </ReactFlow>
           </div>
+
+          {/* 右键菜单 */}
+          {contextMenuVisible && (
+            <Dropdown
+              open={contextMenuVisible}
+              onOpenChange={handleContextMenuClose}
+              dropdownRender={() => (
+                <Menu
+                  onClick={handleContextMenuClose}
+                  items={[
+                    {
+                      key: 'copy',
+                      icon: <CopyOutlined />,
+                      label: '复制',
+                      onClick: handleCopyNode,
+                    },
+                    {
+                      key: 'cut',
+                      icon: <ScissorOutlined />,
+                      label: '剪切',
+                      onClick: handleCutNode,
+                    },
+                    {
+                      key: 'paste',
+                      icon: <SnippetsOutlined />,
+                      label: '粘贴',
+                      onClick: handlePasteNode,
+                      disabled: !clipboardNode,
+                    },
+                    { type: 'divider' },
+                    {
+                      key: 'lock',
+                      icon: <LockOutlined />,
+                      label: '锁定',
+                      onClick: handleLockNode,
+                    },
+                    {
+                      key: 'unlock',
+                      icon: <UnlockOutlined />,
+                      label: '解锁',
+                      onClick: handleUnlockNode,
+                    },
+                    { type: 'divider' },
+                    {
+                      key: 'hide',
+                      icon: <EyeInvisibleOutlined />,
+                      label: '隐藏',
+                      onClick: handleHideNode,
+                    },
+                    {
+                      key: 'show',
+                      icon: <EyeOutlined />,
+                      label: '显示',
+                      onClick: handleShowNode,
+                    },
+                    { type: 'divider' },
+                    {
+                      key: 'delete',
+                      icon: <DeleteOutlined />,
+                      label: '删除',
+                      onClick: handleDeleteNodeFromMenu,
+                      danger: true,
+                    },
+                  ]}
+                  style={{
+                    position: 'absolute',
+                    left: contextMenuPosition.x,
+                    top: contextMenuPosition.y,
+                    zIndex: 1000,
+                  }}
+                />
+              )}
+            />
+          )}
         </Space>
       </Card>
 
