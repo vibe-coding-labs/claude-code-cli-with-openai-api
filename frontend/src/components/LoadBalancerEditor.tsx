@@ -1004,6 +1004,48 @@ const LoadBalancerEditor: React.FC = () => {
     message.success('配置已删除');
   };
 
+  const handleExportJSON = useCallback(() => {
+    const data = {
+      nodes: nodes,
+      edges: edges,
+      timestamp: new Date().toISOString(),
+    };
+
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `load-balancer-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    message.success('已导出JSON文件');
+  }, [nodes, edges]);
+
+  const handleImportJSON = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse((e.target as { result: string }).result);
+        if (data.nodes && data.edges) {
+          setNodes(data.nodes);
+          setEdges(data.edges);
+          message.success('已导入JSON文件');
+        } else {
+          message.error('JSON文件格式不正确');
+        }
+      } catch (error) {
+        message.error('无法解析JSON文件');
+      }
+    };
+    reader.readAsText(file);
+  }, [setNodes, setEdges]);
+
   const handleUpdateNode = () => {
     if (!selectedNode) return;
 
@@ -1378,6 +1420,21 @@ const LoadBalancerEditor: React.FC = () => {
             </Select>
             <Button icon={<SettingOutlined />} onClick={handleAutoLayout}>
               自动布局
+            </Button>
+            <Button icon={<ExportOutlined />} onClick={handleExportJSON}>
+              导出JSON
+            </Button>
+            <Button icon={<ImportOutlined />} size="small">
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleImportJSON}
+                style={{ display: 'none' }}
+                id="import-json-input"
+              />
+              <label htmlFor="import-json-input" style={{ cursor: 'pointer' }}>
+                导入JSON
+              </label>
             </Button>
             <Button
               type="primary"
