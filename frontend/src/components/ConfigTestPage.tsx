@@ -134,7 +134,9 @@ const ConfigTestPage: React.FC = () => {
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: 50 }}>
-        <Spin size="large" tip="加载配置中..." />
+        <Spin size="large">
+          <div style={{ padding: '50px 0' }}>加载配置中...</div>
+        </Spin>
       </div>
     );
   }

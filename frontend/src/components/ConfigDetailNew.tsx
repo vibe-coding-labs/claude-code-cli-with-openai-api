@@ -404,46 +404,53 @@ const ConfigDetail: React.FC = () => {
         </Button>
       </Space>
 
-      <Tabs activeKey={activeTab} onChange={handleTabChange}>
-        <Tabs.TabPane tab="概览" key="overview">
-          <Card title="配置信息" style={{ marginBottom: 16 }}>
-            <Descriptions column={2} bordered>
-              <Descriptions.Item label="配置ID">{config.id}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={config.enabled ? 'success' : 'default'}>
-                  {config.enabled ? '启用' : '禁用'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="名称" span={2}>{config.name}</Descriptions.Item>
-              <Descriptions.Item label="描述" span={2}>
-                {config.description || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="OpenAI API Key">{config.openai_api_key_masked}</Descriptions.Item>
-              <Descriptions.Item label="Base URL">{config.openai_base_url}</Descriptions.Item>
-              <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
-              <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
-              <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
-              <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
-              <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
-              <Descriptions.Item label="创建时间">
-                {new Date(config.created_at).toLocaleString('zh-CN')}
-              </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
-                {new Date(config.updated_at).toLocaleString('zh-CN')}
-              </Descriptions.Item>
-            </Descriptions>
-          </Card>
+      <Tabs
+        activeKey={activeTab}
+        onChange={handleTabChange}
+        items={[
+          {
+            key: 'overview',
+            label: '概览',
+            children: (
+              <>
+                <Card title="配置信息" style={{ marginBottom: 16 }}>
+                  <Descriptions column={2} bordered>
+                    <Descriptions.Item label="配置ID">{config.id}</Descriptions.Item>
+                    <Descriptions.Item label="状态">
+                      <Tag color={config.enabled ? 'success' : 'default'}>
+                        {config.enabled ? '启用' : '禁用'}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="名称" span={2}>{config.name}</Descriptions.Item>
+                    <Descriptions.Item label="描述" span={2}>
+                      {config.description || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="OpenAI API Key">{config.openai_api_key_masked}</Descriptions.Item>
+                    <Descriptions.Item label="Base URL">{config.openai_base_url}</Descriptions.Item>
+                    <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
+                    <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
+                    <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
+                    <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
+                    <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
+                    <Descriptions.Item label="创建时间">
+                      {new Date(config.created_at).toLocaleString('zh-CN')}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="更新时间">
+                      {new Date(config.updated_at).toLocaleString('zh-CN')}
+                    </Descriptions.Item>
+                  </Descriptions>
+                </Card>
 
-          <Card title="Claude Code CLI 配置" style={{ marginBottom: 16 }}>
-            <p style={{ marginBottom: 16 }}>
-              使用以下环境变量配置 Claude Code CLI：
-            </p>
-            <pre style={{
-              background: '#f5f5f5',
-              padding: '16px',
-              borderRadius: '4px',
-              overflow: 'auto'
-            }}>
+                <Card title="Claude Code CLI 配置" style={{ marginBottom: 16 }}>
+                  <p style={{ marginBottom: 16 }}>
+                    使用以下环境变量配置 Claude Code CLI：
+                  </p>
+                  <pre style={{
+                    background: '#f5f5f5',
+                    padding: '16px',
+                    borderRadius: '4px',
+                    overflow: 'auto'
+                  }}>
 {`# 设置环境变量
 export ANTHROPIC_BASE_URL=http://localhost:8083
 export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"
@@ -452,78 +459,84 @@ export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"
 ANTHROPIC_BASE_URL=http://localhost:8083 \\
 ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" \\
 claude`}
-            </pre>
-            <Button
-              type="primary"
-              icon={<CopyOutlined />}
-              onClick={() => {
-                const configText = `export ANTHROPIC_BASE_URL=http://localhost:8083\nexport ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"`;
-                navigator.clipboard.writeText(configText);
-                message.success('配置已复制到剪贴板');
-              }}
-              style={{ marginTop: 8 }}
-            >
-              复制配置
-            </Button>
-            <p style={{ marginTop: 16, color: '#666', fontSize: '12px' }}>
-              💡 提示：使用配置的 Anthropic API Key，系统会自动识别并使用对应的配置
-            </p>
-          </Card>
+                  </pre>
+                  <Button
+                    type="primary"
+                    icon={<CopyOutlined />}
+                    onClick={() => {
+                      const configText = `export ANTHROPIC_BASE_URL=http://localhost:8083\nexport ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"`;
+                      navigator.clipboard.writeText(configText);
+                      message.success('配置已复制到剪贴板');
+                    }}
+                    style={{ marginTop: 8 }}
+                  >
+                    复制配置
+                  </Button>
+                  <p style={{ marginTop: 16, color: '#666', fontSize: '12px' }}>
+                    💡 提示：使用配置的 Anthropic API Key，系统会自动识别并使用对应的配置
+                  </p>
+                </Card>
 
-          {stats && (
-            <Card title="使用统计 (最近30天)" style={{ marginBottom: 16 }}>
-              <Row gutter={16}>
-                <Col span={6}>
-                  <Statistic title="总请求数" value={stats.total_requests} />
-                </Col>
-                <Col span={6}>
-                  <Statistic
-                    title="成功率"
-                    value={successRate}
-                    suffix="%"
-                    valueStyle={{ color: parseFloat(successRate) > 95 ? '#3f8600' : '#cf1322' }}
-                  />
-                </Col>
-                <Col span={6}>
-                  <Statistic title="总Token消耗" value={stats.total_tokens} />
-                </Col>
-                <Col span={6}>
-                  <Statistic
-                    title="平均响应时间"
-                    value={stats.avg_duration_ms.toFixed(0)}
-                    suffix="ms"
-                  />
-                </Col>
-              </Row>
-              <Row gutter={16} style={{ marginTop: 16 }}>
-                <Col span={8}>
-                  <Statistic title="输入Token" value={stats.total_input_tokens} />
-                </Col>
-                <Col span={8}>
-                  <Statistic title="输出Token" value={stats.total_output_tokens} />
-                </Col>
-                <Col span={8}>
-                  <Statistic
-                    title="错误数"
-                    value={stats.error_requests}
-                    valueStyle={{ color: stats.error_requests > 0 ? '#cf1322' : '#3f8600' }}
-                  />
-                </Col>
-              </Row>
-            </Card>
-          )}
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="请求日志" key="logs">
-          <Table
-            dataSource={logs}
-            columns={logColumns}
-            rowKey="id"
-            pagination={{ pageSize: 20 }}
-            scroll={{ x: 1800 }}
-          />
-        </Tabs.TabPane>
-      </Tabs>
+                {stats && (
+                  <Card title="使用统计 (最近30天)" style={{ marginBottom: 16 }}>
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Statistic title="总请求数" value={stats.total_requests} />
+                      </Col>
+                      <Col span={6}>
+                        <Statistic
+                          title="成功率"
+                          value={successRate}
+                          suffix="%"
+                          valueStyle={{ color: parseFloat(successRate) > 95 ? '#3f8600' : '#cf1322' }}
+                        />
+                      </Col>
+                      <Col span={6}>
+                        <Statistic title="总Token消耗" value={stats.total_tokens} />
+                      </Col>
+                      <Col span={6}>
+                        <Statistic
+                          title="平均响应时间"
+                          value={stats.avg_duration_ms.toFixed(0)}
+                          suffix="ms"
+                        />
+                      </Col>
+                    </Row>
+                    <Row gutter={16} style={{ marginTop: 16 }}>
+                      <Col span={8}>
+                        <Statistic title="输入Token" value={stats.total_input_tokens} />
+                      </Col>
+                      <Col span={8}>
+                        <Statistic title="输出Token" value={stats.total_output_tokens} />
+                      </Col>
+                      <Col span={8}>
+                        <Statistic
+                          title="错误数"
+                          value={stats.error_requests}
+                          valueStyle={{ color: stats.error_requests > 0 ? '#cf1322' : '#3f8600' }}
+                        />
+                      </Col>
+                    </Row>
+                  </Card>
+                )}
+              </>
+            )
+          },
+          {
+            key: 'logs',
+            label: '请求日志',
+            children: (
+              <Table
+                dataSource={logs}
+                columns={logColumns}
+                rowKey="id"
+                pagination={{ pageSize: 20 }}
+                scroll={{ x: 1800 }}
+              />
+            )
+          }
+        ]}
+      />
 
       <Modal
         title="编辑配置"

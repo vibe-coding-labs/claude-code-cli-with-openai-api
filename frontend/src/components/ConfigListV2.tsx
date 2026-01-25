@@ -452,22 +452,22 @@ const ConfigListV2: React.FC = () => {
           OpenAI API配置
         </Title>
         <Space>
-          <Button.Group>
-            <Tooltip title="卡片视图">
-              <Button
-                icon={<AppstoreOutlined />}
-                type={viewMode === 'card' ? 'primary' : 'default'}
-                onClick={() => handleViewModeChange('card')}
-              />
-            </Tooltip>
-            <Tooltip title="列表视图">
-              <Button
-                icon={<UnorderedListOutlined />}
-                type={viewMode === 'list' ? 'primary' : 'default'}
-                onClick={() => handleViewModeChange('list')}
-              />
-            </Tooltip>
-          </Button.Group>
+          <Space.Compact>
+          <Tooltip title="卡片视图">
+            <Button
+              icon={<AppstoreOutlined />}
+              type={viewMode === 'card' ? 'primary' : 'default'}
+              onClick={() => handleViewModeChange('card')}
+            />
+          </Tooltip>
+          <Tooltip title="列表视图">
+            <Button
+              icon={<UnorderedListOutlined />}
+              type={viewMode === 'list' ? 'primary' : 'default'}
+              onClick={() => handleViewModeChange('list')}
+            />
+          </Tooltip>
+        </Space.Compact>
           <Button
             type="primary"
             icon={<PlusOutlined />}

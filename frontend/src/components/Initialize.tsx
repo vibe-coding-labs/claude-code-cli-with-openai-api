@@ -119,6 +119,7 @@ const Initialize: React.FC = () => {
             <Input.Password
               prefix={<LockOutlined />}
               placeholder="请输入密码（至少6个字符）"
+              autoComplete="new-password"
             />
           </Form.Item>
 
@@ -132,6 +133,7 @@ const Initialize: React.FC = () => {
             <Input.Password
               prefix={<LockOutlined />}
               placeholder="请再次输入密码"
+              autoComplete="new-password"
             />
           </Form.Item>
 

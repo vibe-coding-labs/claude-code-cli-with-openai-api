@@ -513,292 +513,301 @@ const ConfigDetailV2: React.FC = () => {
         </div>
       )}
 
-      <Tabs activeKey={activeTab} onChange={handleTabChange}>
-        {/* Overview Tab */}
-        <Tabs.TabPane tab="详情" key="overview">
-          <Card title="基本信息" style={{ marginBottom: 16 }}>
-            <Descriptions column={2} bordered>
-              <Descriptions.Item label="配置ID">{config.id}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={config.enabled ? 'success' : 'default'}>
-                  {config.enabled ? '启用' : '禁用'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="名称" span={2}>{config.name}</Descriptions.Item>
-              <Descriptions.Item label="描述" span={2}>
-                {config.description || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="创建时间">
-                {new Date(config.created_at).toLocaleString('zh-CN')}
-              </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
-                {new Date(config.updated_at).toLocaleString('zh-CN')}
-              </Descriptions.Item>
-              <Descriptions.Item label="密钥过期时间" span={2}>
-                {config.expires_at ? (
-                  <span>
-                    {new Date(config.expires_at).toLocaleString('zh-CN')}
-                    {new Date(config.expires_at) < new Date() ? (
-                      <Tag color="error" style={{ marginLeft: 8 }}>已过期</Tag>
-                    ) : (
-                      <Tag color="success" style={{ marginLeft: 8 }}>有效</Tag>
-                    )}
-                  </span>
-                ) : (
-                  <span style={{ color: '#999' }}>永久有效</span>
-                )}
-              </Descriptions.Item>
-            </Descriptions>
-          </Card>
+      <Tabs
+        activeKey={activeTab}
+        onChange={handleTabChange}
+        items={[
+          {
+            key: 'overview',
+            label: '详情',
+            children: (
+              <>
+                <Card title="基本信息" style={{ marginBottom: 16 }}>
+                  <Descriptions column={2} bordered>
+                    <Descriptions.Item label="配置ID">{config.id}</Descriptions.Item>
+                    <Descriptions.Item label="状态">
+                      <Tag color={config.enabled ? 'success' : 'default'}>
+                        {config.enabled ? '启用' : '禁用'}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="名称" span={2}>{config.name}</Descriptions.Item>
+                    <Descriptions.Item label="描述" span={2}>
+                      {config.description || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="创建时间">
+                      {new Date(config.created_at).toLocaleString('zh-CN')}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="更新时间">
+                      {new Date(config.updated_at).toLocaleString('zh-CN')}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="密钥过期时间" span={2}>
+                      {config.expires_at ? (
+                        <span>
+                          {new Date(config.expires_at).toLocaleString('zh-CN')}
+                          {new Date(config.expires_at) < new Date() ? (
+                            <Tag color="error" style={{ marginLeft: 8 }}>已过期</Tag>
+                          ) : (
+                            <Tag color="success" style={{ marginLeft: 8 }}>有效</Tag>
+                          )}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#999' }}>永久有效</span>
+                      )}
+                    </Descriptions.Item>
+                  </Descriptions>
+                </Card>
 
-          <Card title="OpenAI 配置" style={{ marginBottom: 16 }}>
-            <Descriptions column={2} bordered>
-              <Descriptions.Item label="OpenAI API Key" span={2}>
-                {config.openai_api_key_masked}
-              </Descriptions.Item>
-              <Descriptions.Item label="Base URL" span={2}>
-                {config.openai_base_url}
-              </Descriptions.Item>
-              <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
-              <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
-              <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
-              <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
-              <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
-              <Descriptions.Item label="失败重试次数">{config.retry_count || 3}</Descriptions.Item>
-            </Descriptions>
-          </Card>
+                <Card title="OpenAI 配置" style={{ marginBottom: 16 }}>
+                  <Descriptions column={2} bordered>
+                    <Descriptions.Item label="OpenAI API Key" span={2}>
+                      {config.openai_api_key_masked}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Base URL" span={2}>
+                      {config.openai_base_url}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
+                    <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
+                    <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
+                    <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
+                    <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
+                    <Descriptions.Item label="失败重试次数">{config.retry_count || 3}</Descriptions.Item>
+                  </Descriptions>
+                </Card>
 
-          <Card
-            title="Anthropic API Token"
-            extra={
-              <Space size="small">
-                <Tooltip title="自动生成UUID作为Token">
-                  <Button
-                    type="link"
-                    icon={<SyncOutlined spin={renewingKey} />}
-                    onClick={handleRenewKey}
-                    loading={renewingKey}
-                    size="small"
-                  >
-                    更新 Token
-                  </Button>
-                </Tooltip>
-                <Tooltip title="自定义Token内容">
-                  <Button
-                    type="link"
-                    icon={<EditOutlined />}
-                    onClick={handleCustomToken}
-                    loading={renewingKey}
-                    size="small"
-                    style={{ color: '#1890ff' }}
-                  >
-                    自定义 Token
-                  </Button>
-                </Tooltip>
-              </Space>
-            }
-            style={{ marginBottom: 16 }}
-          >
-            <div style={{ marginBottom: 12 }}>
-              <Paragraph copyable={{ text: config.anthropic_api_key || config.id }}>
-                <code style={{
-                  background: '#f5f5f5',
-                  padding: '4px 8px',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  fontFamily: 'monospace',
-                }}>
-                  {config.anthropic_api_key || config.id}
-                </code>
-              </Paragraph>
-            </div>
-            <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              使用此 Token 作为 Anthropic API Key 来调用代理服务
-            </Paragraph>
-          </Card>
-
-          <Card title="Claude Code CLI 配置" style={{ marginBottom: 16 }}>
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {/* 方式一：单次执行（推荐） */}
-              <div>
-                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                  📌 单次执行（推荐）- 直接复制执行：
-                </Typography.Text>
-                <Input.TextArea
-                  value={`ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions`}
-                  readOnly
-                  autoSize={{ minRows: 1, maxRows: 3 }}
-                  style={{
-                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    background: '#f5f5f5',
-                  }}
-                />
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      `ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions`
-                    );
-                    message.success('已复制到剪贴板，可直接粘贴执行');
-                  }}
-                  style={{ marginTop: 8 }}
+                <Card
+                  title="Anthropic API Token"
+                  extra={
+                    <Space size="small">
+                      <Tooltip title="自动生成UUID作为Token">
+                        <Button
+                          type="link"
+                          icon={<SyncOutlined spin={renewingKey} />}
+                          onClick={handleRenewKey}
+                          loading={renewingKey}
+                          size="small"
+                        >
+                          更新 Token
+                        </Button>
+                      </Tooltip>
+                      <Tooltip title="自定义Token内容">
+                        <Button
+                          type="link"
+                          icon={<EditOutlined />}
+                          onClick={handleCustomToken}
+                          loading={renewingKey}
+                          size="small"
+                          style={{ color: '#1890ff' }}
+                        >
+                          自定义 Token
+                        </Button>
+                      </Tooltip>
+                    </Space>
+                  }
+                  style={{ marginBottom: 16 }}
                 >
-                  复制命令
-                </Button>
-              </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <Paragraph copyable={{ text: config.anthropic_api_key || config.id }}>
+                      <code style={{
+                        background: '#f5f5f5',
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        fontSize: 13,
+                        fontFamily: 'monospace',
+                      }}>
+                        {config.anthropic_api_key || config.id}
+                      </code>
+                    </Paragraph>
+                  </div>
+                  <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                    使用此 Token 作为 Anthropic API Key 来调用代理服务
+                  </Paragraph>
+                </Card>
 
-              {/* 方式二：添加到 shell 配置 */}
-              <div>
-                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                  🔧 永久配置（添加到 ~/.zshrc 或 ~/.bashrc）：
-                </Typography.Text>
-                <Input.TextArea
-                  value={`export ANTHROPIC_BASE_URL=${serverUrl}
+                <Card title="Claude Code CLI 配置" style={{ marginBottom: 16 }}>
+                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                    {/* 方式一：单次执行（推荐） */}
+                    <div>
+                      <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                        📌 单次执行（推荐）- 直接复制执行：
+                      </Typography.Text>
+                      <Input.TextArea
+                        value={`ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions`}
+                        readOnly
+                        autoSize={{ minRows: 1, maxRows: 3 }}
+                        style={{
+                          fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                          fontSize: 12,
+                          background: '#f5f5f5',
+                        }}
+                      />
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions`
+                          );
+                          message.success('已复制到剪贴板，可直接粘贴执行');
+                        }}
+                        style={{ marginTop: 8 }}
+                      >
+                        复制命令
+                      </Button>
+                    </div>
+
+                    {/* 方式二：添加到 shell 配置 */}
+                    <div>
+                      <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                        🔧 永久配置（添加到 ~/.zshrc 或 ~/.bashrc）：
+                      </Typography.Text>
+                      <Input.TextArea
+                        value={`export ANTHROPIC_BASE_URL=${serverUrl}
 export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}
 alias claude='command claude --dangerously-skip-permissions'`}
-                  readOnly
-                  autoSize={{ minRows: 4, maxRows: 4 }}
-                  style={{
-                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    background: '#f5f5f5',
-                  }}
-                />
-                <Button
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      `export ANTHROPIC_BASE_URL=${serverUrl}\nexport ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"\nexport CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}\nalias claude='command claude --dangerously-skip-permissions'`
-                    );
-                    message.success('已复制，粘贴到 shell 配置文件后执行 source ~/.zshrc 生效');
-                  }}
-                  style={{ marginTop: 8 }}
-                >
-                  复制配置
-                </Button>
-              </div>
-
-              {/* 方式三：一键配置脚本 */}
-              <div>
-                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                  ⚡ 一键配置脚本（自动追加到 shell 配置）：
-                </Typography.Text>
-                <Input.TextArea
-                  value={`echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo 'export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`}
-                  readOnly
-                  autoSize={{ minRows: 1, maxRows: 3 }}
-                  style={{
-                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    background: '#f5f5f5',
-                  }}
-                />
-                <Button
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      `echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo 'export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`
-                    );
-                    message.success('已复制一键配置脚本');
-                  }}
-                  style={{ marginTop: 8 }}
-                >
-                  复制脚本
-                </Button>
-                <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
-                  （使用 bash 的话，将 ~/.zshrc 改为 ~/.bashrc）
-                </Typography.Text>
-              </div>
-
-              {/* 方式四：带提示词的快速执行 */}
-              <div>
-                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                  💬 带提示词快速执行（使用 -p 参数）：
-                </Typography.Text>
-                <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 8, color: '#666' }}>
-                  输入提示词，生成可直接执行的命令：
-                </Typography.Text>
-                <Input
-                  placeholder="请输入提示词，例如：Hello, Claude!"
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  style={{ marginBottom: 8 }}
-                  suffix={
-                    promptText && (
+                        readOnly
+                        autoSize={{ minRows: 4, maxRows: 4 }}
+                        style={{
+                          fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                          fontSize: 12,
+                          background: '#f5f5f5',
+                        }}
+                      />
                       <Button
-                        type="text"
                         size="small"
-                        onClick={() => setPromptText('')}
-                        style={{ padding: 0, height: 'auto' }}
+                        icon={<CopyOutlined />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `export ANTHROPIC_BASE_URL=${serverUrl}\nexport ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"\nexport CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}\nalias claude='command claude --dangerously-skip-permissions'`
+                          );
+                          message.success('已复制，粘贴到 shell 配置文件后执行 source ~/.zshrc 生效');
+                        }}
+                        style={{ marginTop: 8 }}
                       >
-                        清空
+                        复制配置
                       </Button>
-                    )
-                  }
-                />
-                <Input.TextArea
-                  value={`ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions -p "${promptText}"`}
-                  readOnly
-                  autoSize={{ minRows: 2, maxRows: 4 }}
-                  style={{
-                    fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    background: '#f5f5f5',
-                  }}
-                />
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() => {
-                    if (!promptText.trim()) {
-                      message.warning('请先输入提示词');
-                      return;
-                    }
-                    navigator.clipboard.writeText(
-                      `ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions -p "${promptText}"`
-                    );
-                    message.success('已复制命令，可直接粘贴执行');
-                  }}
-                  style={{ marginTop: 8 }}
-                  disabled={!promptText.trim()}
-                >
-                  复制命令
-                </Button>
-              </div>
+                    </div>
 
-              {/* 提示信息 */}
-              <div style={{ padding: 12, background: '#fff7e6', borderRadius: 4, border: '1px solid #ffd591' }}>
-                <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                  💡 <strong>--dangerously-skip-permissions</strong> 参数会跳过权限确认，适合自动化场景
-                </Typography.Text>
-                <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                  🔢 <strong>CLAUDE_CODE_MAX_OUTPUT_TOKENS={config.max_tokens_limit}</strong> 设置最大输出token与OpenAI API配置一致，避免token错误
-                </Typography.Text>
-                <Typography.Text style={{ fontSize: 12, display: 'block' }}>
-                  💬 <strong>-p "提示词"</strong> 参数用于直接传递提示词给 Claude，适合快速提问
-                </Typography.Text>
-              </div>
-            </Space>
-          </Card>
-        </Tabs.TabPane>
+                    {/* 方式三：一键配置脚本 */}
+                    <div>
+                      <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                        ⚡ 一键配置脚本（自动追加到 shell 配置）：
+                      </Typography.Text>
+                      <Input.TextArea
+                        value={`echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo 'export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`}
+                        readOnly
+                        autoSize={{ minRows: 1, maxRows: 3 }}
+                        style={{
+                          fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                          fontSize: 12,
+                          background: '#f5f5f5',
+                        }}
+                      />
+                      <Button
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `echo 'export ANTHROPIC_BASE_URL=${serverUrl}' >> ~/.zshrc && echo 'export ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}"' >> ~/.zshrc && echo 'export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit}' >> ~/.zshrc && echo "alias claude='command claude --dangerously-skip-permissions'" >> ~/.zshrc && source ~/.zshrc`
+                          );
+                          message.success('已复制一键配置脚本');
+                        }}
+                        style={{ marginTop: 8 }}
+                      >
+                        复制脚本
+                      </Button>
+                      <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                        （使用 bash 的话，将 ~/.zshrc 改为 ~/.bashrc）
+                      </Typography.Text>
+                    </div>
 
-        {/* Logs Tab */}
-        <Tabs.TabPane tab="请求日志" key="logs">
-          <RequestLogs configId={id!} />
-        </Tabs.TabPane>
+                    {/* 方式四：带提示词的快速执行 */}
+                    <div>
+                      <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                        💬 带提示词快速执行（使用 -p 参数）：
+                      </Typography.Text>
+                      <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 8, color: '#666' }}>
+                        输入提示词，生成可直接执行的命令：
+                      </Typography.Text>
+                      <Input
+                        placeholder="请输入提示词，例如：Hello, Claude!"
+                        value={promptText}
+                        onChange={(e) => setPromptText(e.target.value)}
+                        style={{ marginBottom: 8 }}
+                        suffix={
+                          promptText && (
+                            <Button
+                              type="text"
+                              size="small"
+                              onClick={() => setPromptText('')}
+                              style={{ padding: 0, height: 'auto' }}
+                            >
+                              清空
+                            </Button>
+                          )
+                        }
+                      />
+                      <Input.TextArea
+                        value={`ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions -p "${promptText}"`}
+                        readOnly
+                        autoSize={{ minRows: 2, maxRows: 4 }}
+                        style={{
+                          fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                          fontSize: 12,
+                          background: '#f5f5f5',
+                        }}
+                      />
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => {
+                          if (!promptText.trim()) {
+                            message.warning('请先输入提示词');
+                            return;
+                          }
+                          navigator.clipboard.writeText(
+                            `ANTHROPIC_BASE_URL=${serverUrl} ANTHROPIC_API_KEY="${config.anthropic_api_key || config.id}" CLAUDE_CODE_MAX_OUTPUT_TOKENS=${config.max_tokens_limit} claude --dangerously-skip-permissions -p "${promptText}"`
+                          );
+                          message.success('已复制命令，可直接粘贴执行');
+                        }}
+                        style={{ marginTop: 8 }}
+                        disabled={!promptText.trim()}
+                      >
+                        复制命令
+                      </Button>
+                    </div>
 
-        {/* Test Tab */}
-        <Tabs.TabPane tab="在线测试" key="test">
-          <ConfigTestInline configId={id!} />
-        </Tabs.TabPane>
-      </Tabs>
+                    {/* 提示信息 */}
+                    <div style={{ padding: 12, background: '#fff7e6', borderRadius: 4, border: '1px solid #ffd591' }}>
+                      <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                        💡 <strong>--dangerously-skip-permissions</strong> 参数会跳过权限确认，适合自动化场景
+                      </Typography.Text>
+                      <Typography.Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                        🔢 <strong>CLAUDE_CODE_MAX_OUTPUT_TOKENS={config.max_tokens_limit}</strong> 设置最大输出token与OpenAI API配置一致，避免token错误
+                      </Typography.Text>
+                      <Typography.Text style={{ fontSize: 12, display: 'block' }}>
+                        💬 <strong>-p "提示词"</strong> 参数用于直接传递提示词给 Claude，适合快速提问
+                      </Typography.Text>
+                    </div>
+                  </Space>
+                </Card>
+              </>
+            )
+          },
+          {
+            key: 'logs',
+            label: '请求日志',
+            children: <RequestLogs configId={id!} />
+          },
+          {
+            key: 'test',
+            label: '在线测试',
+            children: <ConfigTestInline configId={id!} />
+          }
+        ]}
+      />
     </div>
   );
 };

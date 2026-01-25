@@ -119,7 +119,9 @@ const LogDetail: React.FC = () => {
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-        <Spin size="large" tip="加载日志详情..." />
+        <Spin size="large">
+          <div style={{ padding: '50px 0' }}>加载日志详情...</div>
+        </Spin>
       </div>
     );
   }
