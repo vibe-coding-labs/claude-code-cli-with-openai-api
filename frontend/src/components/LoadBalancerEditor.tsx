@@ -125,6 +125,10 @@ const LoadBalancerEditor: React.FC = () => {
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   const [contextMenuNode, setContextMenuNode] = useState<Node<NodeData> | null>(null);
 
+  // 节点分组状态
+  const [nodeGroups, setNodeGroups] = useState<Record<string, string>>({});
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+
   // 键盘快捷键处理
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -630,6 +634,41 @@ const LoadBalancerEditor: React.FC = () => {
       message.success('已垂直分布');
     }
   }, [nodes, setNodes]);
+
+  const handleGroupNodes = useCallback(() => {
+    const selectedNodes = nodes.filter(n => n.selected && n.data.type === 'config');
+    if (selectedNodes.length < 2) {
+      message.warning('请至少选择2个节点进行分组');
+      return;
+    }
+
+    const groupId = `group-${Date.now()}`;
+    const newGroups = { ...nodeGroups };
+    selectedNodes.forEach(node => {
+      newGroups[node.id] = groupId;
+    });
+    setNodeGroups(newGroups);
+    message.success(`已创建分组，包含${selectedNodes.length}个节点`);
+  }, [nodes, nodeGroups]);
+
+  const handleUngroupNodes = useCallback(() => {
+    const selectedNodes = nodes.filter(n => n.selected && n.data.type === 'config');
+    if (selectedNodes.length === 0) {
+      message.warning('请选择要取消分组的节点');
+      return;
+    }
+
+    const newGroups = { ...nodeGroups };
+    let ungroupedCount = 0;
+    selectedNodes.forEach(node => {
+      if (newGroups[node.id]) {
+        delete newGroups[node.id];
+        ungroupedCount++;
+      }
+    });
+    setNodeGroups(newGroups);
+    message.success(`已取消${ungroupedCount}个节点的分组`);
+  }, [nodes, nodeGroups]);
 
   const handleAddConfig = (configId: string) => {
     const config = configs.find(c => c.id === configId);
