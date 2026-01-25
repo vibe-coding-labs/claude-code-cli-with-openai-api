@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,11 +18,13 @@ import (
 
 // Handler 主处理器
 type Handler struct {
-	client           *client.OpenAIClient
-	config           *config.Config
-	authHandler      *AuthHandler
-	requestValidator *RequestValidator
-	responseHandler  *ResponseHandler
+	client            *client.OpenAIClient
+	config            *config.Config
+	authHandler       *AuthHandler
+	requestValidator  *RequestValidator
+	responseHandler   *ResponseHandler
+	lbRegistry        *LoadBalancerManagerRegistry
+	securityComponents *SecurityComponents
 }
 
 // NewHandler 创建新的处理器
@@ -32,7 +35,54 @@ func NewHandler(cfg *config.Config) *Handler {
 		authHandler:      NewAuthHandler(),
 		requestValidator: NewRequestValidator(),
 		responseHandler:  NewResponseHandler(),
+		lbRegistry:       NewLoadBalancerManagerRegistry(DefaultLoadBalancerManagerConfig()),
+		securityComponents: nil, // Security components are optional and initialized separately
 	}
+}
+
+// EnableSecurity initializes and enables security features
+func (h *Handler) EnableSecurity(db *sql.DB) error {
+	components, err := InitializeSecurityComponents(db)
+	if err != nil {
+		return fmt.Errorf("failed to initialize security components: %w", err)
+	}
+	h.securityComponents = components
+	return nil
+}
+
+// DisableSecurity disables security features
+func (h *Handler) DisableSecurity() error {
+	if h.securityComponents != nil {
+		if err := h.securityComponents.Close(); err != nil {
+			return fmt.Errorf("failed to close security components: %w", err)
+		}
+		h.securityComponents = nil
+	}
+	return nil
+}
+
+// IsSecurityEnabled returns whether security features are enabled
+func (h *Handler) IsSecurityEnabled() bool {
+	return h.securityComponents != nil
+}
+
+// Shutdown gracefully shuts down the handler
+func (h *Handler) Shutdown() error {
+	// Shutdown load balancer registry
+	if h.lbRegistry != nil {
+		if err := h.lbRegistry.StopAll(); err != nil {
+			return fmt.Errorf("failed to stop load balancer registry: %w", err)
+		}
+	}
+	
+	// Shutdown security components
+	if h.securityComponents != nil {
+		if err := h.securityComponents.Close(); err != nil {
+			return fmt.Errorf("failed to close security components: %w", err)
+		}
+	}
+	
+	return nil
 }
 
 // ValidateAPIKey middleware 验证 API Key
@@ -95,7 +145,69 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	// 通过 API key 查找配置
+	// 首先尝试查找负载均衡器
+	loadBalancer, lbErr := database.GetLoadBalancerByAPIKey(apiKey)
+	if lbErr == nil && loadBalancer != nil {
+		logger.Info("  Found load balancer by API key: %s (%s)", loadBalancer.ID, loadBalancer.Name)
+		
+		// 检查负载均衡器是否启用
+		if !loadBalancer.Enabled {
+			logger.Warn("← [CreateMessage] Load balancer disabled: %s", loadBalancer.ID)
+			utils.GetLogger().LogResponse(http.StatusForbidden, time.Since(startTime))
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": map[string]interface{}{
+					"type":    "permission_error",
+					"message": "This load balancer is currently disabled.",
+				},
+			})
+			return
+		}
+		
+		// 获取或创建负载均衡器管理器（包含健康检查、熔断器等增强功能）
+		lbManager, err := h.lbRegistry.GetManager(loadBalancer.ID)
+		if err != nil {
+			logger.Error("← [CreateMessage] Failed to get load balancer manager: %v", err)
+			utils.GetLogger().LogResponse(http.StatusInternalServerError, time.Since(startTime))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": map[string]interface{}{
+					"type":    "internal_error",
+					"message": "Failed to initialize load balancer",
+				},
+			})
+			return
+		}
+		
+		// 获取选择器
+		selector := lbManager.GetSelector()
+		
+		// 选择一个配置
+		selectedConfig, err := selector.SelectConfig(c.Request.Context())
+		if err != nil {
+			logger.Error("← [CreateMessage] Failed to select config from load balancer: %v", err)
+			utils.GetLogger().LogResponse(http.StatusInternalServerError, time.Since(startTime))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": map[string]interface{}{
+					"type":    "internal_error",
+					"message": "No available configurations in load balancer",
+				},
+			})
+			return
+		}
+		
+		logger.Info("  Selected config from load balancer: %s (%s)", selectedConfig.ID, selectedConfig.Name)
+		
+		// 使用选中的配置处理请求，并通过管理器记录请求
+		h.handleMessageWithLoadBalancer(c, selectedConfig, lbManager)
+		
+		// 释放连接（用于最少连接策略）
+		if loadBalancer.Strategy == "least_connections" {
+			selector.ReleaseConnection(selectedConfig.ID)
+		}
+		
+		return
+	}
+
+	// 如果不是负载均衡器，尝试查找普通配置
 	dbConfig, err := database.GetConfigByAnthropicAPIKey(apiKey)
 	if err != nil || dbConfig == nil {
 		logger.Warn("← [CreateMessage] Invalid API key: %s", maskAPIKey(apiKey))
@@ -189,6 +301,16 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 
 // handleMessageWithConfig 处理消息请求的核心逻辑
 func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig) {
+	h.handleMessageWithConfigAndManager(c, dbConfig, nil)
+}
+
+// handleMessageWithLoadBalancer 处理通过负载均衡器的消息请求
+func (h *Handler) handleMessageWithLoadBalancer(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager) {
+	h.handleMessageWithConfigAndManager(c, dbConfig, lbManager)
+}
+
+// handleMessageWithConfigAndManager 处理消息请求的核心逻辑（支持负载均衡器管理器）
+func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 	logger.Info("→ [handleMessageWithConfig] Processing message request")
@@ -241,10 +363,14 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 	if dbConfig != nil {
 		logger.Debug("  Using database config: %s", dbConfig.Name)
 
-		// 验证 API Key
-		if valid, errorResp := h.authHandler.ValidateAPIKey(c, dbConfig); !valid {
-			h.authHandler.SendAuthError(c, http.StatusUnauthorized, errorResp)
-			return
+		// 验证 API Key（仅当不是通过负载均衡器时）
+		if lbManager == nil {
+			if valid, errorResp := h.authHandler.ValidateAPIKey(c, dbConfig); !valid {
+				h.authHandler.SendAuthError(c, http.StatusUnauthorized, errorResp)
+				return
+			}
+		} else {
+			logger.Debug("  Skipping API key validation (using load balancer)")
 		}
 
 		// 使用数据库配置创建临时配置和客户端
@@ -423,4 +549,25 @@ func containsIgnoreCase(s, substr string) bool {
 // HealthCheck 处理健康检查（别名）
 func (h *Handler) HealthCheck(c *gin.Context) {
 	h.Health(c)
+}
+
+
+// GetSecurityMiddleware returns the security middleware chain
+// Returns nil if security is not enabled
+func (h *Handler) GetSecurityMiddleware() []gin.HandlerFunc {
+	if !h.IsSecurityEnabled() {
+		return nil
+	}
+	
+	middleware := h.securityComponents.Middleware
+	usageTracker := h.securityComponents.UsageTracker
+	
+	return []gin.HandlerFunc{
+		middleware.IPFilterMiddleware(),
+		middleware.AuthenticationMiddleware(),
+		middleware.RateLimitMiddleware(),
+		middleware.HMACVerificationMiddleware(),
+		middleware.QuotaCheckMiddleware(),
+		middleware.UsageTrackingMiddleware(usageTracker),
+	}
 }

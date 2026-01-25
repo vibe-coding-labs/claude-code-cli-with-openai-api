@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-code-cli-openai-api
+  namespace: zhaixingren-prod
+  labels:
+    app: claude-code-cli-openai-api
+    version: v2.0
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: claude-code-cli-openai-api
+  template:
+    metadata:
+      labels:
+        app: claude-code-cli-openai-api
+        version: v2.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "54988"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: claude-code-cli-openai-api
+        image: docker.zhaixingren.cn/aigchub/claude-code-cli-openai-api:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 54988
+          protocol: TCP
+        
+        # 环境变量
+        envFrom:
+        - configMapRef:
+            name: claude-code-cli-config
+        - secretRef:
+            name: claude-code-cli-secrets
+            optional: true
+        
+        # 资源限制
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # 健康检查探针
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # 启动探针
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 12
+        
+        # 卷挂载
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        - name: tmp
+          mountPath: /tmp
+        
+        # 安全上下文
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # 卷定义
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: claude-code-cli-data
+      - name: tmp
+        emptyDir: {}
+      
+      # 优雅终止
+      terminationGracePeriodSeconds: 30
+      
+      # DNS 配置
+      dnsPolicy: ClusterFirst
+      
+      # 重启策略
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-code-cli-openai-api-service
+  namespace: zhaixingren-prod
+  labels:
+    app: claude-code-cli-openai-api
+spec:
+  selector:
+    app: claude-code-cli-openai-api
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: http
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-code-cli-data
+  namespace: zhaixingren-prod
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard

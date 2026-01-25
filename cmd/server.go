@@ -258,6 +258,27 @@ func runServer(cmd *cobra.Command, args []string) error {
 		// Test endpoint
 		configAPI.POST("/configs/:id/renew-key", h.RenewConfigAPIKey)
 		configAPI.POST("/configs/:id/test", h.TestConfig)
+
+		// Load Balancer CRUD
+		configAPI.GET("/load-balancers", handler.GetAllLoadBalancers)
+		configAPI.GET("/load-balancers/:id", handler.GetLoadBalancer)
+		configAPI.POST("/load-balancers", handler.CreateLoadBalancer)
+		configAPI.PUT("/load-balancers/:id", handler.UpdateLoadBalancer)
+		configAPI.DELETE("/load-balancers/:id", handler.DeleteLoadBalancer)
+		configAPI.POST("/load-balancers/:id/renew-key", handler.RenewLoadBalancerKey)
+		configAPI.POST("/load-balancers/:id/test", handler.TestLoadBalancer)
+		configAPI.GET("/load-balancers/:id/stats", handler.GetLoadBalancerStats)
+
+		// Load Balancer Enhanced Features
+		configAPI.GET("/load-balancers/:id/health", handler.GetLoadBalancerHealthStatus)
+		configAPI.POST("/load-balancers/:id/health/trigger", handler.TriggerHealthCheck)
+		configAPI.GET("/load-balancers/:id/circuit-breakers", handler.GetLoadBalancerCircuitBreakers)
+		configAPI.POST("/load-balancers/:id/circuit-breakers/:config_id/reset", handler.ResetCircuitBreaker)
+		configAPI.GET("/load-balancers/:id/enhanced-stats", handler.GetLoadBalancerEnhancedStats)
+		configAPI.GET("/load-balancers/:id/metrics/realtime", handler.GetLoadBalancerRealTimeMetrics)
+		configAPI.GET("/load-balancers/:id/request-logs", handler.GetLoadBalancerRequestLogs)
+		configAPI.GET("/load-balancers/:id/alerts", handler.GetLoadBalancerAlerts)
+		configAPI.POST("/load-balancers/:id/alerts/:alert_id/acknowledge", handler.AcknowledgeAlert)
 	}
 
 	// Serve UI static files (embedded or from filesystem)

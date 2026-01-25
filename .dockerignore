@@ -1,0 +1,58 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+docs/
+LICENSE
+
+# Data and logs
+data/
+logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# Test files
+*_test.go
+coverage.out
+test_*.db
+
+# Build artifacts
+claude-with-openai-api
+claude-code-cli-with-openai-api
+test_build
+test_db_build
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Deployment
+deploy-prod.sh
+k8s/
+docker-compose*.yml
+
+# Frontend node_modules (will be copied from build stage)
+frontend/node_modules/
+frontend/build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

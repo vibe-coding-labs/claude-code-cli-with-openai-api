@@ -1,0 +1,56 @@
+# Service configuration for 10% canary traffic
+# Uses weighted routing to send 10% traffic to canary, 90% to stable
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-proxy-service
+  namespace: zhaixingren-prod
+  labels:
+    app: claude-proxy
+  annotations:
+    # Nginx Ingress annotations for traffic splitting
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  selector:
+    app: claude-proxy
+    # No version selector - routes to both stable and canary
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 54988
+    name: http
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+---
+# Ingress for canary routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: claude-proxy-canary-ingress
+  namespace: zhaixingren-prod
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: your-domain.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: claude-proxy-canary-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - your-domain.example.com
+    secretName: your-tls-secret

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  claude-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-proxy
+    ports:
+      - "54988:54988"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PORT=54988
+      - HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      - DB_PATH=/app/data/proxy.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:54988/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - claude-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+networks:
+  claude-network:
+    driver: bridge

@@ -107,16 +107,146 @@ func createTables() error {
 		FOREIGN KEY (config_id) REFERENCES api_configs(id) ON DELETE CASCADE
 	);`
 
+	// Load balancers table
+	loadBalancersTable := `
+	CREATE TABLE IF NOT EXISTS load_balancers (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		strategy TEXT NOT NULL,
+		config_nodes TEXT NOT NULL,
+		enabled BOOLEAN DEFAULT 1,
+		anthropic_api_key TEXT UNIQUE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`
+
+	// Health statuses table for load balancer enhancements
+	healthStatusesTable := `
+	CREATE TABLE IF NOT EXISTS health_statuses (
+		config_id TEXT PRIMARY KEY,
+		status TEXT NOT NULL,
+		last_check_time DATETIME NOT NULL,
+		consecutive_successes INTEGER DEFAULT 0,
+		consecutive_failures INTEGER DEFAULT 0,
+		last_error TEXT,
+		response_time_ms INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (config_id) REFERENCES api_configs(id) ON DELETE CASCADE
+	);`
+
+	// Circuit breaker states table
+	circuitBreakerStatesTable := `
+	CREATE TABLE IF NOT EXISTS circuit_breaker_states (
+		config_id TEXT PRIMARY KEY,
+		state TEXT NOT NULL,
+		failure_count INTEGER DEFAULT 0,
+		success_count INTEGER DEFAULT 0,
+		last_state_change DATETIME NOT NULL,
+		next_retry_time DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (config_id) REFERENCES api_configs(id) ON DELETE CASCADE
+	);`
+
+	// Load balancer request logs table
+	lbRequestLogsTable := `
+	CREATE TABLE IF NOT EXISTS load_balancer_request_logs (
+		id TEXT PRIMARY KEY,
+		load_balancer_id TEXT NOT NULL,
+		selected_config_id TEXT NOT NULL,
+		request_time DATETIME NOT NULL,
+		response_time DATETIME NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		status_code INTEGER NOT NULL,
+		success BOOLEAN NOT NULL,
+		retry_count INTEGER DEFAULT 0,
+		error_message TEXT,
+		request_summary TEXT,
+		response_preview TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
+	);`
+
+	// Load balancer stats table
+	lbStatsTable := `
+	CREATE TABLE IF NOT EXISTS load_balancer_stats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		load_balancer_id TEXT NOT NULL,
+		time_bucket DATETIME NOT NULL,
+		total_requests INTEGER DEFAULT 0,
+		success_requests INTEGER DEFAULT 0,
+		failed_requests INTEGER DEFAULT 0,
+		total_duration_ms INTEGER DEFAULT 0,
+		min_duration_ms INTEGER DEFAULT 0,
+		max_duration_ms INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
+	);`
+
+	// Node stats table
+	nodeStatsTable := `
+	CREATE TABLE IF NOT EXISTS node_stats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		load_balancer_id TEXT NOT NULL,
+		config_id TEXT NOT NULL,
+		time_bucket DATETIME NOT NULL,
+		request_count INTEGER DEFAULT 0,
+		success_count INTEGER DEFAULT 0,
+		failed_count INTEGER DEFAULT 0,
+		total_duration_ms INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE,
+		FOREIGN KEY (config_id) REFERENCES api_configs(id) ON DELETE CASCADE
+	);`
+
+	// Alerts table
+	alertsTable := `
+	CREATE TABLE IF NOT EXISTS alerts (
+		id TEXT PRIMARY KEY,
+		load_balancer_id TEXT NOT NULL,
+		level TEXT NOT NULL,
+		type TEXT NOT NULL,
+		message TEXT NOT NULL,
+		details TEXT,
+		acknowledged BOOLEAN DEFAULT FALSE,
+		acknowledged_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
+	);`
+
 	// Create indexes for better query performance
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_token_stats_config_id ON token_stats(config_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_token_stats_created_at ON token_stats(created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_config_id ON request_logs(config_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_load_balancers_api_key ON load_balancers(anthropic_api_key);`,
+		`CREATE INDEX IF NOT EXISTS idx_load_balancers_enabled ON load_balancers(enabled);`,
+		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_lb_id ON load_balancer_request_logs(load_balancer_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_time ON load_balancer_request_logs(request_time);`,
+		`CREATE INDEX IF NOT EXISTS idx_lb_stats_lb_id_time ON load_balancer_stats(load_balancer_id, time_bucket);`,
+		`CREATE INDEX IF NOT EXISTS idx_node_stats_lb_id_time ON node_stats(load_balancer_id, time_bucket);`,
+		`CREATE INDEX IF NOT EXISTS idx_node_stats_config_id ON node_stats(config_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_alerts_lb_id ON alerts(load_balancer_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);`,
+		`CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);`,
 	}
 
 	// Execute table creation
-	tables := []string{apiConfigsTable, tokenStatsTable, requestLogsTable}
+	tables := []string{
+		apiConfigsTable,
+		tokenStatsTable,
+		requestLogsTable,
+		loadBalancersTable,
+		healthStatusesTable,
+		circuitBreakerStatesTable,
+		lbRequestLogsTable,
+		lbStatsTable,
+		nodeStatsTable,
+		alertsTable,
+	}
 	for _, table := range tables {
 		if _, err := DB.Exec(table); err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
@@ -137,8 +267,13 @@ func createTables() error {
 		return fmt.Errorf("failed to create users table: %w", err)
 	}
 
-	// Run migrations
+	// Run legacy migrations (for backward compatibility)
 	if err := runMigrations(); err != nil {
+		return fmt.Errorf("failed to run legacy migrations: %w", err)
+	}
+
+	// Run new migration system
+	if err := RunMigrations(); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -161,6 +296,27 @@ func runMigrations() error {
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT;`,
 		// 迁移4: 为 api_configs 添加密钥过期时间字段
 		`ALTER TABLE api_configs ADD COLUMN expires_at DATETIME;`,
+		// 迁移5: 为 load_balancers 添加健康检查配置字段
+		`ALTER TABLE load_balancers ADD COLUMN health_check_enabled BOOLEAN DEFAULT 1;`,
+		`ALTER TABLE load_balancers ADD COLUMN health_check_interval INTEGER DEFAULT 30;`,
+		`ALTER TABLE load_balancers ADD COLUMN failure_threshold INTEGER DEFAULT 3;`,
+		`ALTER TABLE load_balancers ADD COLUMN recovery_threshold INTEGER DEFAULT 2;`,
+		`ALTER TABLE load_balancers ADD COLUMN health_check_timeout INTEGER DEFAULT 5;`,
+		// 迁移6: 为 load_balancers 添加重试配置字段
+		`ALTER TABLE load_balancers ADD COLUMN max_retries INTEGER DEFAULT 3;`,
+		`ALTER TABLE load_balancers ADD COLUMN initial_retry_delay INTEGER DEFAULT 100;`,
+		`ALTER TABLE load_balancers ADD COLUMN max_retry_delay INTEGER DEFAULT 5000;`,
+		// 迁移7: 为 load_balancers 添加熔断器配置字段
+		`ALTER TABLE load_balancers ADD COLUMN circuit_breaker_enabled BOOLEAN DEFAULT 1;`,
+		`ALTER TABLE load_balancers ADD COLUMN error_rate_threshold REAL DEFAULT 0.5;`,
+		`ALTER TABLE load_balancers ADD COLUMN circuit_breaker_window INTEGER DEFAULT 60;`,
+		`ALTER TABLE load_balancers ADD COLUMN circuit_breaker_timeout INTEGER DEFAULT 30;`,
+		`ALTER TABLE load_balancers ADD COLUMN half_open_requests INTEGER DEFAULT 3;`,
+		// 迁移8: 为 load_balancers 添加动态权重配置字段
+		`ALTER TABLE load_balancers ADD COLUMN dynamic_weight_enabled BOOLEAN DEFAULT 0;`,
+		`ALTER TABLE load_balancers ADD COLUMN weight_update_interval INTEGER DEFAULT 300;`,
+		// 迁移9: 为 load_balancers 添加日志配置字段
+		`ALTER TABLE load_balancers ADD COLUMN log_level TEXT DEFAULT 'standard';`,
 	}
 
 	for _, migration := range migrations {

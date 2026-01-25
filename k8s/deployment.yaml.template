@@ -3,8 +3,16 @@ kind: Deployment
 metadata:
   name: claude-code-cli-openai-api
   namespace: ${K8S_NAMESPACE}
+  labels:
+    app: claude-code-cli-openai-api
+    version: ${VERSION}
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: claude-code-cli-openai-api
@@ -12,39 +20,122 @@ spec:
     metadata:
       labels:
         app: claude-code-cli-openai-api
+        version: ${VERSION}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "54988"
+        prometheus.io/path: "/metrics"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
       - name: claude-code-cli-openai-api
-        image: ${DOCKER_REGISTRY}/aigchub/claude-code-cli-openai-api:latest
+        image: ${DOCKER_REGISTRY}/aigchub/claude-code-cli-openai-api:${VERSION}
         imagePullPolicy: Always
         ports:
-        - containerPort: 54988
+        - name: http
+          containerPort: 54988
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "54988"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: DB_PATH
+          value: "/app/data/proxy.db"
+        # Load Balancer Configuration
+        - name: LB_HEALTH_CHECK_INTERVAL
+          value: "30"
+        - name: LB_FAILURE_THRESHOLD
+          value: "3"
+        - name: LB_RECOVERY_THRESHOLD
+          value: "2"
+        - name: LB_MAX_RETRIES
+          value: "3"
+        - name: LB_CIRCUIT_BREAKER_ENABLED
+          value: "true"
+        - name: LB_ERROR_RATE_THRESHOLD
+          value: "0.5"
         resources:
           requests:
-            memory: "64Mi"
-            cpu: "50m"
+            memory: "512Mi"
+            cpu: "500m"
           limits:
-            memory: "128Mi"
-            cpu: "200m"
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 12
         volumeMounts:
         - name: data
           mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
       volumes:
       - name: data
-        hostPath:
-          path: /data/k8s-volumes/claude-code-cli-openai-api
-          type: DirectoryOrCreate
+        persistentVolumeClaim:
+          claimName: claude-proxy-data-pvc
+      - name: logs
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: claude-code-cli-openai-api-service
   namespace: ${K8S_NAMESPACE}
+  labels:
+    app: claude-code-cli-openai-api
 spec:
   selector:
     app: claude-code-cli-openai-api
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
-    targetPort: 54988
+    targetPort: http
   type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-proxy-data-pvc
+  namespace: ${K8S_NAMESPACE}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: ${STORAGE_CLASS}

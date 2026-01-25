@@ -4,6 +4,7 @@ import { Layout, Menu, Typography, Button } from 'antd';
 import {
   SettingOutlined,
   LogoutOutlined,
+  ClusterOutlined,
 } from '@ant-design/icons';
 import ConfigList from './components/ConfigListV2';
 import ConfigDetailV2 from './components/ConfigDetailV2';
@@ -11,6 +12,9 @@ import ConfigEdit from './components/ConfigEdit';
 import ConfigCreate from './components/ConfigCreate';
 import ConfigTestPage from './components/ConfigTestPage';
 import LogDetail from './components/LogDetail';
+import LoadBalancerList from './components/LoadBalancerList';
+import LoadBalancerEditor from './components/LoadBalancerEditor';
+import LoadBalancerDetail from './components/LoadBalancerDetail';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
@@ -32,6 +36,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       key: '/ui',
       icon: <SettingOutlined />,
       label: <Link to="/ui">OpenAI API配置</Link>,
+    },
+    {
+      key: '/ui/load-balancers',
+      icon: <ClusterOutlined />,
+      label: <Link to="/ui/load-balancers">负载均衡器</Link>,
     },
   ];
 
@@ -102,6 +111,10 @@ const App: React.FC = () => {
               <Route path="configs/:id/edit" element={<ProtectedRoute><ConfigEdit /></ProtectedRoute>} />
               <Route path="configs/:id/test" element={<ProtectedRoute><ConfigTestPage /></ProtectedRoute>} />
               <Route path="configs/:id/logs/:log_id" element={<ProtectedRoute><LogDetail /></ProtectedRoute>} />
+              <Route path="load-balancers" element={<ProtectedRoute><LoadBalancerList /></ProtectedRoute>} />
+              <Route path="load-balancers/create" element={<ProtectedRoute><LoadBalancerEditor /></ProtectedRoute>} />
+              <Route path="load-balancers/:id" element={<ProtectedRoute><LoadBalancerDetail /></ProtectedRoute>} />
+              <Route path="load-balancers/:id/edit" element={<ProtectedRoute><LoadBalancerEditor /></ProtectedRoute>} />
             </Routes>
           </AppLayout>
         } />

@@ -1,0 +1,142 @@
+# Canary Deployment for Load Balancer Enhancements
+# This deployment runs alongside the stable version for gradual rollout
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-proxy-canary
+  namespace: zhaixingren-prod
+  labels:
+    app: claude-proxy
+    version: canary
+spec:
+  replicas: 1  # Start with 1 replica (10% of traffic)
+  selector:
+    matchLabels:
+      app: claude-proxy
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: claude-proxy
+        version: canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "54988"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: claude-proxy
+        image: docker.zhaixingren.cn/aigchub/claude-code-cli-openai-api:v2.0-canary
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 54988
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "54988"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: DB_PATH
+          value: "/app/data/proxy.db"
+        # Load Balancer Enhancement Configuration
+        - name: LB_HEALTH_CHECK_ENABLED
+          value: "true"
+        - name: LB_HEALTH_CHECK_INTERVAL
+          value: "30"
+        - name: LB_FAILURE_THRESHOLD
+          value: "3"
+        - name: LB_RECOVERY_THRESHOLD
+          value: "2"
+        - name: LB_HEALTH_CHECK_TIMEOUT
+          value: "5"
+        - name: LB_MAX_RETRIES
+          value: "3"
+        - name: LB_INITIAL_RETRY_DELAY
+          value: "100"
+        - name: LB_MAX_RETRY_DELAY
+          value: "5000"
+        - name: LB_CIRCUIT_BREAKER_ENABLED
+          value: "true"
+        - name: LB_ERROR_RATE_THRESHOLD
+          value: "0.5"
+        - name: LB_CIRCUIT_BREAKER_WINDOW
+          value: "60"
+        - name: LB_CIRCUIT_BREAKER_TIMEOUT
+          value: "30"
+        - name: LB_HALF_OPEN_REQUESTS
+          value: "3"
+        - name: LB_DYNAMIC_WEIGHT_ENABLED
+          value: "false"
+        - name: LB_LOG_LEVEL
+          value: "standard"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 54988
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 54988
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: claude-proxy-data-canary
+      - name: logs
+        emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-proxy-data-canary
+  namespace: zhaixingren-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+# Service for Canary testing (direct access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-proxy-canary-service
+  namespace: zhaixingren-prod
+  labels:
+    app: claude-proxy
+    version: canary
+spec:
+  selector:
+    app: claude-proxy
+    version: canary
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 54988
+    name: http
+  type: ClusterIP

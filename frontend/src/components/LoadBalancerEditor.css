@@ -1,0 +1,60 @@
+.load-balancer-editor {
+  width: 100%;
+  height: 100%;
+}
+
+.load-balancer-editor .react-flow__node {
+  cursor: pointer;
+}
+
+.load-balancer-editor .react-flow__node:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+  transition: all 0.3s ease;
+}
+
+.load-balancer-editor .react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.load-balancer-editor .react-flow__edge.animated {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
+@keyframes dashdraw {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+.load-balancer-editor .react-flow__controls {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.load-balancer-editor .react-flow__background {
+  background-color: #fafafa;
+}
+
+/* 节点样式 */
+.load-balancer-editor .react-flow__node-input {
+  font-weight: bold;
+}
+
+.load-balancer-editor .react-flow__node-default {
+  white-space: pre-line;
+  text-align: center;
+  min-width: 120px;
+}
+
+/* 抽屉样式 */
+.load-balancer-editor .ant-drawer-body {
+  padding-top: 24px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .load-balancer-editor .react-flow {
+    height: 400px;
+  }
+}

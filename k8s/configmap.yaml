@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claude-code-cli-config
+  namespace: zhaixingren-prod
+data:
+  # 服务器配置
+  SERVER_PORT: "54988"
+  SERVER_HOST: "0.0.0.0"
+  
+  # 数据库配置
+  DB_PATH: "/app/data/proxy.db"
+  
+  # 日志配置
+  LOG_LEVEL: "info"
+  
+  # 负载均衡器配置
+  LB_HEALTH_CHECK_ENABLED: "true"
+  LB_HEALTH_CHECK_INTERVAL: "30"
+  LB_FAILURE_THRESHOLD: "3"
+  LB_RECOVERY_THRESHOLD: "2"
+  LB_HEALTH_CHECK_TIMEOUT: "5"
+  
+  # 重试配置
+  LB_MAX_RETRIES: "3"
+  LB_INITIAL_RETRY_DELAY: "100"
+  LB_MAX_RETRY_DELAY: "5000"
+  
+  # 熔断器配置
+  LB_CIRCUIT_BREAKER_ENABLED: "true"
+  LB_ERROR_RATE_THRESHOLD: "0.5"
+  LB_CIRCUIT_BREAKER_WINDOW: "60"
+  LB_CIRCUIT_BREAKER_TIMEOUT: "30"
+  LB_HALF_OPEN_REQUESTS: "3"
+  
+  # 监控配置
+  LB_STATS_RETENTION_DAYS: "90"
+  LB_LOGS_RETENTION_DAYS: "30"
+  
+  # 性能配置
+  LB_CACHE_ENABLED: "true"
+  LB_CACHE_TTL: "300"
+  LB_CONNECTION_POOL_SIZE: "100"
+  LB_CONNECTION_POOL_IDLE: "10"

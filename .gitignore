@@ -23,6 +23,8 @@ data/claude-relay-service/
 claude-with-openai-api
 claude-code-cli-with-openai-api
 /claude-with-openai-api
+test_build
+test_db_build
 
 # Test binary, built with `go test -c`
 *.test
@@ -130,6 +132,9 @@ poetry.lock
 .vscode/
 *.code-workspace
 
+# Kiro IDE
+.kiro/
+
 # IntelliJ IDEA / PyCharm / GoLand
 .idea/
 *.iml
@@ -210,10 +215,14 @@ config.local.*
 logs/
 *.log.*
 *.log.[0-9]
+server.log
 
 # Debug files
 *.debug
 debug/
+
+# Test output files
+test-logs.html
 
 # ============================================
 # Build and Dist
@@ -256,6 +265,9 @@ docker-compose.override.yml
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
+handler/test_*.db
 
 # Certificates and keys
 *.pem
@@ -333,3 +345,4 @@ test_*.sh
 deploy-prod.sh
 k8s/deployment.yaml
 k8s/ingress.yaml
+k8s/hpa.yaml

@@ -7,8 +7,15 @@
 - 🔄 **完整的 API 转换** - 支持 Claude Messages API 到 OpenAI Chat Completion API 的双向转换
 - 🚀 **流式响应支持** - 完整支持 Server-Sent Events (SSE) 流式输出
 - 🔑 **多配置管理** - 支持多个独立的 API 配置，通过不同的 API Key 区分
+- ⚖️ **智能负载均衡** - 支持多种负载均衡策略（轮询、随机、权重、最少连接）
+- 🏥 **健康检查** - 自动检测配置节点的健康状态，及时发现和隔离故障节点
+- 🔄 **故障转移** - 自动切换到健康节点，确保服务连续性
+- 🔁 **智能重试** - 使用指数退避策略自动重试失败的请求
+- 🛡️ **熔断器保护** - 防止故障节点持续接收请求，避免资源浪费和级联故障
 - 📊 **详细的请求日志** - 记录完整的请求/响应体、Token 统计和性能指标
-- 🖥️ **Web 管理界面** - 现代化的 React 管理界面，支持 OpenAI API 配置管理、在线测试和日志查看
+- 📈 **实时监控** - 提供详细的运行指标和可视化监控图表
+- 🚨 **告警机制** - 在系统异常时及时通知管理员
+- 🖥️ **Web 管理界面** - 现代化的 React 管理界面，支持 OpenAI API 配置管理、负载均衡器管理、在线测试和日志查看
 - 🔐 **安全认证** - 基于 API Key 的身份验证，确保服务安全
 - 💾 **SQLite 存储** - 轻量级数据库，支持配置、统计和日志持久化
 
@@ -91,6 +98,16 @@ curl -X POST http://localhost:8083/v1/messages \
 - ✅ 一键更新 API Key（Renew Key）
 - ✅ 启用/禁用配置
 
+### 负载均衡器管理
+- ✅ 创建、编辑、删除负载均衡器
+- ✅ 支持多种负载均衡策略（轮询、随机、权重、最少连接）
+- ✅ 配置健康检查参数（间隔、超时、阈值）
+- ✅ 配置重试策略（最大重试次数、退避延迟）
+- ✅ 配置熔断器参数（错误率阈值、时间窗口）
+- ✅ 实时查看健康状态和熔断器状态
+- ✅ 查看实时监控图表（请求趋势、成功率、响应时间）
+- ✅ 查看请求日志和告警通知
+
 ### 在线测试
 - ✅ 独立的测试页面（`/ui/configs/:id/test`）
 - ✅ 自定义模型、Max Tokens、Temperature
@@ -105,8 +122,9 @@ curl -X POST http://localhost:8083/v1/messages \
 ### 统计分析
 - ✅ 请求总数、成功率
 - ✅ Token 使用统计（输入/输出/总计）
-- ✅ 平均响应时间
-- ✅ 错误统计
+- ✅ 平均响应时间、P50/P95/P99响应时间
+- ✅ 错误统计和错误率
+- ✅ 节点级别的统计数据
 
 ## 🔧 API 端点
 
@@ -123,6 +141,19 @@ curl -X POST http://localhost:8083/v1/messages \
 - `DELETE /api/configs/:id` - 删除配置
 - `POST /api/configs/:id/renew-key` - 更新 API Key
 - `POST /api/configs/:id/test` - 测试配置
+
+### 负载均衡器管理 API
+- `GET /api/load-balancers` - 获取所有负载均衡器
+- `GET /api/load-balancers/:id` - 获取指定负载均衡器
+- `POST /api/load-balancers` - 创建新负载均衡器
+- `PUT /api/load-balancers/:id` - 更新负载均衡器
+- `DELETE /api/load-balancers/:id` - 删除负载均衡器
+- `GET /api/load-balancers/:id/health` - 获取健康状态
+- `GET /api/load-balancers/:id/circuit-breaker` - 获取熔断器状态
+- `GET /api/load-balancers/:id/stats` - 获取统计数据
+- `GET /api/load-balancers/:id/logs` - 获取请求日志
+- `GET /api/load-balancers/:id/alerts` - 获取告警列表
+- `POST /api/alerts/:id/acknowledge` - 确认告警
 
 ### 统计和日志 API
 - `GET /api/configs/:id/stats` - 获取统计信息
@@ -224,3 +255,162 @@ go test ./...
 ## 🙏 致谢
 
 本项目参考了社区中优秀的 Claude API 代理实现，并在此基础上进行了 Go 语言重写和功能增强。
+
+
+## ⚖️ 负载均衡器
+
+### 功能概述
+
+负载均衡器允许您将请求分配到多个 API 配置节点，提供高可用性和容错能力。
+
+### 负载均衡策略
+
+1. **轮询（Round Robin）**
+   - 按顺序依次选择节点
+   - 适合节点性能相近的场景
+
+2. **随机（Random）**
+   - 随机选择节点
+   - 简单高效，适合大多数场景
+
+3. **加权轮询（Weighted Round Robin）**
+   - 根据权重分配请求
+   - 适合节点性能不同的场景
+   - 支持动态权重调整
+
+4. **最少连接（Least Connections）**
+   - 选择当前连接数最少的节点
+   - 适合请求处理时间差异大的场景
+
+### 健康检查
+
+系统会定期检查配置节点的健康状态：
+
+- **检查间隔**：默认30秒（可配置10-300秒）
+- **失败阈值**：连续失败3次标记为不健康
+- **恢复阈值**：连续成功2次标记为健康
+- **超时时间**：默认5秒
+
+不健康的节点会自动从负载均衡池中移除，恢复后自动加入。
+
+### 故障转移
+
+当请求失败时，系统会自动：
+
+1. 选择另一个健康节点
+2. 重试请求
+3. 记录故障转移日志
+
+### 请求重试
+
+支持智能重试机制：
+
+- **最大重试次数**：默认3次（可配置0-10次）
+- **退避策略**：指数退避（初始100ms，最大5秒）
+- **可重试错误**：网络超时、连接错误、HTTP 5xx、429错误
+- **不可重试错误**：401、403、400、404错误
+
+### 熔断器
+
+防止故障节点持续接收请求：
+
+- **错误率阈值**：默认50%（可配置0.0-1.0）
+- **时间窗口**：默认60秒
+- **熔断超时**：默认30秒
+- **半开测试**：默认3个请求
+
+熔断器状态：
+- **Closed**：正常状态，允许所有请求
+- **Open**：熔断状态，拒绝所有请求
+- **Half-Open**：半开状态，允许少量测试请求
+
+### 监控和告警
+
+#### 实时监控指标
+
+- 总请求数、成功率、错误率
+- 平均响应时间、P50/P95/P99响应时间
+- 活跃连接数
+- 节点健康状态和熔断器状态
+
+#### 告警级别
+
+- **Critical**：所有节点不健康
+- **Warning**：健康节点数低于阈值、错误率超过阈值
+- **Info**：熔断器状态变化
+
+### 性能指标
+
+- **P99延迟**：< 10ms（负载均衡器引入的额外延迟）
+- **吞吐量**：> 1000 req/s
+- **并发支持**：1000+ 并发请求
+
+### 使用示例
+
+#### 创建负载均衡器
+
+```bash
+curl -X POST http://localhost:8083/api/load-balancers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production LB",
+    "strategy": "weighted_round_robin",
+    "config_nodes": [
+      {"config_id": "config-1", "weight": 10, "enabled": true},
+      {"config_id": "config-2", "weight": 5, "enabled": true}
+    ],
+    "health_check_enabled": true,
+    "health_check_interval": 30,
+    "max_retries": 3,
+    "circuit_breaker_enabled": true
+  }'
+```
+
+#### 查看健康状态
+
+```bash
+curl http://localhost:8083/api/load-balancers/{lb_id}/health
+```
+
+#### 查看统计数据
+
+```bash
+curl http://localhost:8083/api/load-balancers/{lb_id}/stats?window=1h
+```
+
+### 配置参数
+
+| 参数 | 默认值 | 范围 | 说明 |
+|------|--------|------|------|
+| health_check_enabled | true | - | 是否启用健康检查 |
+| health_check_interval | 30 | 10-300秒 | 健康检查间隔 |
+| failure_threshold | 3 | 1-10 | 失败阈值 |
+| recovery_threshold | 2 | 1-10 | 恢复阈值 |
+| health_check_timeout | 5 | 1-30秒 | 健康检查超时 |
+| max_retries | 3 | 0-10 | 最大重试次数 |
+| initial_retry_delay | 100 | 10-1000ms | 初始重试延迟 |
+| max_retry_delay | 5000 | 100-10000ms | 最大重试延迟 |
+| circuit_breaker_enabled | true | - | 是否启用熔断器 |
+| error_rate_threshold | 0.5 | 0.0-1.0 | 错误率阈值 |
+| circuit_breaker_window | 60 | 10-300秒 | 熔断器时间窗口 |
+| circuit_breaker_timeout | 30 | 10-300秒 | 熔断器超时 |
+| half_open_requests | 3 | 1-10 | 半开状态测试请求数 |
+| dynamic_weight_enabled | false | - | 是否启用动态权重 |
+| log_level | standard | minimal/standard/detailed | 日志详细级别 |
+
+## 📚 文档
+
+- [负载均衡器增强功能文档](./docs/LOAD_BALANCER_ENHANCEMENTS.md)
+- [负载均衡器使用指南](./docs/LOAD_BALANCER_USAGE.md)
+- [运维手册](./docs/OPERATIONS_MANUAL.md)
+- [性能测试报告](./docs/PERFORMANCE_TEST_REPORT.md)
+- [测试覆盖率报告](./docs/TEST_COVERAGE_REPORT.md)
+- [部署指南](./DEPLOYMENT.md)
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License
