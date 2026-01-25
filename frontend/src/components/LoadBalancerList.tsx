@@ -10,6 +10,9 @@ import {
   Card,
   Typography,
   Switch,
+  Row,
+  Col,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -17,6 +20,8 @@ import {
   DeleteOutlined,
   EyeOutlined,
   ApiOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { loadBalancerApi, LoadBalancer } from '../services/loadBalancerApi';
 
@@ -26,6 +31,7 @@ const LoadBalancerList: React.FC = () => {
   const navigate = useNavigate();
   const [loadBalancers, setLoadBalancers] = useState<LoadBalancer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
 
   const loadData = async () => {
     setLoading(true);
@@ -44,7 +50,8 @@ const LoadBalancerList: React.FC = () => {
     loadData();
   }, []);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, event?: React.MouseEvent) => {
+    event?.stopPropagation();
     try {
       await loadBalancerApi.delete(id);
       message.success('负载均衡器已删除');
@@ -53,6 +60,19 @@ const LoadBalancerList: React.FC = () => {
       message.error('删除失败');
       console.error('Failed to delete load balancer:', error);
     }
+  };
+
+  const handleViewDetail = (id: string) => {
+    navigate(`/ui/load-balancers/${id}`);
+  };
+
+  const handleEdit = (id: string, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    navigate(`/ui/load-balancers/${id}/edit`);
+  };
+
+  const handleViewModeChange = (mode: 'card' | 'list') => {
+    setViewMode(mode);
   };
 
   const handleToggleEnabled = async (lb: LoadBalancer) => {
@@ -177,21 +197,127 @@ const LoadBalancerList: React.FC = () => {
         <Title level={4} style={{ margin: 0 }}>
           负载均衡器
         </Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate('/ui/load-balancers/create')}
-        >
-          新建负载均衡器
-        </Button>
+        <Space>
+          <Space.Compact>
+            <Tooltip title="卡片视图">
+              <Button
+                icon={<AppstoreOutlined />}
+                type={viewMode === 'card' ? 'primary' : 'default'}
+                onClick={() => handleViewModeChange('card')}
+              />
+            </Tooltip>
+            <Tooltip title="列表视图">
+              <Button
+                icon={<UnorderedListOutlined />}
+                type={viewMode === 'list' ? 'primary' : 'default'}
+                onClick={() => handleViewModeChange('list')}
+              />
+            </Tooltip>
+          </Space.Compact>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => navigate('/ui/load-balancers/create')}
+          >
+            新建负载均衡器
+          </Button>
+        </Space>
       </Space>
-      <Table
-        columns={columns}
-        dataSource={loadBalancers}
-        rowKey="id"
-        loading={loading}
-        pagination={{ pageSize: 10 }}
-      />
+
+      {viewMode === 'list' ? (
+        <Table
+          columns={columns}
+          dataSource={loadBalancers}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+          onRow={(record) => ({
+            onClick: () => handleViewDetail(record.id),
+            style: { cursor: 'pointer' },
+          })}
+        />
+      ) : (
+        <Row gutter={[16, 16]}>
+          {loadBalancers.map((lb) => (
+            <Col xs={24} sm={12} md={8} lg={6} key={lb.id}>
+              <Card
+                hoverable
+                onClick={() => handleViewDetail(lb.id)}
+                style={{ height: '100%' }}
+                extra={
+                  <Switch
+                    checked={lb.enabled}
+                    onChange={(checked, e) => {
+                      e.stopPropagation();
+                      handleToggleEnabled(lb);
+                    }}
+                    size="small"
+                  />
+                }
+                actions={[
+                  <Tooltip title="查看详情" key="view">
+                    <EyeOutlined onClick={(e) => { e.stopPropagation(); handleViewDetail(lb.id); }} />
+                  </Tooltip>,
+                  <Tooltip title="编辑" key="edit">
+                    <EditOutlined onClick={(e) => handleEdit(lb.id, e)} />
+                  </Tooltip>,
+                  <Popconfirm
+                    title="确定要删除这个负载均衡器吗？"
+                    onConfirm={(e) => handleDelete(lb.id, e)}
+                    onCancel={(e) => e?.stopPropagation()}
+                    okText="确定"
+                    cancelText="取消"
+                    key="delete"
+                  >
+                    <DeleteOutlined onClick={(e) => e.stopPropagation()} />
+                  </Popconfirm>,
+                ]}
+              >
+                <Card.Meta
+                  title={
+                    <Space>
+                      <ApiOutlined />
+                      <span>{lb.name}</span>
+                      {!lb.enabled && <Tag color="default">已禁用</Tag>}
+                    </Space>
+                  }
+                  description={
+                    <div style={{ minHeight: 120 }}>
+                      <div style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        marginBottom: 8,
+                        color: '#666',
+                        fontSize: 12
+                      }}>
+                        {lb.description || '暂无描述'}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
+                        <strong>策略:</strong> <Tag color="blue" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{getStrategyLabel(lb.strategy)}</Tag>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
+                        <strong>配置数:</strong> <Tag color="green" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{lb.config_nodes?.length || 0} 个配置</Tag>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#999' }}>
+                        <strong>创建时间:</strong> {new Date(lb.created_at).toLocaleString('zh-CN', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </div>
+                    </div>
+                  }
+                />
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      )}
     </Card>
   );
 };
