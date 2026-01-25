@@ -12,6 +12,9 @@ import ReactFlow, {
   MarkerType,
   Panel,
   SelectionMode,
+  EdgeTypes,
+  NodeTypes,
+  ReactFlowProvider,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
@@ -141,10 +144,18 @@ const LoadBalancerEditor: React.FC = () => {
   const [showDragInfo, setShowDragInfo] = useState(false);
   const [dragDistance, setDragDistance] = useState(0);
   const [dragAngle, setDragAngle] = useState(0);
+  const [alignmentLines, setAlignmentLines] = useState<Array<{ x: number; y: number; type: 'horizontal' | 'vertical' }>>([]);
+  const [previewNode, setPreviewNode] = useState<Node<NodeData> | null>(null);
 
   // 网格配置
   const [gridSize, setGridSize] = useState(20);
   const [snapToGrid, setSnapToGrid] = useState(true);
+
+  // 连接线状态
+  const [edgeDragState, setEdgeDragState] = useState<{ edgeId: string | null; isDragging: boolean }>({
+    edgeId: null,
+    isDragging: false,
+  });
 
   // 撤销重做历史
   const [history, setHistory] = useState<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
@@ -408,7 +419,23 @@ const LoadBalancerEditor: React.FC = () => {
   };
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    (params: Connection) => {
+      // 智能路由：根据节点位置自动选择最佳路径
+      if (!params.source || !params.target) return;
+      
+      const newEdge: Edge = {
+        id: `e-${params.source}-${params.target}-${Date.now()}`,
+        source: params.source,
+        target: params.target,
+        sourceHandle: params.sourceHandle,
+        targetHandle: params.targetHandle,
+        type: 'smoothstep',
+        animated: true,
+        style: { stroke: '#1890ff', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#1890ff' },
+      };
+      setEdges((eds) => addEdge(newEdge, eds));
+    },
     [setEdges]
   );
 
@@ -470,8 +497,35 @@ const LoadBalancerEditor: React.FC = () => {
       const angle = Math.atan2(dy, dx) * (180 / Math.PI);
       setDragAngle(angle);
 
-      // 碰撞检测
+      // 磁吸对齐线检测
+      const lines: Array<{ x: number; y: number; type: 'horizontal' | 'vertical' }> = [];
       const otherNodes = nodes.filter(n => n.id !== node.id && n.data.type === 'config');
+      
+      otherNodes.forEach(other => {
+        // 水平对齐线
+        if (Math.abs(newY - other.position.y) < 10) {
+          lines.push({ x: 0, y: other.position.y, type: 'horizontal' });
+        }
+        // 垂直对齐线
+        if (Math.abs(newX - other.position.x) < 10) {
+          lines.push({ x: other.position.x, y: 0, type: 'vertical' });
+        }
+      });
+      
+      setAlignmentLines(lines);
+
+      // 实时预览节点
+      setPreviewNode({
+        ...node,
+        position: { x: newX, y: newY },
+        style: {
+          ...node.style,
+          opacity: 0.5,
+          border: '2px dashed #1890ff',
+        },
+      });
+
+      // 碰撞检测
       const collision = otherNodes.some(other => {
         const nodeDx = Math.abs(newX - other.position.x);
         const nodeDy = Math.abs(newY - other.position.y);
@@ -488,12 +542,57 @@ const LoadBalancerEditor: React.FC = () => {
     if (node.data.type === 'config') {
       setDraggingNode(null);
       setShowDragInfo(false);
+      setAlignmentLines([]);
+      setPreviewNode(null);
 
       // 保存到历史记录
       const currentSnapshot = { nodes, edges };
       setHistory((prev) => [...prev.slice(0, historyIndex + 1), currentSnapshot]);
       setHistoryIndex((prev) => prev + 1);
     }
+  }, [nodes, edges, historyIndex]);
+
+  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    message.info(`选中连接线: ${edge.source} -> ${edge.target}`);
+  }, []);
+
+  const onEdgeDoubleClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    // 连接线双击编辑功能
+    const label = prompt('请输入连接线标签:', (edge.label as string) || '');
+    if (label !== null) {
+      setEdges((eds) => eds.map(e => 
+        e.id === edge.id ? { ...e, label } : e
+      ));
+      message.success('连接线标签已更新');
+    }
+  }, [setEdges]);
+
+  const onEdgeUpdateStart = useCallback(() => {
+    setEdgeDragState({ edgeId: 'dragging', isDragging: true });
+  }, []);
+
+  const onEdgeUpdate = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    if (!newConnection.source || !newConnection.target) return;
+    
+    setEdges((eds) => eds.map(e => {
+      if (e.id === oldEdge.id) {
+        return {
+          ...e,
+          source: newConnection.source as string,
+          target: newConnection.target as string,
+        };
+      }
+      return e;
+    }));
+  }, [setEdges]);
+
+  const onEdgeUpdateEnd = useCallback(() => {
+    setEdgeDragState({ edgeId: null, isDragging: false });
+    
+    // 保存到历史记录
+    const currentSnapshot = { nodes, edges };
+    setHistory((prev) => [...prev.slice(0, historyIndex + 1), currentSnapshot]);
+    setHistoryIndex((prev) => prev + 1);
   }, [nodes, edges, historyIndex]);
 
   const handleUndo = useCallback(() => {
@@ -789,6 +888,35 @@ const LoadBalancerEditor: React.FC = () => {
     message.success(`已取消${ungroupedCount}个节点的分组`);
   }, [nodes, nodeGroups]);
 
+  const handleAutoLayout = useCallback(() => {
+    const configNodes = nodes.filter(n => n.data.type === 'config');
+    if (configNodes.length === 0) {
+      message.warning('没有可自动布局的节点');
+      return;
+    }
+
+    // 计算自动布局位置
+    const startX = 100;
+    const startY = 200;
+    const spacingX = 250;
+    const spacingY = 150;
+
+    const newNodes = configNodes.map((node, index) => {
+      const col = index % 3;
+      const row = Math.floor(index / 3);
+      return {
+        ...node,
+        position: {
+          x: startX + col * spacingX,
+          y: startY + row * spacingY,
+        },
+      };
+    });
+
+    setNodes(newNodes);
+    message.success('已自动布局');
+  }, [nodes, setNodes]);
+
   const handleAddConfig = (configId: string) => {
     const config = configs.find(c => c.id === configId);
     if (!config) return;
@@ -939,24 +1067,6 @@ const LoadBalancerEditor: React.FC = () => {
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleAutoLayout = () => {
-    const configNodesCount = nodes.filter(n => n.data.type === 'config').length;
-    const spacing = 200;
-    const startX = 250 - (configNodesCount * spacing) / 2;
-
-    setNodes((nds) => nds.map((node, index) => {
-      if (node.data.type === 'start') {
-        return { ...node, position: { x: 250, y: 50 } };
-      }
-      const configIndex = nds.filter(n => n.data.type === 'config').indexOf(node);
-      return {
-        ...node,
-        position: { x: startX + configIndex * spacing, y: 200 },
-      };
-    }));
-    message.success('已自动布局');
   };
 
   if (loading) {
@@ -1267,6 +1377,11 @@ const LoadBalancerEditor: React.FC = () => {
               onNodeDragStart={onNodeDragStart}
               onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}
+              onEdgeClick={onEdgeClick}
+              onEdgeDoubleClick={onEdgeDoubleClick}
+              onEdgeUpdateStart={onEdgeUpdateStart}
+              onEdgeUpdate={onEdgeUpdate}
+              onEdgeUpdateEnd={onEdgeUpdateEnd}
               selectionMode={SelectionMode.Partial}
               fitView
             >
