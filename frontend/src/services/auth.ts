@@ -8,6 +8,8 @@ const API_BASE_URL = `${getApiOrigin()}/api`;
 export interface User {
   id: number;
   username: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'disabled';
 }
 
 export interface AuthResponse {

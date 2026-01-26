@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Table,
@@ -8,9 +8,7 @@ import {
   Input,
   Select,
   Space,
-  Modal,
   message,
-  Descriptions,
   Typography,
   Row,
   Col,
@@ -25,8 +23,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 
-const { TextArea } = Input;
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
 
 interface RequestLog {
@@ -84,13 +81,7 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  useEffect(() => {
-    fetchLogs();
-    fetchStats();
-    fetchModels();
-  }, [configId, currentPage, pageSize, statusFilter, modelFilter, sortBy, sortOrder, searchText]);
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
       const params: any = {
@@ -112,25 +103,31 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [configId, currentPage, modelFilter, pageSize, searchText, sortBy, sortOrder, statusFilter]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const response = await axios.get(`/api/configs/${configId}/stats?days=30`);
       setStats(response.data.stats);
     } catch (error) {
       console.error('获取统计信息失败');
     }
-  };
+  }, [configId]);
 
-  const fetchModels = async () => {
+  const fetchModels = useCallback(async () => {
     try {
       const response = await axios.get(`/api/configs/${configId}/models`);
       setModels(response.data.models || []);
     } catch (error) {
       console.error('获取模型列表失败');
     }
-  };
+  }, [configId]);
+
+  useEffect(() => {
+    fetchLogs();
+    fetchStats();
+    fetchModels();
+  }, [fetchLogs, fetchModels, fetchStats]);
 
   const handleClearLogs = async () => {
     try {
@@ -150,117 +147,6 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
     setSortBy('created_at');
     setSortOrder('desc');
     setCurrentPage(1);
-  };
-
-  const showLogDetail = (record: RequestLog) => {
-    console.log('显示日志详情', record);
-    
-    if (!record) {
-      message.error('日志记录不存在');
-      return;
-    }
-    
-    // Parse request body safely
-    let requestBodyDisplay = '';
-    if (record.request_body) {
-      try {
-        const parsed = JSON.parse(record.request_body);
-        requestBodyDisplay = JSON.stringify(parsed, null, 2);
-      } catch (e) {
-        console.warn('请求体解析失败:', e);
-        requestBodyDisplay = record.request_body;
-      }
-    }
-
-    // Parse response body safely
-    let responseBodyDisplay = '';
-    if (record.response_body) {
-      try {
-        const parsed = JSON.parse(record.response_body);
-        responseBodyDisplay = JSON.stringify(parsed, null, 2);
-      } catch (e) {
-        console.warn('响应体解析失败:', e);
-        responseBodyDisplay = record.response_body;
-      }
-    }
-
-    Modal.info({
-      title: '请求详情',
-      width: 900,
-      maskClosable: true,
-      content: (
-        <div>
-          <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="ID">{record.id}</Descriptions.Item>
-            <Descriptions.Item label="时间">
-              {new Date(record.created_at).toLocaleString('zh-CN')}
-            </Descriptions.Item>
-            <Descriptions.Item label="模型" span={2}>{record.model}</Descriptions.Item>
-            <Descriptions.Item label="状态">
-              <Tag color={record.status === 'success' ? 'success' : 'error'}>
-                {record.status === 'success' ? '成功' : '失败'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="耗时">{record.duration_ms}ms</Descriptions.Item>
-            <Descriptions.Item label="输入Token">{record.input_tokens}</Descriptions.Item>
-            <Descriptions.Item label="输出Token">{record.output_tokens}</Descriptions.Item>
-          </Descriptions>
-          
-          {record.error_message && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong style={{ color: 'red' }}>错误信息：</Text>
-              <Paragraph style={{ color: 'red', marginTop: 8, whiteSpace: 'pre-wrap' }}>
-                {record.error_message}
-              </Paragraph>
-            </div>
-          )}
-          
-          {record.request_summary && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>请求摘要：</Text>
-              <Paragraph style={{ marginTop: 8 }}>{record.request_summary}</Paragraph>
-            </div>
-          )}
-          
-          {record.response_preview && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>响应预览：</Text>
-              <Paragraph style={{ marginTop: 8 }}>{record.response_preview}</Paragraph>
-            </div>
-          )}
-          
-          {requestBodyDisplay && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>完整请求体：</Text>
-              <TextArea
-                value={requestBodyDisplay}
-                autoSize={{ minRows: 5, maxRows: 15 }}
-                readOnly
-                style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 12 }}
-              />
-            </div>
-          )}
-          
-          {responseBodyDisplay && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>完整响应体：</Text>
-              <TextArea
-                value={responseBodyDisplay}
-                autoSize={{ minRows: 5, maxRows: 15 }}
-                readOnly
-                style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 12 }}
-              />
-            </div>
-          )}
-
-          {!requestBodyDisplay && !responseBodyDisplay && !record.error_message && (
-            <div style={{ marginTop: 16, padding: 16, background: '#f5f5f5', borderRadius: 4 }}>
-              <Text type="secondary">暂无详细信息</Text>
-            </div>
-          )}
-        </div>
-      ),
-    });
   };
 
   const successRate = stats && stats.total_requests > 0

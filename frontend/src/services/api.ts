@@ -6,6 +6,15 @@ import {
   TestConfigResponse,
   ClaudeConfigFormat,
 } from '../types/api';
+import {
+  User,
+  UserCreateRequest,
+  UserUpdateRequest,
+  UserPasswordRequest,
+  UserStatusRequest,
+  UserTokenStats,
+  LogsResult,
+} from '../types/user';
 import { getToken } from './auth';
 import { getApiOrigin } from './apiBase';
 
@@ -97,6 +106,58 @@ export const configAPI = {
   // Get API documentation
   getAPIDocs: async (): Promise<any> => {
     const response = await api.get('/api/docs');
+    return response.data;
+  },
+};
+
+export const userAPI = {
+  listUsers: async (): Promise<User[]> => {
+    const response = await api.get<{ users: User[] }>('/api/users');
+    return response.data.users;
+  },
+
+  createUser: async (payload: UserCreateRequest): Promise<User> => {
+    const response = await api.post<{ user: User }>('/api/users', payload);
+    return response.data.user;
+  },
+
+  updateUser: async (id: number, payload: UserUpdateRequest): Promise<User> => {
+    const response = await api.put<{ user: User }>(`/api/users/${id}`, payload);
+    return response.data.user;
+  },
+
+  updateUserPassword: async (id: number, payload: UserPasswordRequest): Promise<void> => {
+    await api.put(`/api/users/${id}/password`, payload);
+  },
+
+  updateUserStatus: async (id: number, payload: UserStatusRequest): Promise<void> => {
+    await api.put(`/api/users/${id}/status`, payload);
+  },
+
+  deleteUser: async (id: number): Promise<void> => {
+    await api.delete(`/api/users/${id}`);
+  },
+
+  getUserStats: async (id: number, days?: number): Promise<UserTokenStats[]> => {
+    const params = days ? { days } : undefined;
+    const response = await api.get<{ stats: UserTokenStats[] }>(`/api/users/${id}/stats`, { params });
+    return response.data.stats;
+  },
+
+  getUserLogs: async (
+    id: number,
+    params?: {
+      config_id?: string;
+      status?: string;
+      model?: string;
+      sort_by?: string;
+      sort_order?: string;
+      search?: string;
+      page?: number;
+      page_size?: number;
+    }
+  ): Promise<LogsResult> => {
+    const response = await api.get<LogsResult>(`/api/users/${id}/logs`, { params });
     return response.data;
   },
 };

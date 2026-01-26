@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { Spin } from 'antd';
-import { checkInitialized, isAuthenticated } from '../services/auth';
+import { checkInitialized, getCurrentUser, isAuthenticated, logout } from '../services/auth';
 
 interface ProtectedRouteProps {
   children: React.ReactElement;
@@ -44,6 +44,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
   // If initialized but not authenticated, redirect to login
   if (!isAuthenticated()) {
+    return <Navigate to="/ui/login" replace />;
+  }
+
+  const currentUser = getCurrentUser();
+  if (!currentUser || currentUser.status === 'disabled') {
+    logout();
     return <Navigate to="/ui/login" replace />;
   }
 

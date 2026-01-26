@@ -1,0 +1,64 @@
+.user-management {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.user-management .ant-card {
+  border-radius: 8px;
+}
+
+.user-management__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.user-management__toolbar .ant-input-search {
+  min-width: 200px;
+}
+
+.user-management__table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-management .ant-table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.user-management .ant-table-thead > tr > th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.user-management .ant-btn {
+  border-radius: 6px;
+}
+
+.user-management .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.user-management__stats-grid .ant-card {
+  background: #fafafa;
+}
+
+.user-management__filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 768px) {
+  .user-management__toolbar {
+    width: 100%;
+  }
+
+  .user-management__toolbar .ant-input-search {
+    flex: 1;
+  }
+}

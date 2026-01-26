@@ -260,6 +260,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.POST("/configs/:id/renew-key", h.RenewConfigAPIKey)
 		configAPI.POST("/configs/:id/test", h.TestConfig)
 
+		// User management (admin only)
+		configAPI.GET("/users", h.ListUsers)
+		configAPI.POST("/users", h.CreateUser)
+		configAPI.PUT("/users/:id", h.UpdateUser)
+		configAPI.PUT("/users/:id/password", h.UpdateUserPassword)
+		configAPI.PUT("/users/:id/status", h.UpdateUserStatus)
+		configAPI.DELETE("/users/:id", h.DeleteUser)
+		configAPI.GET("/users/:id/stats", h.GetUserTokenStats)
+		configAPI.GET("/users/:id/logs", h.GetUserLogs)
+
 		// Load Balancer CRUD
 		configAPI.GET("/load-balancers", handler.GetAllLoadBalancers)
 		configAPI.GET("/load-balancers/:id", handler.GetLoadBalancer)

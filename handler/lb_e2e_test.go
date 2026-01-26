@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 )
 
 // TestE2E_CompleteRequestFlow tests the complete request flow through the load balancer
@@ -52,14 +53,14 @@ func TestE2E_CompleteRequestFlow(t *testing.T) {
 		HalfOpenRequests:   3,
 	}
 	cbMgr := NewCircuitBreakerManager(cbConfig)
-	
+
 	// Create selector
 	selector, err := NewEnhancedSelector(lb, cbMgr)
 	require.NoError(t, err)
 
 	// Test: Select configs in round-robin fashion
 	ctx := context.Background()
-	
+
 	// First request should go to config1
 	selectedConfig, err := selector.SelectConfig(ctx)
 	require.NoError(t, err)
@@ -103,10 +104,15 @@ func TestE2E_HealthCheckFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create mock backend that fails initially
-	failCount := 0
+	var failCount int
+	var mu sync.Mutex
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		failCount++
-		if failCount <= 2 {
+		shouldFail := failCount <= 2
+		mu.Unlock()
+
+		if shouldFail {
 			// Fail first 2 requests
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -123,12 +129,12 @@ func TestE2E_HealthCheckFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create health checker
-	checker := NewHealthChecker(config.ID, 
+	checker := NewHealthChecker(lb.ID,
 		time.Duration(lb.HealthCheckInterval)*time.Second,
 		time.Duration(lb.HealthCheckTimeout)*time.Second,
 		lb.FailureThreshold,
 		lb.RecoveryThreshold)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -167,11 +173,11 @@ func TestE2E_CircuitBreakerFlow(t *testing.T) {
 	config := createTestConfigE2E(t, "config1-cb", "http://backend.test")
 
 	// Create circuit breaker with low thresholds for testing
-	cb := NewCircuitBreaker(config.ID, 
-		0.5,  // 50% error rate
-		5*time.Second,     // 5 second window
-		2*time.Second,     // 2 second timeout
-		2)     // 2 test requests
+	cb := NewCircuitBreaker(config.ID,
+		0.5,           // 50% error rate
+		5*time.Second, // 5 second window
+		2*time.Second, // 2 second timeout
+		2)             // 2 test requests
 
 	ctx := context.Background()
 
@@ -181,7 +187,9 @@ func TestE2E_CircuitBreakerFlow(t *testing.T) {
 
 	// Simulate failures to trigger circuit breaker
 	for i := 0; i < 10; i++ {
-		cb.RecordFailure()
+		cb.Call(ctx, func() error {
+			return fmt.Errorf("simulated failure")
+		})
 	}
 
 	// Circuit breaker should now be open
@@ -198,6 +206,12 @@ func TestE2E_CircuitBreakerFlow(t *testing.T) {
 
 	// Wait for timeout to transition to half-open
 	time.Sleep(3 * time.Second)
+
+	// Make a successful request to trigger the transition to half-open
+	err = cb.Call(ctx, func() error {
+		return nil
+	})
+	assert.NoError(t, err)
 
 	// Circuit breaker should now be in half-open state
 	state := cb.GetState()
@@ -228,11 +242,11 @@ func TestE2E_RetryFlow(t *testing.T) {
 
 	// Create load balancer
 	lb := &database.LoadBalancer{
-		ID:                "test-lb-retry",
-		Name:              "Test LB Retry",
-		Strategy:          "round_robin",
-		Enabled:           true,
-		ConfigNodes:       []database.ConfigNode{
+		ID:       "test-lb-retry",
+		Name:     "Test LB Retry",
+		Strategy: "round_robin",
+		Enabled:  true,
+		ConfigNodes: []database.ConfigNode{
 			{ConfigID: config1.ID, Weight: 1, Enabled: true},
 			{ConfigID: config2.ID, Weight: 1, Enabled: true},
 		},
@@ -292,11 +306,11 @@ func TestE2E_FailoverScenario(t *testing.T) {
 
 	// Create load balancer
 	lb := &database.LoadBalancer{
-		ID:                  "test-lb-failover",
-		Name:                "Test LB Failover",
-		Strategy:            "round_robin",
-		Enabled:             true,
-		ConfigNodes:         []database.ConfigNode{
+		ID:       "test-lb-failover",
+		Name:     "Test LB Failover",
+		Strategy: "round_robin",
+		Enabled:  true,
+		ConfigNodes: []database.ConfigNode{
 			{ConfigID: config1.ID, Weight: 1, Enabled: true},
 			{ConfigID: config2.ID, Weight: 1, Enabled: true},
 		},
@@ -362,10 +376,10 @@ func TestE2E_ConcurrentRequests(t *testing.T) {
 
 	// Create load balancer
 	lb := &database.LoadBalancer{
-		ID:          "test-lb-concurrent",
-		Name:        "Test LB Concurrent",
-		Strategy:    "round_robin",
-		Enabled:     true,
+		ID:       "test-lb-concurrent",
+		Name:     "Test LB Concurrent",
+		Strategy: "round_robin",
+		Enabled:  true,
 		ConfigNodes: []database.ConfigNode{
 			{ConfigID: config1.ID, Weight: 1, Enabled: true},
 			{ConfigID: config2.ID, Weight: 1, Enabled: true},
@@ -424,19 +438,28 @@ func TestE2E_ConcurrentRequests(t *testing.T) {
 // Helper function to create test config
 func createTestConfigE2E(t *testing.T, id, baseURL string) *database.APIConfig {
 	config := &database.APIConfig{
-		ID:              id,
-		Name:            "Test Config " + id,
-		Description:     "Test configuration",
-		OpenAIBaseURL:   baseURL,
-		OpenAIAPIKey:    "test-key",
-		BigModel:        "gpt-4",
-		MiddleModel:     "gpt-3.5-turbo",
-		SmallModel:      "gpt-3.5-turbo",
-		MaxTokensLimit:  4096,
-		RequestTimeout:  30,
-		Enabled:         true,
+		ID:             id,
+		Name:           "Test Config " + id,
+		Description:    "Test configuration",
+		OpenAIBaseURL:  baseURL,
+		OpenAIAPIKey:   "test-key",
+		BigModel:       "gpt-4",
+		MiddleModel:    "gpt-3.5-turbo",
+		SmallModel:     "gpt-3.5-turbo",
+		MaxTokensLimit: 4096,
+		RequestTimeout: 30,
+		Enabled:        true,
 	}
 	err := database.CreateAPIConfig(config)
 	require.NoError(t, err)
+
+	// Create healthy status for the config
+	err = database.CreateOrUpdateHealthStatus(&database.HealthStatus{
+		ConfigID:      config.ID,
+		Status:        "healthy",
+		LastCheckTime: time.Now(),
+	})
+	require.NoError(t, err)
+
 	return config
 }

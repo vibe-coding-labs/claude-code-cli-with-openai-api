@@ -9,6 +9,7 @@ import (
 // LogsQueryParams represents query parameters for logs
 type LogsQueryParams struct {
 	ConfigID  string
+	UserID    int64
 	Status    string // "success", "error", or empty for all
 	Model     string // filter by model
 	SortBy    string // "created_at", "duration_ms", "total_tokens"
@@ -16,6 +17,130 @@ type LogsQueryParams struct {
 	Page      int    // page number (1-indexed)
 	PageSize  int    // items per page
 	Search    string // search in request_summary or response_preview
+}
+
+// GetUserLogsWithFilters retrieves logs for a user with filtering, sorting, and pagination
+func GetUserLogsWithFilters(params UserLogsQueryParams) (*LogsResult, error) {
+	whereClauses := []string{"user_id = ?"}
+	args := []interface{}{params.UserID}
+
+	if params.ConfigID != "" {
+		whereClauses = append(whereClauses, "config_id = ?")
+		args = append(args, params.ConfigID)
+	}
+
+	if params.Status != "" {
+		whereClauses = append(whereClauses, "status = ?")
+		args = append(args, params.Status)
+	}
+
+	if params.Model != "" {
+		whereClauses = append(whereClauses, "model = ?")
+		args = append(args, params.Model)
+	}
+
+	if params.Search != "" {
+		whereClauses = append(whereClauses, "(request_summary LIKE ? OR response_preview LIKE ?)")
+		searchPattern := "%" + params.Search + "%"
+		args = append(args, searchPattern, searchPattern)
+	}
+
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM request_logs WHERE %s", whereClause)
+	var total int64
+	err := DB.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count logs: %w", err)
+	}
+
+	sortBy := "created_at"
+	if params.SortBy != "" {
+		switch params.SortBy {
+		case "created_at", "duration_ms", "total_tokens", "input_tokens", "output_tokens":
+			sortBy = params.SortBy
+		}
+	}
+
+	sortOrder := "DESC"
+	if params.SortOrder == "asc" {
+		sortOrder = "ASC"
+	}
+
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+
+	pageSize := params.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	offset := (page - 1) * pageSize
+
+	query := fmt.Sprintf(`
+		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
+			duration_ms, status, error_message, request_body, response_body,
+			request_summary, response_preview, created_at
+		FROM request_logs
+		WHERE %s
+		ORDER BY %s %s
+		LIMIT ? OFFSET ?
+	`, whereClause, sortBy, sortOrder)
+
+	args = append(args, pageSize, offset)
+
+	rows, err := DB.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*RequestLog
+	for rows.Next() {
+		log := &RequestLog{}
+		var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
+		err := rows.Scan(
+			&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
+			&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
+			&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan log: %w", err)
+		}
+
+		if requestBody.Valid {
+			log.RequestBody = requestBody.String
+		}
+		if responseBody.Valid {
+			log.ResponseBody = responseBody.String
+		}
+		if requestSummary.Valid {
+			log.RequestSummary = requestSummary.String
+		}
+		if responsePreview.Valid {
+			log.ResponsePreview = responsePreview.String
+		}
+		if errorMessage.Valid {
+			log.ErrorMessage = errorMessage.String
+		}
+
+		logs = append(logs, log)
+	}
+
+	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
+
+	return &LogsResult{
+		Logs:       logs,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
 }
 
 // LogsResult represents paginated logs result
@@ -27,6 +152,19 @@ type LogsResult struct {
 	TotalPages int           `json:"total_pages"`
 }
 
+// UserLogsQueryParams represents query parameters for user logs
+type UserLogsQueryParams struct {
+	UserID    int64
+	ConfigID  string
+	Status    string // "success", "error", or empty for all
+	Model     string // filter by model
+	SortBy    string // "created_at", "duration_ms", "total_tokens"
+	SortOrder string // "asc" or "desc"
+	Page      int    // page number (1-indexed)
+	PageSize  int    // items per page
+	Search    string // search in request_summary or response_preview
+}
+
 // GetLogsWithFilters retrieves logs with filtering, sorting, and pagination
 func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 	// Build WHERE clause
@@ -36,6 +174,11 @@ func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 	if params.Status != "" {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, params.Status)
+	}
+
+	if params.UserID > 0 {
+		whereClauses = append(whereClauses, "user_id = ?")
+		args = append(args, params.UserID)
 	}
 
 	if params.Model != "" {
@@ -91,7 +234,7 @@ func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 
 	// Build final query
 	query := fmt.Sprintf(`
-		SELECT id, config_id, model, input_tokens, output_tokens, total_tokens,
+		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
 			request_summary, response_preview, created_at
 		FROM request_logs
@@ -113,7 +256,7 @@ func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 		log := &RequestLog{}
 		var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
 		err := rows.Scan(
-			&log.ID, &log.ConfigID, &log.Model, &log.InputTokens, &log.OutputTokens,
+			&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
 			&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
 			&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
 		)
@@ -167,7 +310,7 @@ func GetLogByID(id int64) (*RequestLog, error) {
 	var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
 
 	query := `
-		SELECT id, config_id, model, input_tokens, output_tokens, total_tokens,
+		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
 			request_summary, response_preview, created_at
 		FROM request_logs
@@ -175,7 +318,7 @@ func GetLogByID(id int64) (*RequestLog, error) {
 	`
 
 	err := DB.QueryRow(query, id).Scan(
-		&log.ID, &log.ConfigID, &log.Model, &log.InputTokens, &log.OutputTokens,
+		&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
 		&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
 		&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
 	)

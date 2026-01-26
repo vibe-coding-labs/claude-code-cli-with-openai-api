@@ -23,11 +23,12 @@ func InitJWT() {
 type Claims struct {
 	Username string `json:"username"`
 	UserID   int64  `json:"user_id"`
+	Role     string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken generates a JWT token for a user
-func GenerateToken(username string, userID int64) (string, error) {
+func GenerateToken(username string, userID int64, role string) (string, error) {
 	if len(jwtSecret) == 0 {
 		InitJWT()
 	}
@@ -35,6 +36,7 @@ func GenerateToken(username string, userID int64) (string, error) {
 	claims := &Claims{
 		Username: username,
 		UserID:   userID,
+		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * 7 * time.Hour)), // 7 days
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

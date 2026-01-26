@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,7 +94,7 @@ func TestSelectConfig_RoundRobin(t *testing.T) {
 
 	// Check that we cycle through configs
 	firstCycle := selectedIDs[:len(lb.ConfigNodes)]
-	secondCycle := selectedIDs[len(lb.ConfigNodes):len(lb.ConfigNodes)*2]
+	secondCycle := selectedIDs[len(lb.ConfigNodes) : len(lb.ConfigNodes)*2]
 
 	for i := range firstCycle {
 		if firstCycle[i] != secondCycle[i] {
@@ -158,10 +160,22 @@ func TestSelectConfig_Weighted(t *testing.T) {
 	lb.ConfigNodes[0].Weight = 80
 	lb.ConfigNodes[1].Weight = 20
 
+	// Update the load balancer in the database so RefreshNodes() picks up the new weights
+	err := database.UpdateLoadBalancer(lb)
+	if err != nil {
+		t.Fatalf("Failed to update load balancer: %v", err)
+	}
+
 	cbMgr := createTestCircuitBreakerManager()
 	selector, err := NewEnhancedSelector(lb, cbMgr)
 	if err != nil {
 		t.Fatalf("Failed to create selector: %v", err)
+	}
+
+	// Refresh nodes to load the updated weights from the database
+	err = selector.RefreshNodes()
+	if err != nil {
+		t.Fatalf("Failed to refresh nodes: %v", err)
 	}
 
 	// Mark all configs as healthy
@@ -428,13 +442,26 @@ func TestSelectorCircuitBreakerIntegration(t *testing.T) {
 
 func setupTestDB(t *testing.T) {
 	// Initialize test database
+	os.Remove("test_selector.db")
+	os.Remove("test_selector.db-shm")
+	os.Remove("test_selector.db-wal")
 	database.InitDB("test_selector.db")
+	if err := database.InitEncryption(); err != nil {
+		t.Fatalf("Failed to initialize encryption: %v", err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			t.Fatalf("Failed to run migrations: %v", err)
+		}
+	}
 }
 
 func cleanupTestDB(t *testing.T) {
 	// Close and remove test database
 	database.CloseDB()
-	// Note: In production, you might want to delete the test database file
+	os.Remove("test_selector.db")
+	os.Remove("test_selector.db-shm")
+	os.Remove("test_selector.db-wal")
 }
 
 func createTestCircuitBreakerManager() *CircuitBreakerManager {
@@ -474,10 +501,10 @@ func createTestLoadBalancer(t *testing.T) *database.LoadBalancer {
 
 	// Create test load balancer
 	lb := &database.LoadBalancer{
-		ID:          "test-lb",
-		Name:        "Test Load Balancer",
-		Strategy:    "round_robin",
-		Enabled:     true,
+		ID:       "test-lb",
+		Name:     "Test Load Balancer",
+		Strategy: "round_robin",
+		Enabled:  true,
 		ConfigNodes: []database.ConfigNode{
 			{ConfigID: config1.ID, Weight: 50, Enabled: true},
 			{ConfigID: config2.ID, Weight: 50, Enabled: true},

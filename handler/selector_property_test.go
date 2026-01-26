@@ -68,10 +68,22 @@ func TestLoadBalancingStrategyProperties(t *testing.T) {
 		lb.ConfigNodes[0].Weight = 70
 		lb.ConfigNodes[1].Weight = 30
 
+		// Update the load balancer in the database so RefreshNodes() picks up the new weights
+		err := database.UpdateLoadBalancer(lb)
+		if err != nil {
+			t.Fatalf("Failed to update load balancer: %v", err)
+		}
+
 		cbMgr := createTestCircuitBreakerManager()
 		selector, err := NewEnhancedSelector(lb, cbMgr)
 		if err != nil {
 			t.Fatalf("Failed to create selector: %v", err)
+		}
+
+		// Refresh nodes to load the updated weights from the database
+		err = selector.RefreshNodes()
+		if err != nil {
+			t.Fatalf("Failed to refresh nodes: %v", err)
 		}
 
 		// Mark all configs as healthy
@@ -223,13 +235,13 @@ func TestLoadBalancingStrategyProperties(t *testing.T) {
 func TestLoadBalancingInvariants(t *testing.T) {
 	// Invariant 1: Selection always returns a valid config
 	t.Run("Invariant: Selection returns valid config", func(t *testing.T) {
-		setupTestDB(t)
-		defer cleanupTestDB(t)
-
 		strategies := []string{"round_robin", "random", "weighted", "least_connections"}
 
 		for _, strategy := range strategies {
 			t.Run(strategy, func(t *testing.T) {
+				setupTestDB(t)
+				defer cleanupTestDB(t)
+
 				lb := createTestLoadBalancer(t)
 				lb.Strategy = strategy
 
@@ -288,13 +300,13 @@ func TestLoadBalancingInvariants(t *testing.T) {
 
 	// Invariant 2: Only healthy nodes are selected
 	t.Run("Invariant: Only healthy nodes selected", func(t *testing.T) {
-		setupTestDB(t)
-		defer cleanupTestDB(t)
-
 		strategies := []string{"round_robin", "random", "weighted", "least_connections"}
 
 		for _, strategy := range strategies {
 			t.Run(strategy, func(t *testing.T) {
+				setupTestDB(t)
+				defer cleanupTestDB(t)
+
 				lb := createTestLoadBalancer(t)
 				lb.Strategy = strategy
 
@@ -326,15 +338,15 @@ func TestLoadBalancingInvariants(t *testing.T) {
 				ctx := context.Background()
 
 				// Select multiple times
-				for i := 0; i < 50; i++ {
+				for i := 0; i < 100; i++ {
 					config, err := selector.SelectConfig(ctx)
 					if err != nil {
 						t.Fatalf("Failed to select config: %v", err)
 					}
 
-					// Should always select the healthy config
+					// Verify only healthy config is selected
 					if config.ID != lb.ConfigNodes[0].ConfigID {
-						t.Errorf("Selected unhealthy config %s", config.ID)
+						t.Errorf("Unhealthy config %s was selected", config.ID)
 					}
 				}
 			})
@@ -495,10 +507,22 @@ func TestLoadBalancingEdgeCases(t *testing.T) {
 		lb.ConfigNodes[0].Weight = 100
 		lb.ConfigNodes[1].Weight = 0
 
+		// Update the load balancer in the database so RefreshNodes() picks up the new weights
+		err := database.UpdateLoadBalancer(lb)
+		if err != nil {
+			t.Fatalf("Failed to update load balancer: %v", err)
+		}
+
 		cbMgr := createTestCircuitBreakerManager()
 		selector, err := NewEnhancedSelector(lb, cbMgr)
 		if err != nil {
 			t.Fatalf("Failed to create selector: %v", err)
+		}
+
+		// Refresh nodes to load the updated weights from the database
+		err = selector.RefreshNodes()
+		if err != nil {
+			t.Fatalf("Failed to refresh nodes: %v", err)
 		}
 
 		// Mark all configs as healthy

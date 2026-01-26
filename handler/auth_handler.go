@@ -60,7 +60,7 @@ func (h *Handler) InitializeSystem(c *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := utils.GenerateToken(user.Username, user.ID)
+	token, err := utils.GenerateToken(user.Username, user.ID, user.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -72,6 +72,8 @@ func (h *Handler) InitializeSystem(c *gin.Context) {
 		"user": gin.H{
 			"id":       user.ID,
 			"username": user.Username,
+			"role":     user.Role,
+			"status":   user.Status,
 		},
 	})
 }
@@ -103,7 +105,7 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := utils.GenerateToken(user.Username, user.ID)
+	token, err := utils.GenerateToken(user.Username, user.ID, user.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -115,6 +117,8 @@ func (h *Handler) Login(c *gin.Context) {
 		"user": gin.H{
 			"id":       user.ID,
 			"username": user.Username,
+			"role":     user.Role,
+			"status":   user.Status,
 		},
 	})
 }
@@ -192,6 +196,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Set user info in context
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
+		c.Set("role", claims.Role)
 
 		c.Next()
 	}

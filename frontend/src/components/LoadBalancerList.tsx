@@ -24,6 +24,7 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import { loadBalancerApi, LoadBalancer } from '../services/loadBalancerApi';
+import './LoadBalancerList.css';
 
 const { Title } = Typography;
 
@@ -100,6 +101,19 @@ const LoadBalancerList: React.FC = () => {
       least_connections: '最少连接',
     };
     return labels[strategy] || strategy;
+  };
+
+  const formatDateTime = (value?: string) => {
+    if (!value) {
+      return '暂无';
+    }
+    return new Date(value).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const columns = [
@@ -192,12 +206,15 @@ const LoadBalancerList: React.FC = () => {
   ];
 
   return (
-    <Card>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Title level={4} style={{ margin: 0 }}>
-          负载均衡器
-        </Title>
-        <Space>
+    <Card className="load-balancer-list">
+      <div className="load-balancer-list__header">
+        <div className="load-balancer-list__title-wrap">
+          <Title level={4} className="load-balancer-list__title">
+            负载均衡器
+          </Title>
+          <span className="load-balancer-list__count">共 {loadBalancers.length} 个</span>
+        </div>
+        <Space className="load-balancer-list__actions">
           <Space.Compact>
             <Tooltip title="卡片视图">
               <Button
@@ -222,7 +239,7 @@ const LoadBalancerList: React.FC = () => {
             新建负载均衡器
           </Button>
         </Space>
-      </Space>
+      </div>
 
       {viewMode === 'list' ? (
         <Table
@@ -237,13 +254,13 @@ const LoadBalancerList: React.FC = () => {
           })}
         />
       ) : (
-        <Row gutter={[16, 16]}>
+        <Row gutter={[16, 16]} className="load-balancer-card-grid">
           {loadBalancers.map((lb) => (
             <Col xs={24} sm={12} md={8} lg={6} key={lb.id}>
               <Card
                 hoverable
+                className="load-balancer-card"
                 onClick={() => handleViewDetail(lb.id)}
-                style={{ height: '100%' }}
                 extra={
                   <Switch
                     checked={lb.enabled}
@@ -256,10 +273,19 @@ const LoadBalancerList: React.FC = () => {
                 }
                 actions={[
                   <Tooltip title="查看详情" key="view">
-                    <EyeOutlined onClick={(e) => { e.stopPropagation(); handleViewDetail(lb.id); }} />
+                    <EyeOutlined
+                      className="load-balancer-card__action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewDetail(lb.id);
+                      }}
+                    />
                   </Tooltip>,
                   <Tooltip title="编辑" key="edit">
-                    <EditOutlined onClick={(e) => handleEdit(lb.id, e)} />
+                    <EditOutlined
+                      className="load-balancer-card__action"
+                      onClick={(e) => handleEdit(lb.id, e)}
+                    />
                   </Tooltip>,
                   <Popconfirm
                     title="确定要删除这个负载均衡器吗？"
@@ -269,46 +295,60 @@ const LoadBalancerList: React.FC = () => {
                     cancelText="取消"
                     key="delete"
                   >
-                    <DeleteOutlined onClick={(e) => e.stopPropagation()} />
+                    <DeleteOutlined
+                      className="load-balancer-card__action load-balancer-card__action--danger"
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </Popconfirm>,
                 ]}
               >
                 <Card.Meta
                   title={
-                    <Space>
-                      <ApiOutlined />
-                      <span>{lb.name}</span>
-                      {!lb.enabled && <Tag color="default">已禁用</Tag>}
-                    </Space>
+                    <div className="load-balancer-card__title">
+                      <div className="load-balancer-card__title-main">
+                        <span className="load-balancer-card__icon">
+                          <ApiOutlined />
+                        </span>
+                        <span className="load-balancer-card__name">{lb.name}</span>
+                      </div>
+                      <div className="load-balancer-card__title-tags">
+                        {!lb.enabled && <Tag color="default">已禁用</Tag>}
+                        <Tag color="blue">{getStrategyLabel(lb.strategy)}</Tag>
+                      </div>
+                    </div>
                   }
                   description={
-                    <div style={{ minHeight: 120 }}>
-                      <div style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        marginBottom: 8,
-                        color: '#666',
-                        fontSize: 12
-                      }}>
+                    <div className="load-balancer-card__content">
+                      <div className="load-balancer-card__description">
                         {lb.description || '暂无描述'}
                       </div>
-                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
-                        <strong>策略:</strong> <Tag color="blue" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{getStrategyLabel(lb.strategy)}</Tag>
+                      <div className="load-balancer-card__stats">
+                        <div className="load-balancer-card__stat">
+                          <span className="load-balancer-card__stat-label">配置节点</span>
+                          <span className="load-balancer-card__stat-value">{lb.config_nodes?.length || 0}</span>
+                        </div>
+                        <div className="load-balancer-card__stat">
+                          <span className="load-balancer-card__stat-label">最近更新</span>
+                          <span className="load-balancer-card__stat-value">{formatDateTime(lb.updated_at || lb.created_at)}</span>
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
-                        <strong>配置数:</strong> <Tag color="green" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{lb.config_nodes?.length || 0} 个配置</Tag>
+                      <div className="load-balancer-card__chips">
+                        <Tag className="load-balancer-card__chip" color={lb.health_check_enabled ? 'green' : 'default'}>
+                          健康检查{lb.health_check_interval ? ` ${lb.health_check_interval}s` : ''}
+                        </Tag>
+                        <Tag className="load-balancer-card__chip" color={lb.circuit_breaker_enabled ? 'geekblue' : 'default'}>
+                          熔断{lb.circuit_breaker_timeout ? ` ${lb.circuit_breaker_timeout}s` : ''}
+                        </Tag>
+                        <Tag className="load-balancer-card__chip" color={lb.dynamic_weight_enabled ? 'purple' : 'default'}>
+                          动态权重{lb.weight_update_interval ? ` ${lb.weight_update_interval}s` : ''}
+                        </Tag>
+                        <Tag className="load-balancer-card__chip" color={lb.max_retries ? 'gold' : 'default'}>
+                          重试 {lb.max_retries ?? 0}
+                        </Tag>
                       </div>
-                      <div style={{ fontSize: 11, color: '#999' }}>
-                        <strong>创建时间:</strong> {new Date(lb.created_at).toLocaleString('zh-CN', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
+                      <div className="load-balancer-card__footer">
+                        <span>日志级别: {lb.log_level || '默认'}</span>
+                        <span>状态: {lb.enabled ? '启用' : '禁用'}</span>
                       </div>
                     </div>
                   }

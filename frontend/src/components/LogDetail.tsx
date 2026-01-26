@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { usePageTitle } from '../utils/pageTitle';
 import {
@@ -50,12 +50,7 @@ const LogDetail: React.FC = () => {
   
   usePageTitle(log ? `日志 #${log.id}` : '日志详情');
 
-  useEffect(() => {
-    fetchLogDetail();
-    fetchConfigInfo();
-  }, [configId, logId]);
-
-  const fetchLogDetail = async () => {
+  const fetchLogDetail = useCallback(async () => {
     if (!configId || !logId) {
       message.error('Invalid configuration or log ID');
       setLoading(false);
@@ -70,9 +65,9 @@ const LogDetail: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [configId, logId]);
 
-  const fetchConfigInfo = async () => {
+  const fetchConfigInfo = useCallback(async () => {
     if (!configId) return;
     
     try {
@@ -85,7 +80,12 @@ const LogDetail: React.FC = () => {
     } catch (error: any) {
       console.error('获取配置信息失败', error);
     }
-  };
+  }, [configId]);
+
+  useEffect(() => {
+    fetchLogDetail();
+    fetchConfigInfo();
+  }, [fetchConfigInfo, fetchLogDetail]);
 
   const formatJson = (jsonString: string | undefined): string => {
     if (!jsonString) return '';

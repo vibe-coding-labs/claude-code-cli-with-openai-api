@@ -23,6 +23,23 @@ func NewResponseHandler() *ResponseHandler {
 	return &ResponseHandler{}
 }
 
+func getUserIDFromContext(c *gin.Context) int64 {
+	value, ok := c.Get("user_id")
+	if !ok || value == nil {
+		return 0
+	}
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
 // HandleStreamingResponse 处理流式响应
 func (r *ResponseHandler) HandleStreamingResponse(
 	c *gin.Context,
@@ -167,9 +184,11 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 
 	// 获取客户端信息
 	clientIP, userAgent := GetClientInfo(c)
+	userID := getUserIDFromContext(c)
 
 	log := &database.RequestLog{
 		ConfigID:        configID,
+		UserID:          userID,
 		Model:           model,
 		InputTokens:     streamResult.InputTokens,
 		OutputTokens:    streamResult.OutputTokens,
@@ -265,9 +284,11 @@ func (r *ResponseHandler) logRequestWithDetails(
 
 	// 获取客户端信息
 	clientIP, userAgent := GetClientInfo(c)
+	userID := getUserIDFromContext(c)
 
 	log := &database.RequestLog{
 		ConfigID:        configID,
+		UserID:          userID,
 		Model:           model,
 		InputTokens:     inputTokens,
 		OutputTokens:    outputTokens,

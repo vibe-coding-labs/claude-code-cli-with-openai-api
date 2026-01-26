@@ -70,14 +70,14 @@ func CreateAPIConfig(config *APIConfig) error {
 
 	query := `
 		INSERT INTO api_configs (
-			id, name, description, openai_api_key_encrypted, openai_base_url,
+			id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
-		config.ID, config.Name, config.Description, encrypted, config.OpenAIBaseURL,
+		config.ID, config.Name, config.Description, config.UserID, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
 	)
@@ -92,7 +92,7 @@ func CreateAPIConfig(config *APIConfig) error {
 // GetAPIConfig retrieves an API configuration by ID
 func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
-		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
+		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs WHERE id = ?
@@ -102,7 +102,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	var supportedModelsJSON sql.NullString
 	var expiresAt sql.NullTime
 	err := DB.QueryRow(query, id).Scan(
-		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
+		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 		&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
@@ -153,7 +153,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 
 	// Cache miss - query database
 	query := `
-		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
+		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs 
@@ -164,7 +164,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	config := &APIConfig{}
 	var supportedModelsJSON sql.NullString
 	err := DB.QueryRow(query, apiKey).Scan(
-		&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
+		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
@@ -251,7 +251,7 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
-		SELECT id, name, description, openai_api_key_encrypted, openai_base_url,
+		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
@@ -269,7 +269,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		var supportedModelsJSON sql.NullString
 		var expiresAt sql.NullTime
 		err := rows.Scan(
-			&config.ID, &config.Name, &config.Description, &config.OpenAIAPIKeyEncrypted,
+			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
 			&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
@@ -299,6 +299,61 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		}
 
 		// Don't include decrypted key in list view
+		config.OpenAIAPIKey = ""
+
+		configs = append(configs, config)
+	}
+
+	return configs, nil
+}
+
+func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
+	query := `
+		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			anthropic_api_key, enabled, expires_at, created_at, updated_at
+		FROM api_configs
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+
+	rows, err := DB.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query configs: %w", err)
+	}
+	defer rows.Close()
+
+	var configs []*APIConfig
+	for rows.Next() {
+		config := &APIConfig{}
+		var supportedModelsJSON sql.NullString
+		var expiresAt sql.NullTime
+		err := rows.Scan(
+			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
+			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
+			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
+			&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
+		)
+		if expiresAt.Valid {
+			config.ExpiresAt = &expiresAt.Time
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan config: %w", err)
+		}
+
+		if supportedModelsJSON.Valid && supportedModelsJSON.String != "" {
+			err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
+			if err != nil {
+				config.SupportedModels = nil
+			}
+		}
+
+		decrypted, err := DecryptAPIKey(config.OpenAIAPIKeyEncrypted)
+		if err != nil {
+			config.OpenAIAPIKeyMasked = "****"
+		} else {
+			config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
+		}
 		config.OpenAIAPIKey = ""
 
 		configs = append(configs, config)
@@ -398,11 +453,11 @@ func updateTokenStats(log *RequestLog) error {
 	// Check if a stats record exists for today
 	query := `
 		SELECT id FROM token_stats
-		WHERE config_id = ? AND model = ? AND DATE(created_at) = DATE('now')
+		WHERE config_id = ? AND user_id = ? AND model = ? AND DATE(created_at) = DATE('now')
 	`
 
 	var id int64
-	err := DB.QueryRow(query, log.ConfigID, log.Model).Scan(&id)
+	err := DB.QueryRow(query, log.ConfigID, log.UserID, log.Model).Scan(&id)
 
 	errorCount := 0
 	if log.Status == "error" {
@@ -413,12 +468,12 @@ func updateTokenStats(log *RequestLog) error {
 		// Create new stats record
 		insertQuery := `
 			INSERT INTO token_stats (
-				config_id, model, input_tokens, output_tokens, total_tokens,
+				config_id, user_id, model, input_tokens, output_tokens, total_tokens,
 				request_count, error_count, created_at
-			) VALUES (?, ?, ?, ?, ?, 1, ?, datetime('now'))
+			) VALUES (?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))
 		`
 		_, err = DB.Exec(insertQuery,
-			log.ConfigID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens, errorCount,
+			log.ConfigID, log.UserID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens, errorCount,
 		)
 	} else if err == nil {
 		// Update existing stats record
@@ -463,6 +518,48 @@ func GetConfigStats(configID string, days int) (*ConfigStats, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// GetUserTokenStats retrieves aggregated token stats for a user
+func GetUserTokenStats(userID int64, days int) ([]*UserTokenStats, error) {
+	query := `
+		SELECT
+			model,
+			COUNT(*) as total_requests,
+			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error_count
+		FROM request_logs
+		WHERE user_id = ? AND created_at >= datetime('now', '-' || ? || ' days')
+		GROUP BY model
+		ORDER BY total_tokens DESC
+	`
+
+	rows, err := DB.Query(query, userID, days)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []*UserTokenStats
+	for rows.Next() {
+		entry := &UserTokenStats{UserID: userID}
+		err := rows.Scan(
+			&entry.Model,
+			&entry.TotalRequests,
+			&entry.InputTokens,
+			&entry.OutputTokens,
+			&entry.TotalTokens,
+			&entry.ErrorCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan user stats: %w", err)
+		}
+		stats = append(stats, entry)
 	}
 
 	return stats, nil

@@ -16,7 +16,16 @@ import (
 
 // GetAllConfigs returns all API configurations
 func (h *Handler) GetAllConfigs(c *gin.Context) {
-	configs, err := database.GetAllAPIConfigs()
+	userID, role := getUserContext(c)
+	var (
+		configs []*database.APIConfig
+		err     error
+	)
+	if isAdminRole(role) {
+		configs, err = database.GetAllAPIConfigs()
+	} else {
+		configs, err = database.GetAPIConfigsByUser(userID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to get configs: %v", err),
@@ -47,6 +56,12 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		return
 	}
 
+	userID, role := getUserContext(c)
+	if !isAdminRole(role) && config.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"config": config,
 	})
@@ -61,6 +76,8 @@ func (h *Handler) CreateConfig(c *gin.Context) {
 		})
 		return
 	}
+
+	userID, _ := getUserContext(c)
 
 	// Validate required fields
 	if config.Name == "" {
@@ -102,6 +119,7 @@ func (h *Handler) CreateConfig(c *gin.Context) {
 	}
 	// Enable by default
 	config.Enabled = true
+	config.UserID = userID
 
 	// Create config
 	if err := database.CreateAPIConfig(&config); err != nil {
@@ -135,7 +153,21 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 		return
 	}
 
+	userID, role := getUserContext(c)
+	existing, err := database.GetAPIConfig(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Config not found: %v", err),
+		})
+		return
+	}
+	if !isAdminRole(role) && existing.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
 	config.ID = id
+	config.UserID = existing.UserID
 
 	// Update config
 	if err := database.UpdateAPIConfig(&config); err != nil {
@@ -160,6 +192,18 @@ func (h *Handler) DeleteConfig(c *gin.Context) {
 		return
 	}
 
+	userID, role := getUserContext(c)
+	config, err := database.GetAPIConfig(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Config not found: %v", err),
+		})
+		return
+	}
+	if !isAdminRole(role) && config.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
 	if err := database.DeleteAPIConfig(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to delete config: %v", err),

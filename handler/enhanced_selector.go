@@ -136,9 +136,10 @@ func (s *EnhancedSelector) selectWeighted(configs []*database.APIConfig) (*datab
 		return nil, fmt.Errorf("no available configs")
 	}
 
-	// Build weight map for available configs
+	// Build weight map for available configs and filter out zero-weight configs
 	weights := make(map[string]int)
 	totalWeight := 0
+	eligibleConfigs := make([]*database.APIConfig, 0)
 
 	for _, node := range s.loadBalancer.ConfigNodes {
 		if !node.Enabled {
@@ -146,34 +147,40 @@ func (s *EnhancedSelector) selectWeighted(configs []*database.APIConfig) (*datab
 		}
 
 		// Check if this config is in the healthy list
-		isHealthy := false
-		for _, config := range configs {
-			if config.ID == node.ConfigID {
-				isHealthy = true
+		var config *database.APIConfig
+		for _, c := range configs {
+			if c.ID == node.ConfigID {
+				config = c
 				break
 			}
 		}
 
-		if !isHealthy {
+		if config == nil {
 			continue
 		}
 
 		// Get dynamic weight if enabled, otherwise use base weight
 		weight := s.calculateWeight(node.ConfigID, node.Weight)
 
+		// Skip nodes with zero weight
+		if weight == 0 {
+			continue
+		}
+
 		weights[node.ConfigID] = weight
 		totalWeight += weight
+		eligibleConfigs = append(eligibleConfigs, config)
 	}
 
-	if totalWeight == 0 {
-		return s.selectRoundRobin(configs)
+	if totalWeight == 0 || len(eligibleConfigs) == 0 {
+		return nil, fmt.Errorf("no configs with non-zero weight available")
 	}
 
 	// Select based on weight
 	randomWeight := s.rng.Intn(totalWeight)
 	currentWeight := 0
 
-	for _, config := range configs {
+	for _, config := range eligibleConfigs {
 		weight, exists := weights[config.ID]
 		if !exists {
 			continue
@@ -185,7 +192,8 @@ func (s *EnhancedSelector) selectWeighted(configs []*database.APIConfig) (*datab
 		}
 	}
 
-	return configs[0], nil
+	// This should never happen if totalWeight > 0
+	return nil, fmt.Errorf("failed to select config")
 }
 
 // selectLeastConnections implements least connections strategy
@@ -289,7 +297,7 @@ func (s *EnhancedSelector) calculateWeight(configID string, baseWeight int) int 
 	if dynamicWeight, exists := s.dynamicWeights[configID]; exists && dynamicWeight > 0 {
 		return dynamicWeight
 	}
-	
+
 	return baseWeight
 }
 
@@ -306,7 +314,7 @@ func (s *EnhancedSelector) UpdateDynamicWeights() error {
 			// Log error but continue with other configs
 			continue
 		}
-		
+
 		s.dynamicWeights[config.ID] = weight
 	}
 
@@ -382,17 +390,17 @@ func (s *EnhancedSelector) calculateDynamicWeight(configID string) (int, error) 
 func (s *EnhancedSelector) GetDynamicWeight(configID string) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	if weight, exists := s.dynamicWeights[configID]; exists {
 		return weight
 	}
-	
+
 	// Return base weight if no dynamic weight
 	for _, node := range s.loadBalancer.ConfigNodes {
 		if node.ConfigID == configID {
 			return node.Weight
 		}
 	}
-	
+
 	return 10 // Default weight
 }

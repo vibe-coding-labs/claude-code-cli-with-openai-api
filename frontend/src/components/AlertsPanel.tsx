@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useEffect, useState } from 'react';
 import { loadBalancerApi, Alert } from '../services/loadBalancerApi';
 import './LoadBalancerDetail.css';

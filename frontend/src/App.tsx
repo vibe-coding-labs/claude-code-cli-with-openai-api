@@ -15,6 +15,8 @@ import LogDetail from './components/LogDetail';
 import LoadBalancerList from './components/LoadBalancerList';
 import LoadBalancerEditor from './components/LoadBalancerEditor';
 import LoadBalancerDetail from './components/LoadBalancerDetail';
+import UserList from './components/UserList';
+import UserUsage from './components/UserUsage';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
@@ -42,6 +44,15 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       icon: <ClusterOutlined />,
       label: <Link to="/ui/load-balancers">负载均衡器</Link>,
     },
+    ...(currentUser?.role === 'admin'
+      ? [
+          {
+            key: '/ui/users',
+            icon: <SettingOutlined />,
+            label: <Link to="/ui/users">用户管理</Link>,
+          },
+        ]
+      : []),
   ];
 
   const handleLogout = () => {
@@ -116,6 +127,8 @@ const App: React.FC = () => {
               <Route path="load-balancers/create" element={<ProtectedRoute><LoadBalancerEditor /></ProtectedRoute>} />
               <Route path="load-balancers/:id" element={<ProtectedRoute><LoadBalancerDetail /></ProtectedRoute>} />
               <Route path="load-balancers/:id/edit" element={<ProtectedRoute><LoadBalancerEditor /></ProtectedRoute>} />
+              <Route path="users" element={<ProtectedRoute><UserList /></ProtectedRoute>} />
+              <Route path="users/:id/usage" element={<ProtectedRoute><UserUsage /></ProtectedRoute>} />
             </Routes>
           </AppLayout>
         } />

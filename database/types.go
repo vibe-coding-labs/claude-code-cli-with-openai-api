@@ -7,6 +7,7 @@ type APIConfig struct {
 	ID                    string            `json:"id"`
 	Name                  string            `json:"name"`
 	Description           string            `json:"description"`
+	UserID                int64             `json:"user_id"`
 	OpenAIAPIKey          string            `json:"openai_api_key,omitempty"`        // Decrypted, not stored
 	OpenAIAPIKeyEncrypted string            `json:"-"`                               // Encrypted, for DB only
 	OpenAIAPIKeyMasked    string            `json:"openai_api_key_masked,omitempty"` // Masked for display
@@ -31,6 +32,7 @@ type APIConfig struct {
 type TokenStats struct {
 	ID           int64     `json:"id"`
 	ConfigID     string    `json:"config_id"`
+	UserID       int64     `json:"user_id"`
 	Model        string    `json:"model"`
 	InputTokens  int64     `json:"input_tokens"`
 	OutputTokens int64     `json:"output_tokens"`
@@ -44,6 +46,7 @@ type TokenStats struct {
 type RequestLog struct {
 	ID              int64     `json:"id"`
 	ConfigID        string    `json:"config_id"`
+	UserID          int64     `json:"user_id"`
 	Model           string    `json:"model"`
 	InputTokens     int       `json:"input_tokens"`
 	OutputTokens    int       `json:"output_tokens"`
@@ -92,45 +95,57 @@ type ConfigStats struct {
 	AvgDurationMs     float64 `json:"avg_duration_ms"`
 }
 
+// UserTokenStats represents aggregated token stats for a user
+type UserTokenStats struct {
+	UserID        int64  `json:"user_id"`
+	Model         string `json:"model"`
+	TotalRequests int64  `json:"total_requests"`
+	InputTokens   int64  `json:"input_tokens"`
+	OutputTokens  int64  `json:"output_tokens"`
+	TotalTokens   int64  `json:"total_tokens"`
+	ErrorCount    int64  `json:"error_count"`
+}
+
 // LoadBalancer represents a load balancer configuration
 type LoadBalancer struct {
 	ID              string       `json:"id"`
 	Name            string       `json:"name"`
 	Description     string       `json:"description"`
+	UserID          int64        `json:"user_id"`
 	Strategy        string       `json:"strategy"` // round_robin, random, weighted, least_connections
 	ConfigNodes     []ConfigNode `json:"config_nodes"`
 	ConfigNodesJSON string       `json:"-"` // JSON string for database storage
 	Enabled         bool         `json:"enabled"`
 	AnthropicAPIKey string       `json:"anthropic_api_key,omitempty"`
-	
+
 	// Health check configuration
 	HealthCheckEnabled  bool `json:"health_check_enabled"`
 	HealthCheckInterval int  `json:"health_check_interval"` // seconds
 	FailureThreshold    int  `json:"failure_threshold"`
 	RecoveryThreshold   int  `json:"recovery_threshold"`
 	HealthCheckTimeout  int  `json:"health_check_timeout"` // seconds
-	
+
 	// Retry configuration
 	MaxRetries        int `json:"max_retries"`
 	InitialRetryDelay int `json:"initial_retry_delay"` // milliseconds
 	MaxRetryDelay     int `json:"max_retry_delay"`     // milliseconds
-	
+
 	// Circuit breaker configuration
 	CircuitBreakerEnabled bool    `json:"circuit_breaker_enabled"`
-	ErrorRateThreshold    float64 `json:"error_rate_threshold"` // 0.0-1.0
+	ErrorRateThreshold    float64 `json:"error_rate_threshold"`    // 0.0-1.0
 	CircuitBreakerWindow  int     `json:"circuit_breaker_window"`  // seconds
 	CircuitBreakerTimeout int     `json:"circuit_breaker_timeout"` // seconds
 	HalfOpenRequests      int     `json:"half_open_requests"`
-	
+
 	// Dynamic weight configuration
 	DynamicWeightEnabled bool `json:"dynamic_weight_enabled"`
 	WeightUpdateInterval int  `json:"weight_update_interval"` // seconds
-	
+
 	// Log configuration
 	LogLevel string `json:"log_level"` // minimal, standard, detailed
-	
-	CreatedAt       time.Time    `json:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ConfigNode represents a configuration node in the load balancer
@@ -155,14 +170,14 @@ type HealthStatus struct {
 
 // CircuitBreakerState represents the state of a circuit breaker for a configuration node
 type CircuitBreakerState struct {
-	ConfigID        string    `json:"config_id"`
-	State           string    `json:"state"` // closed, open, half_open
-	FailureCount    int       `json:"failure_count"`
-	SuccessCount    int       `json:"success_count"`
-	LastStateChange time.Time `json:"last_state_change"`
+	ConfigID        string     `json:"config_id"`
+	State           string     `json:"state"` // closed, open, half_open
+	FailureCount    int        `json:"failure_count"`
+	SuccessCount    int        `json:"success_count"`
+	LastStateChange time.Time  `json:"last_state_change"`
 	NextRetryTime   *time.Time `json:"next_retry_time,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // LoadBalancerRequestLog represents a request log for load balancer
@@ -213,15 +228,15 @@ type NodeStats struct {
 
 // Alert represents an alert for a load balancer
 type Alert struct {
-	ID              string     `json:"id"`
-	LoadBalancerID  string     `json:"load_balancer_id"`
-	Level           string     `json:"level"` // critical, warning, info
-	Type            string     `json:"type"`  // all_nodes_down, low_healthy_nodes, high_error_rate, circuit_breaker_open
-	Message         string     `json:"message"`
-	Details         string     `json:"details,omitempty"`
-	Acknowledged    bool       `json:"acknowledged"`
-	AcknowledgedAt  *time.Time `json:"acknowledged_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	LoadBalancerID string     `json:"load_balancer_id"`
+	Level          string     `json:"level"` // critical, warning, info
+	Type           string     `json:"type"`  // all_nodes_down, low_healthy_nodes, high_error_rate, circuit_breaker_open
+	Message        string     `json:"message"`
+	Details        string     `json:"details,omitempty"`
+	Acknowledged   bool       `json:"acknowledged"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // LoadBalancerConfig extends LoadBalancer with enhancement configuration
@@ -233,51 +248,51 @@ type LoadBalancerConfig struct {
 	FailureThreshold    int  `json:"failure_threshold"`
 	RecoveryThreshold   int  `json:"recovery_threshold"`
 	HealthCheckTimeout  int  `json:"health_check_timeout"` // seconds
-	
+
 	// Retry configuration
 	MaxRetries        int `json:"max_retries"`
 	InitialRetryDelay int `json:"initial_retry_delay"` // milliseconds
 	MaxRetryDelay     int `json:"max_retry_delay"`     // milliseconds
-	
+
 	// Circuit breaker configuration
 	CircuitBreakerEnabled bool    `json:"circuit_breaker_enabled"`
-	ErrorRateThreshold    float64 `json:"error_rate_threshold"` // 0.0-1.0
+	ErrorRateThreshold    float64 `json:"error_rate_threshold"`    // 0.0-1.0
 	CircuitBreakerWindow  int     `json:"circuit_breaker_window"`  // seconds
 	CircuitBreakerTimeout int     `json:"circuit_breaker_timeout"` // seconds
 	HalfOpenRequests      int     `json:"half_open_requests"`
-	
+
 	// Dynamic weight configuration
 	DynamicWeightEnabled bool `json:"dynamic_weight_enabled"`
 	WeightUpdateInterval int  `json:"weight_update_interval"` // seconds
-	
+
 	// Log configuration
 	LogLevel string `json:"log_level"` // minimal, standard, detailed
 }
 
 // RealTimeMetrics represents real-time metrics for a load balancer
 type RealTimeMetrics struct {
-	LoadBalancerID      string               `json:"load_balancer_id"`
-	Timestamp           time.Time            `json:"timestamp"`
-	RequestsPerSecond   float64              `json:"requests_per_second"`
-	SuccessRate         float64              `json:"success_rate"`
-	AvgResponseTimeMs   float64              `json:"avg_response_time_ms"`
-	ActiveConnections   int                  `json:"active_connections"`
-	HealthyNodes        int                  `json:"healthy_nodes"`
-	TotalNodes          int                  `json:"total_nodes"`
-	TotalRequests       int64                `json:"total_requests"`
-	SuccessRequests     int64                `json:"success_requests"`
-	FailedRequests      int64                `json:"failed_requests"`
-	NodeMetrics         []NodeRealTimeMetrics `json:"node_metrics"`
+	LoadBalancerID    string                `json:"load_balancer_id"`
+	Timestamp         time.Time             `json:"timestamp"`
+	RequestsPerSecond float64               `json:"requests_per_second"`
+	SuccessRate       float64               `json:"success_rate"`
+	AvgResponseTimeMs float64               `json:"avg_response_time_ms"`
+	ActiveConnections int                   `json:"active_connections"`
+	HealthyNodes      int                   `json:"healthy_nodes"`
+	TotalNodes        int                   `json:"total_nodes"`
+	TotalRequests     int64                 `json:"total_requests"`
+	SuccessRequests   int64                 `json:"success_requests"`
+	FailedRequests    int64                 `json:"failed_requests"`
+	NodeMetrics       []NodeRealTimeMetrics `json:"node_metrics"`
 }
 
 // NodeRealTimeMetrics represents real-time metrics for a node
 type NodeRealTimeMetrics struct {
-	ConfigID            string    `json:"config_id"`
-	ConfigName          string    `json:"config_name"`
-	HealthStatus        string    `json:"health_status"`
-	CircuitBreakerState string    `json:"circuit_breaker_state"`
-	RequestsPerSecond   float64   `json:"requests_per_second"`
-	SuccessRate         float64   `json:"success_rate"`
-	AvgResponseTimeMs   float64   `json:"avg_response_time_ms"`
+	ConfigID            string     `json:"config_id"`
+	ConfigName          string     `json:"config_name"`
+	HealthStatus        string     `json:"health_status"`
+	CircuitBreakerState string     `json:"circuit_breaker_state"`
+	RequestsPerSecond   float64    `json:"requests_per_second"`
+	SuccessRate         float64    `json:"success_rate"`
+	AvgResponseTimeMs   float64    `json:"avg_response_time_ms"`
 	LastRequestTime     *time.Time `json:"last_request_time,omitempty"`
 }

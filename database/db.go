@@ -58,6 +58,7 @@ func createTables() error {
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
+		user_id INTEGER,
 		openai_api_key_encrypted TEXT NOT NULL,
 		openai_base_url TEXT NOT NULL,
 		big_model TEXT NOT NULL,
@@ -77,6 +78,7 @@ func createTables() error {
 	CREATE TABLE IF NOT EXISTS token_stats (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		config_id TEXT NOT NULL,
+		user_id INTEGER,
 		model TEXT NOT NULL,
 		input_tokens INTEGER DEFAULT 0,
 		output_tokens INTEGER DEFAULT 0,
@@ -92,6 +94,7 @@ func createTables() error {
 	CREATE TABLE IF NOT EXISTS request_logs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		config_id TEXT NOT NULL,
+		user_id INTEGER,
 		model TEXT NOT NULL,
 		input_tokens INTEGER DEFAULT 0,
 		output_tokens INTEGER DEFAULT 0,
@@ -113,6 +116,7 @@ func createTables() error {
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
+		user_id INTEGER,
 		strategy TEXT NOT NULL,
 		config_nodes TEXT NOT NULL,
 		enabled BOOLEAN DEFAULT 1,
@@ -219,11 +223,15 @@ func createTables() error {
 	// Create indexes for better query performance
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_token_stats_config_id ON token_stats(config_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_token_stats_user_id ON token_stats(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_token_stats_created_at ON token_stats(created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_config_id ON request_logs(config_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_user_id ON request_logs(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_configs_user_id ON api_configs(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_load_balancers_api_key ON load_balancers(anthropic_api_key);`,
 		`CREATE INDEX IF NOT EXISTS idx_load_balancers_enabled ON load_balancers(enabled);`,
+		`CREATE INDEX IF NOT EXISTS idx_load_balancers_user_id ON load_balancers(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_lb_id ON load_balancer_request_logs(load_balancer_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_time ON load_balancer_request_logs(request_time);`,
 		`CREATE INDEX IF NOT EXISTS idx_lb_stats_lb_id_time ON load_balancer_stats(load_balancer_id, time_bucket);`,

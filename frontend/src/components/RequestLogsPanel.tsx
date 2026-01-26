@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { loadBalancerApi, RequestLog } from '../services/loadBalancerApi';
 import './LoadBalancerDetail.css';
 
@@ -14,7 +14,7 @@ const RequestLogsPanel: React.FC<RequestLogsPanelProps> = ({ loadBalancerId }) =
   const [hasMore, setHasMore] = useState(true);
   const pageSize = 50;
 
-  const fetchLogs = async (pageNum: number, reset: boolean = false) => {
+  const fetchLogs = useCallback(async (pageNum: number, reset: boolean = false) => {
     try {
       setLoading(true);
       const offset = (pageNum - 1) * pageSize;
@@ -37,12 +37,12 @@ const RequestLogsPanel: React.FC<RequestLogsPanelProps> = ({ loadBalancerId }) =
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadBalancerId]);
 
   useEffect(() => {
     setPage(1);
     fetchLogs(1, true);
-  }, [loadBalancerId]);
+  }, [fetchLogs, loadBalancerId]);
 
   const handleLoadMore = () => {
     const nextPage = page + 1;

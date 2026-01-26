@@ -72,14 +72,14 @@ func (al *AsyncLogger) Shutdown() {
 func LogRequestSync(log *RequestLog) error {
 	query := `
 		INSERT INTO request_logs (
-			config_id, model, input_tokens, output_tokens, total_tokens,
+			config_id, user_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
 			request_summary, response_preview, client_ip, user_agent, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
 	_, err := DB.Exec(query,
-		log.ConfigID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
+		log.ConfigID, log.UserID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
 		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
 		log.RequestSummary, log.ResponsePreview, log.ClientIP, log.UserAgent,
 	)

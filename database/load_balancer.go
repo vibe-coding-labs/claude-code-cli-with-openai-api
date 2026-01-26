@@ -50,13 +50,13 @@ func CreateLoadBalancer(lb *LoadBalancer) error {
 
 	query := `
 		INSERT INTO load_balancers (
-			id, name, description, strategy, config_nodes,
+			id, name, description, user_id, strategy, config_nodes,
 			enabled, anthropic_api_key, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
-		lb.ID, lb.Name, lb.Description, lb.Strategy, string(configNodesJSON),
+		lb.ID, lb.Name, lb.Description, lb.UserID, lb.Strategy, string(configNodesJSON),
 		lb.Enabled, lb.AnthropicAPIKey,
 	)
 
@@ -70,7 +70,7 @@ func CreateLoadBalancer(lb *LoadBalancer) error {
 // GetLoadBalancer retrieves a load balancer by ID
 func GetLoadBalancer(id string) (*LoadBalancer, error) {
 	query := `
-		SELECT id, name, description, strategy, config_nodes,
+		SELECT id, name, description, user_id, strategy, config_nodes,
 			enabled, anthropic_api_key, created_at, updated_at,
 			health_check_enabled, health_check_interval, failure_threshold,
 			recovery_threshold, health_check_timeout, max_retries,
@@ -90,9 +90,9 @@ func GetLoadBalancer(id string) (*LoadBalancer, error) {
 	var circuitBreakerWindow, circuitBreakerTimeout, halfOpenRequests sql.NullInt64
 	var weightUpdateInterval sql.NullInt64
 	var logLevel sql.NullString
-	
+
 	err := DB.QueryRow(query, id).Scan(
-		&lb.ID, &lb.Name, &lb.Description, &lb.Strategy, &configNodesJSON,
+		&lb.ID, &lb.Name, &lb.Description, &lb.UserID, &lb.Strategy, &configNodesJSON,
 		&lb.Enabled, &lb.AnthropicAPIKey, &lb.CreatedAt, &lb.UpdatedAt,
 		&healthCheckEnabled, &healthCheckInterval, &failureThreshold,
 		&recoveryThreshold, &healthCheckTimeout, &maxRetries,
@@ -127,7 +127,7 @@ func GetLoadBalancerByAPIKey(apiKey string) (*LoadBalancer, error) {
 	}
 
 	query := `
-		SELECT id, name, description, strategy, config_nodes,
+		SELECT id, name, description, user_id, strategy, config_nodes,
 			enabled, anthropic_api_key, created_at, updated_at,
 			health_check_enabled, health_check_interval, failure_threshold,
 			recovery_threshold, health_check_timeout, max_retries,
@@ -149,9 +149,9 @@ func GetLoadBalancerByAPIKey(apiKey string) (*LoadBalancer, error) {
 	var circuitBreakerWindow, circuitBreakerTimeout, halfOpenRequests sql.NullInt64
 	var weightUpdateInterval sql.NullInt64
 	var logLevel sql.NullString
-	
+
 	err := DB.QueryRow(query, apiKey).Scan(
-		&lb.ID, &lb.Name, &lb.Description, &lb.Strategy, &configNodesJSON,
+		&lb.ID, &lb.Name, &lb.Description, &lb.UserID, &lb.Strategy, &configNodesJSON,
 		&lb.Enabled, &lb.AnthropicAPIKey, &lb.CreatedAt, &lb.UpdatedAt,
 		&healthCheckEnabled, &healthCheckInterval, &failureThreshold,
 		&recoveryThreshold, &healthCheckTimeout, &maxRetries,
@@ -182,7 +182,7 @@ func GetLoadBalancerByAPIKey(apiKey string) (*LoadBalancer, error) {
 // GetAllLoadBalancers retrieves all load balancers
 func GetAllLoadBalancers() ([]*LoadBalancer, error) {
 	query := `
-		SELECT id, name, description, strategy, config_nodes,
+		SELECT id, name, description, user_id, strategy, config_nodes,
 			enabled, anthropic_api_key, created_at, updated_at
 		FROM load_balancers ORDER BY created_at DESC
 	`
@@ -198,7 +198,7 @@ func GetAllLoadBalancers() ([]*LoadBalancer, error) {
 		lb := &LoadBalancer{}
 		var configNodesJSON string
 		err := rows.Scan(
-			&lb.ID, &lb.Name, &lb.Description, &lb.Strategy, &configNodesJSON,
+			&lb.ID, &lb.Name, &lb.Description, &lb.UserID, &lb.Strategy, &configNodesJSON,
 			&lb.Enabled, &lb.AnthropicAPIKey, &lb.CreatedAt, &lb.UpdatedAt,
 		)
 		if err != nil {
@@ -210,6 +210,47 @@ func GetAllLoadBalancers() ([]*LoadBalancer, error) {
 			err = json.Unmarshal([]byte(configNodesJSON), &lb.ConfigNodes)
 			if err != nil {
 				// Ignore deserialization errors, continue processing
+				lb.ConfigNodes = nil
+			}
+		}
+
+		loadBalancers = append(loadBalancers, lb)
+	}
+
+	return loadBalancers, nil
+}
+
+// GetLoadBalancersByUser retrieves load balancers for a user
+func GetLoadBalancersByUser(userID int64) ([]*LoadBalancer, error) {
+	query := `
+		SELECT id, name, description, user_id, strategy, config_nodes,
+			enabled, anthropic_api_key, created_at, updated_at
+		FROM load_balancers
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+
+	rows, err := DB.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query load balancers: %w", err)
+	}
+	defer rows.Close()
+
+	var loadBalancers []*LoadBalancer
+	for rows.Next() {
+		lb := &LoadBalancer{}
+		var configNodesJSON string
+		err := rows.Scan(
+			&lb.ID, &lb.Name, &lb.Description, &lb.UserID, &lb.Strategy, &configNodesJSON,
+			&lb.Enabled, &lb.AnthropicAPIKey, &lb.CreatedAt, &lb.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan load balancer: %w", err)
+		}
+
+		if configNodesJSON != "" {
+			err = json.Unmarshal([]byte(configNodesJSON), &lb.ConfigNodes)
+			if err != nil {
 				lb.ConfigNodes = nil
 			}
 		}

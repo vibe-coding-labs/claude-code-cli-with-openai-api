@@ -46,6 +46,19 @@ func (h *Handler) RenewConfigAPIKey(c *gin.Context) {
 // GetConfigLogs retrieves logs for a config with filtering, sorting, and pagination
 func (h *Handler) GetConfigLogs(c *gin.Context) {
 	configID := c.Param("id")
+	config, err := database.GetAPIConfig(configID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Config not found",
+		})
+		return
+	}
+
+	userID, role := getUserContext(c)
+	if !isAdminRole(role) && config.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
 
 	// Parse query parameters
 	params := database.LogsQueryParams{
@@ -55,6 +68,9 @@ func (h *Handler) GetConfigLogs(c *gin.Context) {
 		SortBy:    c.DefaultQuery("sort_by", "created_at"),
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 		Search:    c.Query("search"),
+	}
+	if !isAdminRole(role) {
+		params.UserID = userID
 	}
 
 	// Parse page
@@ -88,11 +104,17 @@ func (h *Handler) DeleteConfigLogs(c *gin.Context) {
 	configID := c.Param("id")
 
 	// Check if config exists
-	_, err := database.GetAPIConfig(configID)
+	config, err := database.GetAPIConfig(configID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": "Config not found",
 		})
+		return
+	}
+
+	userID, role := getUserContext(c)
+	if !isAdminRole(role) && config.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
@@ -128,12 +150,28 @@ func (h *Handler) GetLogDetail(c *gin.Context) {
 		return
 	}
 
+	userID, role := getUserContext(c)
+	if !isAdminRole(role) && log.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
 	c.JSON(http.StatusOK, log)
 }
 
 // GetAvailableModels returns available models for filtering
 func (h *Handler) GetAvailableModels(c *gin.Context) {
 	configID := c.Param("id")
+	config, err := database.GetAPIConfig(configID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Config not found"})
+		return
+	}
+	userID, role := getUserContext(c)
+	if !isAdminRole(role) && config.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
 
 	models, err := database.GetAvailableModels(configID)
 	if err != nil {

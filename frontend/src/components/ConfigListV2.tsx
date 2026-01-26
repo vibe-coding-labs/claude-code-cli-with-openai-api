@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePageTitle } from '../utils/pageTitle';
@@ -61,7 +62,6 @@ const ConfigListV2: React.FC = () => {
   
   // View mode: 'card' or 'list'
   const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
-  const [isPreferenceLoaded, setIsPreferenceLoaded] = useState(false);
   
   // Filter states
   const [searchText, setSearchText] = useState('');
@@ -111,7 +111,7 @@ const ConfigListV2: React.FC = () => {
       } catch (error) {
         console.error('Failed to load preferences:', error);
       } finally {
-        setIsPreferenceLoaded(true);
+        // preferences loaded
       }
     };
 
