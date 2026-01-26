@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Table,
@@ -13,6 +13,8 @@ import {
   Row,
   Col,
   Tooltip,
+  Input,
+  Select,
 } from 'antd';
 import {
   PlusOutlined,
@@ -27,12 +29,16 @@ import { loadBalancerApi, LoadBalancer } from '../services/loadBalancerApi';
 import './LoadBalancerList.css';
 
 const { Title } = Typography;
+const { Option } = Select;
 
 const LoadBalancerList: React.FC = () => {
   const navigate = useNavigate();
   const [loadBalancers, setLoadBalancers] = useState<LoadBalancer[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
+  const [searchText, setSearchText] = useState('');
+  const [strategyFilter, setStrategyFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -102,6 +108,29 @@ const LoadBalancerList: React.FC = () => {
     };
     return labels[strategy] || strategy;
   };
+
+  const filteredLoadBalancers = useMemo(() => {
+    const keyword = searchText.trim().toLowerCase();
+    return loadBalancers.filter((lb) => {
+      if (keyword) {
+        const name = lb.name?.toLowerCase() || '';
+        const desc = lb.description?.toLowerCase() || '';
+        if (!name.includes(keyword) && !desc.includes(keyword)) {
+          return false;
+        }
+      }
+      if (strategyFilter && lb.strategy !== strategyFilter) {
+        return false;
+      }
+      if (statusFilter) {
+        const isEnabled = statusFilter === 'enabled';
+        if (lb.enabled !== isEnabled) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [loadBalancers, searchText, statusFilter, strategyFilter]);
 
   const formatDateTime = (value?: string) => {
     if (!value) {
@@ -212,7 +241,7 @@ const LoadBalancerList: React.FC = () => {
           <Title level={4} className="load-balancer-list__title">
             负载均衡器
           </Title>
-          <span className="load-balancer-list__count">共 {loadBalancers.length} 个</span>
+          <span className="load-balancer-list__count">共 {filteredLoadBalancers.length} 个</span>
         </div>
         <Space className="load-balancer-list__actions">
           <Space.Compact>
@@ -241,10 +270,42 @@ const LoadBalancerList: React.FC = () => {
         </Space>
       </div>
 
+      <div className="load-balancer-list__filters">
+        <Input.Search
+          allowClear
+          placeholder="搜索名称或描述"
+          onSearch={setSearchText}
+          onChange={(event) => setSearchText(event.target.value)}
+          style={{ width: 240 }}
+        />
+        <Select
+          allowClear
+          placeholder="策略"
+          value={strategyFilter || undefined}
+          onChange={(value) => setStrategyFilter(value || '')}
+          style={{ width: 160 }}
+        >
+          <Option value="round_robin">轮询</Option>
+          <Option value="random">随机</Option>
+          <Option value="weighted">权重</Option>
+          <Option value="least_connections">最少连接</Option>
+        </Select>
+        <Select
+          allowClear
+          placeholder="状态"
+          value={statusFilter || undefined}
+          onChange={(value) => setStatusFilter(value || '')}
+          style={{ width: 140 }}
+        >
+          <Option value="enabled">启用</Option>
+          <Option value="disabled">禁用</Option>
+        </Select>
+      </div>
+
       {viewMode === 'list' ? (
         <Table
           columns={columns}
-          dataSource={loadBalancers}
+          dataSource={filteredLoadBalancers}
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
@@ -255,7 +316,7 @@ const LoadBalancerList: React.FC = () => {
         />
       ) : (
         <Row gutter={[16, 16]} className="load-balancer-card-grid">
-          {loadBalancers.map((lb) => (
+          {filteredLoadBalancers.map((lb) => (
             <Col xs={24} sm={12} md={8} lg={6} key={lb.id}>
               <Card
                 hoverable

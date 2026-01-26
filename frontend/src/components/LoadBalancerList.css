@@ -40,6 +40,13 @@
   flex-wrap: wrap;
 }
 
+.load-balancer-list__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .load-balancer-card-grid {
   margin-top: 8px;
 }
@@ -190,6 +197,10 @@
   .load-balancer-list__header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .load-balancer-list__filters {
+    width: 100%;
   }
 
   .load-balancer-card__stats {
