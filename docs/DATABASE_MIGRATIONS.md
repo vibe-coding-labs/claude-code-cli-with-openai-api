@@ -49,6 +49,24 @@ Where:
    - Adds enhancement configuration fields to the `load_balancers` table
    - Includes health check, retry, circuit breaker, and logging configuration
 
+7. **017_add_user_role_status.sql**
+   - Adds `role` and `status` fields to the `users` table
+
+8. **018_add_user_id_to_api_configs.sql**
+   - Adds `user_id` to `api_configs` for ownership tracking
+
+9. **019_add_user_id_to_load_balancers.sql**
+   - Adds `user_id` to `load_balancers` for ownership tracking
+
+10. **020_add_user_id_to_request_logs.sql**
+   - Adds `user_id` to `request_logs` for per-user usage tracking
+
+11. **021_add_user_id_to_token_stats.sql**
+   - Adds `user_id` to `token_stats` for per-user aggregation
+
+12. **022_add_user_indexes.sql**
+   - Adds indexes for `users.role`, `users.status`, and `users.created_at`
+
 ## Running Migrations
 
 ### Automatic (Recommended)

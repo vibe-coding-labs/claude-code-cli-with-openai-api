@@ -546,6 +546,7 @@ func GetUserTokenStats(userID int64, days int) ([]*UserTokenStats, error) {
 	defer rows.Close()
 
 	var stats []*UserTokenStats
+	rollup := &UserTokenStats{UserID: userID, Model: "TOTAL"}
 	for rows.Next() {
 		entry := &UserTokenStats{UserID: userID}
 		err := rows.Scan(
@@ -559,7 +560,15 @@ func GetUserTokenStats(userID int64, days int) ([]*UserTokenStats, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan user stats: %w", err)
 		}
+		rollup.TotalRequests += entry.TotalRequests
+		rollup.InputTokens += entry.InputTokens
+		rollup.OutputTokens += entry.OutputTokens
+		rollup.TotalTokens += entry.TotalTokens
+		rollup.ErrorCount += entry.ErrorCount
 		stats = append(stats, entry)
+	}
+	if len(stats) > 0 {
+		stats = append([]*UserTokenStats{rollup}, stats...)
 	}
 
 	return stats, nil

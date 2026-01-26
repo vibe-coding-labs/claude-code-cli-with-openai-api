@@ -153,6 +153,8 @@ export const userAPI = {
       sort_by?: string;
       sort_order?: string;
       search?: string;
+      start_time?: string;
+      end_time?: string;
       page?: number;
       page_size?: number;
     }

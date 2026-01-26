@@ -32,6 +32,8 @@ const UserList: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [resetUser, setResetUser] = useState<User | null>(null);
@@ -59,10 +61,19 @@ const UserList: React.FC = () => {
   }, []);
 
   const filteredUsers = useMemo(() => {
-    if (!searchText) return users;
-    const keyword = searchText.toLowerCase();
-    return users.filter((user) => user.username.toLowerCase().includes(keyword));
-  }, [users, searchText]);
+    return users.filter((user) => {
+      if (searchText && !user.username.toLowerCase().includes(searchText.toLowerCase())) {
+        return false;
+      }
+      if (roleFilter && user.role !== roleFilter) {
+        return false;
+      }
+      if (statusFilter && user.status !== statusFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [users, searchText, roleFilter, statusFilter]);
 
   const handleCreate = async () => {
     try {
@@ -150,6 +161,26 @@ const UserList: React.FC = () => {
             onChange={(event) => setSearchText(event.target.value)}
             style={{ width: 220 }}
           />
+          <Select
+            allowClear
+            placeholder="角色"
+            value={roleFilter || undefined}
+            onChange={(value) => setRoleFilter(value || '')}
+            style={{ width: 140 }}
+          >
+            <Option value="admin">管理员</Option>
+            <Option value="user">普通用户</Option>
+          </Select>
+          <Select
+            allowClear
+            placeholder="状态"
+            value={statusFilter || undefined}
+            onChange={(value) => setStatusFilter(value || '')}
+            style={{ width: 140 }}
+          >
+            <Option value="active">启用</Option>
+            <Option value="disabled">禁用</Option>
+          </Select>
           <Button icon={<ReloadOutlined />} onClick={fetchUsers} loading={loading}>
             刷新
           </Button>

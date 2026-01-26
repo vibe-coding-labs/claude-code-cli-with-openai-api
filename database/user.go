@@ -177,6 +177,16 @@ func DeleteUser(id int64) error {
 	return nil
 }
 
+// CountAdmins returns the number of admin users.
+func CountAdmins() (int, error) {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count admins: %w", err)
+	}
+	return count, nil
+}
+
 // ValidatePassword checks if the password is correct
 func ValidatePassword(username, password string) (bool, error) {
 	user, err := GetUser(username)

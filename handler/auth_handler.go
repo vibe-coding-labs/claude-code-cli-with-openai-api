@@ -103,6 +103,10 @@ func (h *Handler) Login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
 		return
 	}
+	if strings.ToLower(strings.TrimSpace(user.Status)) != "active" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "User is disabled"})
+		return
+	}
 
 	// Generate JWT token
 	token, err := utils.GenerateToken(user.Username, user.ID, user.Role)
@@ -189,6 +193,18 @@ func AuthMiddleware() gin.HandlerFunc {
 		claims, err := utils.ValidateToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		user, err := database.GetUserByID(claims.UserID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+			c.Abort()
+			return
+		}
+		if strings.ToLower(strings.TrimSpace(user.Status)) != "active" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "User is disabled"})
 			c.Abort()
 			return
 		}

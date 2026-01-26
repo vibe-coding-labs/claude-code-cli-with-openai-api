@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // LogsQueryParams represents query parameters for logs
@@ -43,6 +44,15 @@ func GetUserLogsWithFilters(params UserLogsQueryParams) (*LogsResult, error) {
 		whereClauses = append(whereClauses, "(request_summary LIKE ? OR response_preview LIKE ?)")
 		searchPattern := "%" + params.Search + "%"
 		args = append(args, searchPattern, searchPattern)
+	}
+
+	if params.StartTime != nil {
+		whereClauses = append(whereClauses, "created_at >= ?")
+		args = append(args, params.StartTime.Format("2006-01-02 15:04:05"))
+	}
+	if params.EndTime != nil {
+		whereClauses = append(whereClauses, "created_at <= ?")
+		args = append(args, params.EndTime.Format("2006-01-02 15:04:05"))
 	}
 
 	whereClause := strings.Join(whereClauses, " AND ")
@@ -163,6 +173,8 @@ type UserLogsQueryParams struct {
 	Page      int    // page number (1-indexed)
 	PageSize  int    // items per page
 	Search    string // search in request_summary or response_preview
+	StartTime *time.Time
+	EndTime   *time.Time
 }
 
 // GetLogsWithFilters retrieves logs with filtering, sorting, and pagination

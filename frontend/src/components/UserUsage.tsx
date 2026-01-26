@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Col, Empty, Row, Select, Spin, Table, Tag, Typography, message, Input } from 'antd';
+import { Card, Col, DatePicker, Empty, Row, Select, Spin, Table, Tag, Typography, message, Input } from 'antd';
 import { useParams } from 'react-router-dom';
 import { userAPI } from '../services/api';
 import { LogsResult, UserLog, UserTokenStats } from '../types/user';
 import './UserManagement.css';
+import dayjs, { Dayjs } from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+const { RangePicker } = DatePicker;
 
 const UserUsage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -21,12 +23,16 @@ const UserUsage: React.FC = () => {
   const [status, setStatus] = useState<string>('');
   const [model, setModel] = useState<string>('');
   const [search, setSearch] = useState('');
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+
+  const summaryStats = useMemo(() => stats.find((item) => item.model === 'TOTAL') || null, [stats]);
+  const modelStats = useMemo(() => stats.filter((item) => item.model !== 'TOTAL'), [stats]);
 
   const availableModels = useMemo(() => {
     const modelSet = new Set<string>();
-    stats.forEach((item) => modelSet.add(item.model));
+    modelStats.forEach((item) => modelSet.add(item.model));
     return Array.from(modelSet);
-  }, [stats]);
+  }, [modelStats]);
 
   const fetchStats = useCallback(async () => {
     if (!userId) return;
@@ -51,6 +57,8 @@ const UserUsage: React.FC = () => {
         status: status || undefined,
         model: model || undefined,
         search: search || undefined,
+        start_time: dateRange?.[0]?.startOf('day').toISOString(),
+        end_time: dateRange?.[1]?.endOf('day').toISOString(),
         sort_by: 'created_at',
         sort_order: 'desc',
       });
@@ -61,7 +69,7 @@ const UserUsage: React.FC = () => {
     } finally {
       setLoadingLogs(false);
     }
-  }, [model, page, pageSize, search, status, userId]);
+  }, [dateRange, model, page, pageSize, search, status, userId]);
 
   useEffect(() => {
     fetchStats();
@@ -81,11 +89,24 @@ const UserUsage: React.FC = () => {
         <Title level={4}>用户用量概览</Title>
         {loadingStats ? (
           <Spin />
-        ) : stats.length === 0 ? (
+        ) : modelStats.length === 0 && !summaryStats ? (
           <Empty description="暂无用量数据" />
         ) : (
           <Row gutter={[16, 16]}>
-            {stats.map((item) => (
+            {summaryStats && (
+              <Col span={24}>
+                <Card size="small" title="汇总">
+                  <Row gutter={[8, 8]}>
+                    <Col span={6}><Text>请求数：{summaryStats.total_requests}</Text></Col>
+                    <Col span={6}><Text>错误数：{summaryStats.error_count}</Text></Col>
+                    <Col span={6}><Text>输入 Tokens：{summaryStats.input_tokens}</Text></Col>
+                    <Col span={6}><Text>输出 Tokens：{summaryStats.output_tokens}</Text></Col>
+                    <Col span={24}><Text strong>总 Tokens：{summaryStats.total_tokens}</Text></Col>
+                  </Row>
+                </Card>
+              </Col>
+            )}
+            {modelStats.map((item) => (
               <Col span={12} key={item.model}>
                 <Card size="small" title={item.model}>
                   <Row gutter={[8, 8]}>
@@ -127,6 +148,18 @@ const UserUsage: React.FC = () => {
                 <Option key={item} value={item}>{item}</Option>
               ))}
             </Select>
+            <RangePicker
+              allowClear
+              value={dateRange}
+              onChange={(values) => {
+                setDateRange(values);
+                setPage(1);
+              }}
+              presets={[
+                { label: '最近7天', value: [dayjs().subtract(7, 'day'), dayjs()] },
+                { label: '最近30天', value: [dayjs().subtract(30, 'day'), dayjs()] },
+              ]}
+            />
             <Input.Search
               allowClear
               placeholder="搜索摘要"

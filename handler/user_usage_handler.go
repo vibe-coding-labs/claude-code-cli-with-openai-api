@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
@@ -60,6 +61,23 @@ func (h *Handler) GetUserLogs(c *gin.Context) {
 		Search:    c.Query("search"),
 	}
 
+	if value := c.Query("start_time"); value != "" {
+		parsed, err := parseLogTimeParam(value, false)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_time"})
+			return
+		}
+		params.StartTime = parsed
+	}
+	if value := c.Query("end_time"); value != "" {
+		parsed, err := parseLogTimeParam(value, true)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid end_time"})
+			return
+		}
+		params.EndTime = parsed
+	}
+
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil || page < 1 {
 		page = 1
@@ -79,4 +97,20 @@ func (h *Handler) GetUserLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func parseLogTimeParam(value string, isEnd bool) (*time.Time, error) {
+	layouts := []string{time.RFC3339, "2006-01-02 15:04:05"}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return &parsed, nil
+		}
+	}
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		if isEnd {
+			parsed = parsed.Add(24*time.Hour - time.Second)
+		}
+		return &parsed, nil
+	}
+	return nil, strconv.ErrSyntax
 }

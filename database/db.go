@@ -220,28 +220,6 @@ func createTables() error {
 		FOREIGN KEY (load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
 	);`
 
-	// Create indexes for better query performance
-	indexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_token_stats_config_id ON token_stats(config_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_token_stats_user_id ON token_stats(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_token_stats_created_at ON token_stats(created_at);`,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_config_id ON request_logs(config_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_user_id ON request_logs(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);`,
-		`CREATE INDEX IF NOT EXISTS idx_api_configs_user_id ON api_configs(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_load_balancers_api_key ON load_balancers(anthropic_api_key);`,
-		`CREATE INDEX IF NOT EXISTS idx_load_balancers_enabled ON load_balancers(enabled);`,
-		`CREATE INDEX IF NOT EXISTS idx_load_balancers_user_id ON load_balancers(user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_lb_id ON load_balancer_request_logs(load_balancer_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_lb_request_logs_time ON load_balancer_request_logs(request_time);`,
-		`CREATE INDEX IF NOT EXISTS idx_lb_stats_lb_id_time ON load_balancer_stats(load_balancer_id, time_bucket);`,
-		`CREATE INDEX IF NOT EXISTS idx_node_stats_lb_id_time ON node_stats(load_balancer_id, time_bucket);`,
-		`CREATE INDEX IF NOT EXISTS idx_node_stats_config_id ON node_stats(config_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_alerts_lb_id ON alerts(load_balancer_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);`,
-		`CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);`,
-	}
-
 	// Execute table creation
 	tables := []string{
 		apiConfigsTable,
@@ -258,13 +236,6 @@ func createTables() error {
 	for _, table := range tables {
 		if _, err := DB.Exec(table); err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
-		}
-	}
-
-	// Create indexes
-	for _, index := range indexes {
-		if _, err := DB.Exec(index); err != nil {
-			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
 
@@ -285,7 +256,89 @@ func createTables() error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
+	if err := createIndexes(); err != nil {
+		return fmt.Errorf("failed to create indexes: %w", err)
+	}
+
 	return nil
+}
+
+type indexDefinition struct {
+	name    string
+	table   string
+	columns []string
+	sql     string
+}
+
+func createIndexes() error {
+	indexes := []indexDefinition{
+		{name: "idx_token_stats_config_id", table: "token_stats", columns: []string{"config_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_token_stats_config_id ON token_stats(config_id);"},
+		{name: "idx_token_stats_user_id", table: "token_stats", columns: []string{"user_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_token_stats_user_id ON token_stats(user_id);"},
+		{name: "idx_token_stats_created_at", table: "token_stats", columns: []string{"created_at"}, sql: "CREATE INDEX IF NOT EXISTS idx_token_stats_created_at ON token_stats(created_at);"},
+		{name: "idx_request_logs_config_id", table: "request_logs", columns: []string{"config_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_request_logs_config_id ON request_logs(config_id);"},
+		{name: "idx_request_logs_user_id", table: "request_logs", columns: []string{"user_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_request_logs_user_id ON request_logs(user_id);"},
+		{name: "idx_request_logs_created_at", table: "request_logs", columns: []string{"created_at"}, sql: "CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);"},
+		{name: "idx_api_configs_user_id", table: "api_configs", columns: []string{"user_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_api_configs_user_id ON api_configs(user_id);"},
+		{name: "idx_users_role", table: "users", columns: []string{"role"}, sql: "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);"},
+		{name: "idx_users_status", table: "users", columns: []string{"status"}, sql: "CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);"},
+		{name: "idx_users_created_at", table: "users", columns: []string{"created_at"}, sql: "CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);"},
+		{name: "idx_load_balancers_api_key", table: "load_balancers", columns: []string{"anthropic_api_key"}, sql: "CREATE INDEX IF NOT EXISTS idx_load_balancers_api_key ON load_balancers(anthropic_api_key);"},
+		{name: "idx_load_balancers_enabled", table: "load_balancers", columns: []string{"enabled"}, sql: "CREATE INDEX IF NOT EXISTS idx_load_balancers_enabled ON load_balancers(enabled);"},
+		{name: "idx_load_balancers_user_id", table: "load_balancers", columns: []string{"user_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_load_balancers_user_id ON load_balancers(user_id);"},
+		{name: "idx_lb_request_logs_lb_id", table: "load_balancer_request_logs", columns: []string{"load_balancer_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_lb_request_logs_lb_id ON load_balancer_request_logs(load_balancer_id);"},
+		{name: "idx_lb_request_logs_time", table: "load_balancer_request_logs", columns: []string{"request_time"}, sql: "CREATE INDEX IF NOT EXISTS idx_lb_request_logs_time ON load_balancer_request_logs(request_time);"},
+		{name: "idx_lb_stats_lb_id_time", table: "load_balancer_stats", columns: []string{"load_balancer_id", "time_bucket"}, sql: "CREATE INDEX IF NOT EXISTS idx_lb_stats_lb_id_time ON load_balancer_stats(load_balancer_id, time_bucket);"},
+		{name: "idx_node_stats_lb_id_time", table: "node_stats", columns: []string{"load_balancer_id", "time_bucket"}, sql: "CREATE INDEX IF NOT EXISTS idx_node_stats_lb_id_time ON node_stats(load_balancer_id, time_bucket);"},
+		{name: "idx_node_stats_config_id", table: "node_stats", columns: []string{"config_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_node_stats_config_id ON node_stats(config_id);"},
+		{name: "idx_alerts_lb_id", table: "alerts", columns: []string{"load_balancer_id"}, sql: "CREATE INDEX IF NOT EXISTS idx_alerts_lb_id ON alerts(load_balancer_id);"},
+		{name: "idx_alerts_acknowledged", table: "alerts", columns: []string{"acknowledged"}, sql: "CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);"},
+		{name: "idx_alerts_created_at", table: "alerts", columns: []string{"created_at"}, sql: "CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);"},
+	}
+
+	for _, index := range indexes {
+		columnsReady := true
+		for _, column := range index.columns {
+			exists, err := columnExists(index.table, column)
+			if err != nil {
+				return fmt.Errorf("failed to inspect table %s: %w", index.table, err)
+			}
+			if !exists {
+				columnsReady = false
+				break
+			}
+		}
+		if !columnsReady {
+			continue
+		}
+		if _, err := DB.Exec(index.sql); err != nil {
+			return fmt.Errorf("failed to create index %s: %w", index.name, err)
+		}
+	}
+
+	return nil
+}
+
+func columnExists(tableName, columnName string) (bool, error) {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // runMigrations runs database migrations

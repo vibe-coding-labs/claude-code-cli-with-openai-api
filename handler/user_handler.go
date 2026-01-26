@@ -211,6 +211,23 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	toDelete, err := database.GetUserByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(toDelete.Role)) == "admin" {
+		adminCount, err := database.CountAdmins()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check admin count"})
+			return
+		}
+		if adminCount <= 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete last admin"})
+			return
+		}
+	}
+
 	if err := database.DeleteUser(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user: " + err.Error()})
 		return

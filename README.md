@@ -159,6 +159,20 @@ curl -X POST http://localhost:8083/v1/messages \
 - `GET /api/configs/:id/stats` - 获取统计信息
 - `GET /api/configs/:id/logs` - 获取请求日志
 
+### 用户与认证 API
+- `GET /api/auth/initialized` - 检查是否初始化用户
+- `POST /api/auth/initialize` - 初始化管理员用户
+- `POST /api/auth/login` - 用户登录（返回 JWT）
+- `GET /api/users` - 获取用户列表（管理员）
+- `POST /api/users` - 创建用户（管理员）
+- `PUT /api/users/:id` - 更新用户（管理员）
+- `PUT /api/users/:id/password` - 重置用户密码（管理员）
+- `PUT /api/users/:id/status` - 启用/禁用用户（管理员）
+- `DELETE /api/users/:id` - 删除用户（管理员）
+- `GET /api/users/:id/stats?days=30` - 获取用户用量统计
+- `GET /api/users/:id/logs` - 获取用户请求日志（支持筛选）
+  - `start_time` / `end_time` 支持 RFC3339 或 `YYYY-MM-DD` 格式
+
 ### 健康检查
 - `GET /health` - 服务健康状态
 
