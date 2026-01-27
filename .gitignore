@@ -335,11 +335,39 @@ data/claude-code-switch/
 claude-code-cli-with-openai-api
 
 # Local test scripts (optional)
-test_*.sh
-*_test.sh
+# test_*.sh
+# *_test.sh
 
 # Runtime files
 *.pid
+
+# Test scripts
+*_test.sh
+test_*.sh
+
+# IDE specific files
+.vs/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Coverage profiles
+*.prof
+
+# Local config
+config.local.*
+
+# Playwright test output
+playwright-test-results/
+test-results/
+
+# Database migration backups
+*.sql.bak
+*.sql.backup
 
 # Deployment files (contain infrastructure information)
 deploy-prod.sh

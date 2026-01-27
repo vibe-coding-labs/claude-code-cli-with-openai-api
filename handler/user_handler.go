@@ -12,8 +12,8 @@ import (
 type userCreateRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Password string `json:"password" binding:"required,min=6"`
-	Role     string `json:"role" binding:"required"`
-	Status   string `json:"status" binding:"required"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
 }
 
 type userUpdateRequest struct {
@@ -56,7 +56,13 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	}
 
 	roleValue := strings.ToLower(strings.TrimSpace(req.Role))
+	if roleValue == "" {
+		roleValue = "user"
+	}
 	statusValue := strings.ToLower(strings.TrimSpace(req.Status))
+	if statusValue == "" {
+		statusValue = "active"
+	}
 	if roleValue != "admin" && roleValue != "user" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
 		return

@@ -344,6 +344,7 @@ func (h *Handler) TestConfig(c *gin.Context) {
 	// Log the request
 	logEntry := &database.RequestLog{
 		ConfigID:       id,
+		UserID:         dbConfig.UserID,
 		Model:          cfg.SmallModel,
 		DurationMs:     int(duration),
 		Status:         "success",
