@@ -44,6 +44,10 @@ interface Config {
   max_tokens_limit: number;
   request_timeout: number;
   retry_count: number;
+  reasoning_effort?: string;
+  big_model_reasoning_effort?: string;
+  middle_model_reasoning_effort?: string;
+  small_model_reasoning_effort?: string;
   enabled: boolean;
   expires_at?: string;
   created_at: string;
@@ -566,12 +570,34 @@ const ConfigDetailV2: React.FC = () => {
                     <Descriptions.Item label="Base URL" span={2}>
                       {config.openai_base_url}
                     </Descriptions.Item>
-                    <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
-                    <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
-                    <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
+                    <Descriptions.Item label="大模型 (Opus)">
+                      {config.big_model}
+                      {config.big_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          {config.big_model_reasoning_effort.toUpperCase()}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="中模型 (Sonnet)">
+                      {config.middle_model}
+                      {config.middle_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          {config.middle_model_reasoning_effort.toUpperCase()}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="小模型 (Haiku)">
+                      {config.small_model}
+                      {config.small_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          {config.small_model_reasoning_effort.toUpperCase()}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
                     <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
                     <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
                     <Descriptions.Item label="失败重试次数">{config.retry_count || 3}</Descriptions.Item>
+                    <Descriptions.Item label="默认思考级别">{config.reasoning_effort ? config.reasoning_effort.toUpperCase() : '默认'}</Descriptions.Item>
                   </Descriptions>
                 </Card>
 

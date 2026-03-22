@@ -1,13 +1,7 @@
 -- Migration: 017_add_user_role_status
 -- Description: Adds role and status fields to users table
 -- Date: 2026-01-26
-
--- ============================================================================
--- UP Migration
--- ============================================================================
-
-ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin', 'user'));
-ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled'));
+-- Note: These columns are already created in CreateUserTable function
 
 -- ============================================================================
 -- DOWN Migration (Rollback)

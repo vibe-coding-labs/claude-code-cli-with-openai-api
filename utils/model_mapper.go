@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 )
 
 // MapClaudeModelToOpenAI maps Claude model names to OpenAI model names.
@@ -61,7 +62,9 @@ func MapClaudeModelToOpenAIWithConfig(claudeModel string, cfg *config.Config) st
 
 	// If it's already an OpenAI model, return as-is
 	// Examples: "gpt-4o", "gpt-4-turbo", "o1-preview", "o1-mini"
-	if strings.HasPrefix(modelLower, "gpt-") || strings.HasPrefix(modelLower, "o1-") {
+	// Note: gpt-5.x models are also OpenAI models
+	if strings.HasPrefix(modelLower, "gpt-") || strings.HasPrefix(modelLower, "o1-") ||
+		strings.HasPrefix(modelLower, "codex-") || strings.Contains(modelLower, "-codex") {
 		return claudeModel
 	}
 
@@ -89,4 +92,28 @@ func MapClaudeModelToOpenAIWithConfig(claudeModel string, cfg *config.Config) st
 	// This ensures that unrecognized model names still get mapped to a valid model
 	// Examples: "unknown-model", "test-model" → cfg.BigModel (default: "gpt-4o")
 	return cfg.BigModel
+}
+
+// GetReasoningEffortForModel returns the reasoning effort for a specific model
+// based on the API config's per-model reasoning effort settings.
+// It falls back to the global ReasoningEffort if no specific setting is found.
+func GetReasoningEffortForModel(apiConfig *database.APIConfig, model string) string {
+	// Check which model category this is and return the corresponding reasoning effort
+	switch model {
+	case apiConfig.BigModel:
+		if apiConfig.BigModelReasoningEffort != "" {
+			return apiConfig.BigModelReasoningEffort
+		}
+	case apiConfig.MiddleModel:
+		if apiConfig.MiddleModelReasoningEffort != "" {
+			return apiConfig.MiddleModelReasoningEffort
+		}
+	case apiConfig.SmallModel:
+		if apiConfig.SmallModelReasoningEffort != "" {
+			return apiConfig.SmallModelReasoningEffort
+		}
+	}
+
+	// Fall back to global reasoning effort
+	return apiConfig.ReasoningEffort
 }

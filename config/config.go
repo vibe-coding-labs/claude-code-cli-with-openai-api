@@ -10,22 +10,24 @@ import (
 )
 
 type Config struct {
-	OpenAIAPIKey    string
-	OpenAIBaseURL   string
-	BigModel        string
-	MiddleModel     string
-	SmallModel      string
-	SupportedModels []string
-	MaxTokensLimit  int
-	RequestTimeout  int
-	RetryCount      int
-	AnthropicAPIKey string
-	AzureAPIVersion string
-	Host            string
-	Port            int
-	LogLevel        string
-	MinTokensLimit  int
-	CustomHeaders   map[string]string
+	OpenAIAPIKey         string
+	OpenAIBaseURL        string
+	BigModel             string
+	MiddleModel          string
+	SmallModel           string
+	SupportedModels      []string
+	MaxTokensLimit       int
+	RequestTimeout       int
+	RetryCount           int
+	ReasoningEffort      string // 思考级别: low, medium, high (o1/o3模型)
+	AnthropicAPIKey      string
+	AzureAPIVersion      string
+	Host                 string
+	Port                 int
+	LogLevel             string
+	MinTokensLimit       int
+	CustomHeaders        map[string]string
+	EnableRequestLogging bool
 }
 
 var GlobalConfig *Config
@@ -38,21 +40,22 @@ func LoadConfig() (*Config, error) {
 	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
 
 	config := &Config{
-		OpenAIAPIKey:    openAIAPIKey,
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		OpenAIBaseURL:   getEnvOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		AzureAPIVersion: os.Getenv("AZURE_API_VERSION"),
-		Host:            getEnvOrDefault("HOST", "0.0.0.0"),
-		// ⚠️ 严禁随意修改！后端固定端口54988，前端固定端口54989
-		Port:           getEnvAsInt("PORT", 54988),
-		LogLevel:       getEnvOrDefault("LOG_LEVEL", "INFO"),
-		MaxTokensLimit: getEnvAsInt("MAX_TOKENS_LIMIT", 4096),
-		MinTokensLimit: getEnvAsInt("MIN_TOKENS_LIMIT", 100),
-		RequestTimeout: getEnvAsInt("REQUEST_TIMEOUT", 300),
-		RetryCount:     getEnvAsInt("RETRY_COUNT", 10),
-		BigModel:       getEnvOrDefault("BIG_MODEL", "gpt-4o"),
-		SmallModel:     getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
-		CustomHeaders:  make(map[string]string),
+		OpenAIAPIKey:         openAIAPIKey,
+		AnthropicAPIKey:      os.Getenv("ANTHROPIC_API_KEY"),
+		OpenAIBaseURL:        getEnvOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		AzureAPIVersion:      os.Getenv("AZURE_API_VERSION"),
+		Host:                 getEnvOrDefault("HOST", "0.0.0.0"),
+		// 后端固定端口54988，前端固定端口54989
+		Port:                 getEnvAsInt("PORT", 54988),
+		LogLevel:             getEnvOrDefault("LOG_LEVEL", "INFO"),
+		MaxTokensLimit:       getEnvAsInt("MAX_TOKENS_LIMIT", 4096),
+		MinTokensLimit:       getEnvAsInt("MIN_TOKENS_LIMIT", 100),
+		RequestTimeout:       getEnvAsInt("REQUEST_TIMEOUT", 300),
+		RetryCount:           getEnvAsInt("RETRY_COUNT", 10),
+		BigModel:             getEnvOrDefault("BIG_MODEL", "gpt-4o"),
+		SmallModel:           getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
+		CustomHeaders:        make(map[string]string),
+		EnableRequestLogging: getEnvAsBool("ENABLE_REQUEST_LOGGING", false),
 	}
 
 	// Set middle model to big model if not specified
@@ -96,6 +99,18 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(valueStr)
 	if err != nil {
 		return defaultValue
 	}

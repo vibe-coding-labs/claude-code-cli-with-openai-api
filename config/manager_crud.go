@@ -34,6 +34,11 @@ func (cm *ConfigManager) CreateConfig(req *models.APIConfigRequest) (*models.API
 		UpdatedAt:       time.Now(),
 	}
 
+	// Generate Anthropic API Key if not provided
+	if config.AnthropicAPIKey == "" {
+		config.AnthropicAPIKey = uuid.New().String()
+	}
+
 	// Validate
 	if config.Name == "" {
 		return nil, fmt.Errorf("config name is required")

@@ -92,6 +92,7 @@ func (rh *DefaultRetryHandler) ExecuteWithRetry(ctx context.Context, fn func(con
 		}
 
 		// Calculate backoff delay
+		// attempt starts from 0, so first retry is attempt=1, use CalculateBackoff(0)=initialDelay
 		delay := rh.CalculateBackoff(attempt)
 		log.Printf("Retry attempt %d/%d after %v (error: %v)", attempt+1, rh.maxRetries, delay, err)
 
@@ -172,8 +173,14 @@ func (rh *DefaultRetryHandler) IsRetryableError(err error) bool {
 	return false
 }
 
-// CalculateBackoff calculates the backoff delay for a retry attempt
+// CalculateBackoff calculates the backoff delay for a retry attempt using exponential backoff
+// Formula: min(initialDelay * 2^retryCount, maxDelay)
+// Example with initialDelay=1s: 1s, 2s, 4s, 8s, 16s, 32s, 60s, 60s, ... (capped at 60s)
 func (rh *DefaultRetryHandler) CalculateBackoff(retryCount int) time.Duration {
+	if retryCount < 0 {
+		return 0
+	}
+
 	// Exponential backoff: initialDelay * 2^retryCount
 	delay := rh.initialDelay * time.Duration(1<<uint(retryCount))
 
@@ -218,17 +225,26 @@ func IsRetryableHTTPStatus(statusCode int) bool {
 }
 
 // RetryConfig holds retry configuration
+const (
+	DefaultMaxRetries     = 20               // 默认重试 20 次
+	MinRetryCount         = 3                // 最少重试 3 次
+	MaxRetryCount         = 50               // 最多重试 50 次
+	BaseBackoffDelay      = 1 * time.Second  // 基础退避 1 秒
+	MaxBackoffDelay       = 60 * time.Second // 最大退避 1 分钟
+)
+
+// RetryConfig holds retry configuration
 type RetryConfig struct {
 	MaxRetries   int
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
 }
 
-// DefaultRetryConfig returns default retry configuration
+// DefaultRetryConfig returns default retry configuration with exponential backoff
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:   3,
-		InitialDelay: 100 * time.Millisecond,
-		MaxDelay:     5 * time.Second,
+		MaxRetries:   DefaultMaxRetries,
+		InitialDelay: BaseBackoffDelay,
+		MaxDelay:     MaxBackoffDelay,
 	}
 }

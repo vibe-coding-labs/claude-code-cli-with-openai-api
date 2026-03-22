@@ -8,13 +8,14 @@ import (
 
 // StreamingState holds the state for streaming conversion
 type StreamingState struct {
-	mu               sync.Mutex
-	messageID        string
-	textBlockIndex   int
-	toolBlockCounter int
-	currentToolCalls map[int]*ToolCallState
-	finalStopReason  string
-	usage            models.ClaudeUsage
+	mu                   sync.Mutex
+	messageID            string
+	textBlockIndex       int
+	toolBlockCounter     int
+	hasSentThinkingBlock bool // Track if thinking block has been sent (for DeepSeek/gpt-5.x)
+	currentToolCalls     map[int]*ToolCallState
+	finalStopReason      string
+	usage                models.ClaudeUsage
 }
 
 // ToolCallState tracks the state of a tool call during streaming

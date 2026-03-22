@@ -15,6 +15,9 @@ import {
   Typography,
   Divider,
   DatePicker,
+  Select,
+  Row,
+  Col,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import axios from 'axios';
@@ -35,6 +38,10 @@ interface Config {
   max_tokens_limit: number;
   request_timeout: number;
   retry_count: number;
+  reasoning_effort?: string;
+  big_model_reasoning_effort?: string;
+  middle_model_reasoning_effort?: string;
+  small_model_reasoning_effort?: string;
   enabled: boolean;
   expires_at?: string;
 }
@@ -163,27 +170,78 @@ const ConfigEdit: React.FC = () => {
             name="big_model"
             label="大模型 (Opus)"
             rules={[{ required: true, message: '请输入大模型名称' }]}
-            tooltip="大模型映射配置用于将Claude Desktop/CLI请求的claude-opus-4-20250514模型转换为您指定的OpenAI模型。Claude Opus系列是Anthropic最强大的模型，适合复杂推理、长文本分析等高难度任务。您可以映射到OpenAI的高性能模型，如gpt-4o、gpt-4-turbo等。也可以映射到其他服务商的旗舰模型。模型名称必须与您的API服务支持的模型完全一致，否则调用会失败。建议选择性能强、上下文长度大的模型以保证使用体验。"
+            tooltip="大模型映射配置用于将Claude Desktop/CLI请求的claude-opus-4-20250514模型转换为您指定的OpenAI模型。Claude Opus系列是Anthropic最强大的模型，适合复杂推理、长文本分析等高难度任务。"
           >
-            <Input placeholder="gpt-4o" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="big_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Form.Item
             name="middle_model"
             label="中模型 (Sonnet)"
             rules={[{ required: true, message: '请输入中模型名称' }]}
-            tooltip="中模型映射配置用于将Claude Desktop/CLI请求的claude-sonnet-4-20250514模型转换为您指定的OpenAI模型。Claude Sonnet系列在性能和成本之间取得平衡，适合日常编程辅助、代码生成、文档编写等常规任务。您可以映射到gpt-4o、gpt-4等中高端模型，也可以根据成本考虑映射到gpt-3.5-turbo。模型选择建议：如果预算充足选择gpt-4o以获得最佳体验；如果注重性价比可选择gpt-3.5-turbo-16k等模型。确保模型名称准确无误。"
+            tooltip="中模型映射配置用于将Claude Desktop/CLI请求的claude-sonnet-4-20250514模型转换为您指定的OpenAI模型。Claude Sonnet系列在性能和成本之间取得平衡，适合日常编程辅助。"
           >
-            <Input placeholder="gpt-4o" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="middle_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Form.Item
             name="small_model"
             label="小模型 (Haiku)"
             rules={[{ required: true, message: '请输入小模型名称' }]}
-            tooltip="小模型映射配置用于将Claude Desktop/CLI请求的claude-haiku-4-20250514模型转换为您指定的OpenAI模型。Claude Haiku系列是轻量级快速模型，适合简单问答、代码补全、语法检查等低延迟场景。建议映射到gpt-4o-mini、gpt-3.5-turbo等经济型模型以控制成本。这类请求通常频繁但简单，选择响应速度快、价格低廉的模型即可满足需求。如果您的API服务有速率限制，小模型的低成本特性能让您获得更高的调用配额。注意验证模型在目标服务中的可用性。"
+            tooltip="小模型映射配置用于将Claude Desktop/CLI请求的claude-haiku-4-20250514模型转换为您指定的OpenAI模型。Claude Haiku系列是轻量级快速模型，适合简单问答等低延迟场景。"
           >
-            <Input placeholder="gpt-4o-mini" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o-mini" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="small_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Divider />
@@ -231,6 +289,27 @@ const ConfigEdit: React.FC = () => {
             tooltip="失败重试次数定义了当OpenAI API调用失败时，系统自动重试的次数。合理的重试机制能够：1) 提高成功率 - 应对网络抖动或API临时故障；2) 改善用户体验 - 避免因偶发错误导致请求失败；3) 节省成本 - 减少因临时问题导致的手动重试。建议值：稳定环境3次、不稳定网络5次、高可用需求5-10次。默认3次可以应对大多数场景。注意：设置过少可能导致偶发故障影响使用，设置过多则可能在API持续故障时增加响应延迟。每次重试之间会有短暂延迟（指数退避），最大支持100次重试。"
           >
             <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="默认为3次" />
+          </Form.Item>
+
+          <Divider />
+
+          <Title level={5}>默认思考级别</Title>
+          <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+            当某个模型没有单独设置思考级别时，将使用此默认配置。建议为每个模型单独设置以获得最佳效果。
+          </Paragraph>
+
+          <Form.Item
+            name="reasoning_effort"
+            label="默认思考级别 (Reasoning Effort)"
+            tooltip="默认思考级别用于控制o1/o3等推理模型的思考深度。当某个模型没有单独设置思考级别时，将使用此默认值。仅对支持reasoning_effort参数的模型有效（如OpenAI o1、o3系列）。"
+            help="可选，用于o1/o3等推理模型，作为默认值"
+          >
+            <Select placeholder="选择默认思考级别（可选）" allowClear style={{ width: '100%' }}>
+              <Select.Option value="">默认（不设置）</Select.Option>
+              <Select.Option value="low">Low - 快速响应</Select.Option>
+              <Select.Option value="medium">Medium - 平衡模式</Select.Option>
+              <Select.Option value="high">High - 深度思考</Select.Option>
+            </Select>
           </Form.Item>
 
           <Form.Item

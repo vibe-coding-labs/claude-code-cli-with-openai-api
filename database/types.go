@@ -20,6 +20,10 @@ type APIConfig struct {
 	MaxTokensLimit        int               `json:"max_tokens_limit"`
 	RequestTimeout        int               `json:"request_timeout"`
 	RetryCount            int               `json:"retry_count"` // 重试次数，默认3次，最大100次
+	ReasoningEffort       string            `json:"reasoning_effort,omitempty"` // 思考级别: low, medium, high (o1/o3模型) - 全局默认值
+	BigModelReasoningEffort    string     `json:"big_model_reasoning_effort,omitempty"`    // BigModel的思考级别
+	MiddleModelReasoningEffort string     `json:"middle_model_reasoning_effort,omitempty"` // MiddleModel的思考级别
+	SmallModelReasoningEffort  string     `json:"small_model_reasoning_effort,omitempty"`  // SmallModel的思考级别
 	AnthropicAPIKey       string            `json:"anthropic_api_key,omitempty"`
 	CustomHeaders         map[string]string `json:"custom_headers,omitempty"` // 自定义请求头
 	Enabled               bool              `json:"enabled"`
@@ -30,12 +34,14 @@ type APIConfig struct {
 
 // TokenStats represents token usage statistics
 type TokenStats struct {
-	ID           int64     `json:"id"`
-	ConfigID     string    `json:"config_id"`
-	UserID       int64     `json:"user_id"`
-	Model        string    `json:"model"`
-	InputTokens  int64     `json:"input_tokens"`
+	ID             int64     `json:"id"`
+	ConfigID       string    `json:"config_id"`
+	UserID         int64     `json:"user_id"`
+	Model          string    `json:"model"`
+	InputTokens    int64     `json:"input_tokens"`
 	OutputTokens int64     `json:"output_tokens"`
+	CacheReadTokens int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
 	TotalTokens  int64     `json:"total_tokens"`
 	RequestCount int64     `json:"request_count"`
 	ErrorCount   int64     `json:"error_count"`
@@ -50,6 +56,8 @@ type RequestLog struct {
 	Model           string    `json:"model"`
 	InputTokens     int       `json:"input_tokens"`
 	OutputTokens    int       `json:"output_tokens"`
+	CacheReadTokens int       `json:"cache_read_tokens"`
+	CacheWriteTokens int      `json:"cache_write_tokens"`
 	TotalTokens     int       `json:"total_tokens"`
 	DurationMs      int       `json:"duration_ms"`
 	Status          string    `json:"status"`

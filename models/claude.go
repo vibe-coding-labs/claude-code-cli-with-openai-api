@@ -21,7 +21,8 @@ type ClaudeMessagesRequest struct {
 }
 
 type ClaudeMetadata struct {
-	UserID string `json:"user_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type ClaudeThinking struct {
@@ -37,6 +38,7 @@ type ClaudeMessage struct {
 type ClaudeContentBlock struct {
 	Type      string                 `json:"type"`
 	Text      string                 `json:"text,omitempty"`
+	Thinking  string                 `json:"thinking,omitempty"` // For thinking content blocks
 	Source    interface{}            `json:"source,omitempty"`
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`

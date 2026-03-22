@@ -71,15 +71,15 @@ func CreateAPIConfig(config *APIConfig) error {
 	query := `
 		INSERT INTO api_configs (
 			id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
 		config.ID, config.Name, config.Description, config.UserID, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
+		config.RequestTimeout, config.RetryCount, config.ReasoningEffort, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
 	)
 
 	if err != nil {
@@ -93,7 +93,7 @@ func CreateAPIConfig(config *APIConfig) error {
 func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
 		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
@@ -104,7 +104,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	err := DB.QueryRow(query, id).Scan(
 		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort, &config.AnthropicAPIKey,
 		&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -154,9 +154,9 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	// Cache miss - query database
 	query := `
 		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			anthropic_api_key, enabled, created_at, updated_at
-		FROM api_configs 
+		FROM api_configs
 		WHERE anthropic_api_key = ? AND enabled = 1
 		LIMIT 1
 	`
@@ -166,7 +166,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	err := DB.QueryRow(query, apiKey).Scan(
 		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
+		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort, &config.AnthropicAPIKey,
 		&config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -252,7 +252,7 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
@@ -271,7 +271,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
+			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort, &config.AnthropicAPIKey,
 			&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -310,7 +310,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count,
+			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs
 		WHERE user_id = ?
@@ -331,7 +331,7 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.AnthropicAPIKey,
+			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort, &config.AnthropicAPIKey,
 			&config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -403,14 +403,14 @@ func UpdateAPIConfig(config *APIConfig) error {
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
 			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, max_tokens_limit = ?,
-			request_timeout = ?, retry_count = ?, anthropic_api_key = ?, enabled = ?, expires_at = ?, updated_at = datetime('now')
+			request_timeout = ?, retry_count = ?, reasoning_effort = ?, anthropic_api_key = ?, enabled = ?, expires_at = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
 
 	_, err = DB.Exec(query,
 		config.Name, config.Description, encrypted, config.OpenAIBaseURL,
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
-		config.RequestTimeout, config.RetryCount, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt, config.ID,
+		config.RequestTimeout, config.RetryCount, config.ReasoningEffort, config.AnthropicAPIKey, config.Enabled, config.ExpiresAt, config.ID,
 	)
 
 	if err != nil {
@@ -465,29 +465,31 @@ func updateTokenStats(log *RequestLog) error {
 	}
 
 	if err == sql.ErrNoRows {
-		// Create new stats record
+		// Create new stats record with cache tokens
 		insertQuery := `
 			INSERT INTO token_stats (
-				config_id, user_id, model, input_tokens, output_tokens, total_tokens,
+				config_id, user_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
 				request_count, error_count, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))
 		`
 		_, err = DB.Exec(insertQuery,
-			log.ConfigID, log.UserID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens, errorCount,
+			log.ConfigID, log.UserID, log.Model, log.InputTokens, log.OutputTokens, log.CacheReadTokens, log.CacheWriteTokens, log.TotalTokens, errorCount,
 		)
 	} else if err == nil {
-		// Update existing stats record
+		// Update existing stats record with cache tokens
 		updateQuery := `
 			UPDATE token_stats SET
 				input_tokens = input_tokens + ?,
 				output_tokens = output_tokens + ?,
+				cache_read_tokens = cache_read_tokens + ?,
+				cache_write_tokens = cache_write_tokens + ?,
 				total_tokens = total_tokens + ?,
 				request_count = request_count + 1,
 				error_count = error_count + ?
 			WHERE id = ?
 		`
 		_, err = DB.Exec(updateQuery,
-			log.InputTokens, log.OutputTokens, log.TotalTokens, errorCount, id,
+			log.InputTokens, log.OutputTokens, log.CacheReadTokens, log.CacheWriteTokens, log.TotalTokens, errorCount, id,
 		)
 	}
 

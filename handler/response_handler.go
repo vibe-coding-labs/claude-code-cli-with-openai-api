@@ -48,6 +48,8 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	claudeReq *models.ClaudeMessagesRequest,
 	configID string,
 	startTime time.Time,
+	sessionHandler *SessionHandler,
+	sessionID string,
 ) {
 	fmt.Printf("\n🌊 [Streaming Mode]\n")
 	fmt.Printf("   Initiating streaming request to upstream API\n")
@@ -68,6 +70,11 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	// 记录请求日志（使用收集的流式响应数据）
 	if streamResult != nil {
 		r.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
+
+		// 保存消息到会话
+		if sessionHandler != nil && sessionID != "" {
+			r.SaveMessagesToSession(sessionHandler, sessionID, claudeReq, streamResult.Content, streamResult.InputTokens, streamResult.OutputTokens)
+		}
 	} else {
 		// 如果streamResult为nil，说明发生了错误，记录基本信息
 		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
@@ -82,6 +89,8 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	claudeReq *models.ClaudeMessagesRequest,
 	configID string,
 	startTime time.Time,
+	sessionHandler *SessionHandler,
+	sessionID string,
 ) {
 	fmt.Printf("\n📝 [Non-Streaming Mode]\n")
 	fmt.Printf("   Sending non-streaming request to upstream API\n")
@@ -119,6 +128,19 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 
 	c.JSON(http.StatusOK, claudeResp)
 	fmt.Printf("✅ [Non-Streaming] Response sent successfully\n")
+
+	// 保存消息到会话
+	if sessionHandler != nil && sessionID != "" {
+		// 提取助手回复内容
+		assistantContent := ""
+		if len(claudeResp.Content) > 0 {
+			if claudeResp.Content[0].Type == "text" {
+				assistantContent = claudeResp.Content[0].Text
+			}
+		}
+		r.SaveMessagesToSession(sessionHandler, sessionID, claudeReq, assistantContent,
+			claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens)
+	}
 }
 
 // logRequestWithStreamingDetails 记录流式请求日志到数据库
@@ -310,8 +332,8 @@ func (r *ResponseHandler) logRequestWithDetails(
 	}
 }
 
-// sendErrorResponse 发送错误响应
-func (r *ResponseHandler) sendErrorResponse(c *gin.Context, err error) {
+// SendErrorResponse 发送错误响应
+func (r *ResponseHandler) SendErrorResponse(c *gin.Context, err error) {
 	errorMsg := err.Error()
 	statusCode := http.StatusInternalServerError
 
@@ -342,4 +364,62 @@ func (r *ResponseHandler) sendErrorResponse(c *gin.Context, err error) {
 			"message": classifiedError,
 		},
 	})
+}
+
+// sendErrorResponse 发送错误响应（向后兼容）
+func (r *ResponseHandler) sendErrorResponse(c *gin.Context, err error) {
+	r.SendErrorResponse(c, err)
+}
+
+// SaveMessagesToSession 保存用户消息和助手回复到会话
+func (r *ResponseHandler) SaveMessagesToSession(
+	sessionHandler *SessionHandler,
+	sessionID string,
+	claudeReq *models.ClaudeMessagesRequest,
+	assistantContent string,
+	inputTokens int,
+	outputTokens int,
+) {
+	if sessionHandler == nil || sessionID == "" {
+		return
+	}
+
+	logger := utils.GetLogger()
+
+	// 保存用户消息（最后一条）
+	var userMessages []models.ClaudeMessage
+	for _, msg := range claudeReq.Messages {
+		if msg.Role == "user" {
+			userMessages = append(userMessages, msg)
+		}
+	}
+
+	// 获取最后一条用户消息
+	if len(userMessages) > 0 {
+		lastUserMsg := []models.ClaudeMessage{userMessages[len(userMessages)-1]}
+		usage := &models.ClaudeUsage{
+			InputTokens: inputTokens,
+		}
+		if err := sessionHandler.SaveMessages(sessionID, lastUserMsg, usage); err != nil {
+			logger.Warn("  Failed to save user message to session: %v", err)
+		} else {
+			logger.Debug("  Saved user message to session")
+		}
+	}
+
+	// 保存助手回复
+	if assistantContent != "" {
+		assistantMsg := []models.ClaudeMessage{{
+			Role:    "assistant",
+			Content: assistantContent,
+		}}
+		usage := &models.ClaudeUsage{
+			OutputTokens: outputTokens,
+		}
+		if err := sessionHandler.SaveMessages(sessionID, assistantMsg, usage); err != nil {
+			logger.Warn("  Failed to save assistant message to session: %v", err)
+		} else {
+			logger.Debug("  Saved assistant message to session")
+		}
+	}
 }

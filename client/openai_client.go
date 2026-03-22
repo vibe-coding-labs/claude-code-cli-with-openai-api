@@ -56,6 +56,83 @@ func ClassifyOpenAIError(errorDetail string) string {
 	return errorDetail
 }
 
+// RetryConfig holds retry configuration
+const (
+	DefaultRetryCount     = 20                          // 默认重试 20 次
+	MinRetryCount         = 3                           // 最少重试 3 次
+	MaxRetryCount         = 50                          // 最多重试 50 次
+	BaseBackoffDelay      = 1 * time.Second             // 基础退避 1 秒
+	MaxBackoffDelay       = 60 * time.Second            // 最大退避 1 分钟
+)
+
+// CalculateBackoff calculates exponential backoff with cap
+// Formula: min(BaseBackoffDelay * 2^attempt, MaxBackoffDelay)
+func CalculateBackoff(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 0
+	}
+	// Exponential backoff: BaseDelay * 2^(attempt-1)
+	backoff := BaseBackoffDelay * time.Duration(1<<uint(attempt-1))
+	if backoff > MaxBackoffDelay {
+		backoff = MaxBackoffDelay
+	}
+	return backoff
+}
+
+// IsRetryableError checks if an error is retryable
+func IsRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Context errors are not retryable
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+
+	// Network errors are retryable
+	networkErrors := []string{
+		"connection refused",
+		"connection reset",
+		"connection timeout",
+		"no such host",
+		"network is unreachable",
+		"broken pipe",
+		"i/o timeout",
+		"temporary failure",
+		"dns error",
+		"tls handshake timeout",
+	}
+	for _, ne := range networkErrors {
+		if strings.Contains(errStr, ne) {
+			return true
+		}
+	}
+
+	// HTTP status codes that are retryable
+	// 429 (rate limit), 5xx errors, 408 (timeout), 406, 502-504
+	statusCodes := []int{408, 429, 500, 502, 503, 504, 506, 507, 508, 509, 510, 511}
+	for _, code := range statusCodes {
+		if strings.Contains(errStr, fmt.Sprintf("status %d", code)) {
+			return true
+		}
+	}
+
+	// Circuit breaker open is retryable (will try different node)
+	if strings.Contains(errStr, "circuit breaker is open") {
+		return true
+	}
+
+	// Empty choices or decode errors are retryable
+	if strings.Contains(errStr, "empty choices") || strings.Contains(errStr, "decode response") {
+		return true
+	}
+
+	return false
+}
+
 type OpenAIClient struct {
 	APIKey        string
 	BaseURL       string
@@ -68,11 +145,11 @@ type OpenAIClient struct {
 
 func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 	retryCount := cfg.RetryCount
-	if retryCount <= 0 {
-		retryCount = 3
+	if retryCount < MinRetryCount {
+		retryCount = DefaultRetryCount
 	}
-	if retryCount > 100 {
-		retryCount = 100
+	if retryCount > MaxRetryCount {
+		retryCount = MaxRetryCount
 	}
 
 	// Create HTTP client with optimized transport for connection pooling
@@ -140,15 +217,8 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		}
 
 		if attempt > 0 {
-			// Calculate exponential backoff with longer delays for unstable APIs
-			// Base delay: 3 seconds, exponential growth: 3s, 6s, 12s, 24s, 48s...
-			// Maximum delay: 30 seconds to avoid excessive waiting
-			baseDelay := 3 * time.Second
-			backoffDuration := time.Duration(1<<uint(attempt-1)) * baseDelay
-			maxBackoff := 30 * time.Second
-			if backoffDuration > maxBackoff {
-				backoffDuration = maxBackoff
-			}
+			// Calculate exponential backoff with cap at MaxBackoffDelay (1 minute)
+			backoffDuration := CalculateBackoff(attempt)
 
 			// Don't wait if it would exceed the deadline
 			if time.Now().Add(backoffDuration).After(deadline) {
@@ -232,6 +302,13 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		}
 
 		// Success!
+		// Read raw response body for debugging
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		logger.Info("  Raw response (first 500 chars): %s", string(bodyBytes[:min(500, len(bodyBytes))]))
+		// Restore body for JSON decoder
+		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 		var openAIResp models.OpenAIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
 			resp.Body.Close()
@@ -343,15 +420,8 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		}
 
 		if attempt > 0 {
-			// Calculate exponential backoff with longer delays for unstable APIs
-			// Base delay: 3 seconds, exponential growth: 3s, 6s, 12s, 24s, 48s...
-			// Maximum delay: 30 seconds to avoid excessive waiting
-			baseDelay := 3 * time.Second
-			backoffDuration := time.Duration(1<<uint(attempt-1)) * baseDelay
-			maxBackoff := 30 * time.Second
-			if backoffDuration > maxBackoff {
-				backoffDuration = maxBackoff
-			}
+			// Calculate exponential backoff with cap at MaxBackoffDelay (1 minute)
+			backoffDuration := CalculateBackoff(attempt)
 
 			// Don't wait if it would exceed the deadline
 			if time.Now().Add(backoffDuration).After(deadline) {

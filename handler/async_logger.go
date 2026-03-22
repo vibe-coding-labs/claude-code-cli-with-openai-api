@@ -12,16 +12,17 @@ import (
 
 // AsyncLogger handles asynchronous batch logging
 type AsyncLogger struct {
-	buffer          []*database.LoadBalancerRequestLog
-	bufferSize      int
-	flushInterval   time.Duration
-	logChan         chan *database.LoadBalancerRequestLog
-	stopChan        chan struct{}
-	wg              sync.WaitGroup
-	mu              sync.Mutex
-	running         bool
-	droppedLogs     int64
-	processedLogs   int64
+	buffer           []*database.LoadBalancerRequestLog
+	bufferSize       int
+	flushInterval    time.Duration
+	logChan          chan *database.LoadBalancerRequestLog
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	mu               sync.Mutex
+	running          bool
+	enabled          bool // 请求日志开关
+droppedLogs      int64
+	processedLogs    int64
 }
 
 // AsyncLoggerConfig holds configuration for async logger
@@ -29,14 +30,16 @@ type AsyncLoggerConfig struct {
 	BufferSize    int
 	FlushInterval time.Duration
 	ChannelSize   int
+	Enabled       bool // 请求日志开关
 }
 
 // DefaultAsyncLoggerConfig returns default configuration
 func DefaultAsyncLoggerConfig() AsyncLoggerConfig {
 	return AsyncLoggerConfig{
-		BufferSize:    100,              // Batch size
-		FlushInterval: 5 * time.Second,  // Flush every 5 seconds
-		ChannelSize:   10000,            // Channel buffer size
+		BufferSize:    100,             // Batch size
+		FlushInterval: 5 * time.Second, // Flush every 5 seconds
+		ChannelSize:   10000,           // Channel buffer size
+		Enabled:       false,           // 默认关闭请求日志
 	}
 }
 
@@ -48,6 +51,7 @@ func NewAsyncLogger(config AsyncLoggerConfig) *AsyncLogger {
 		flushInterval: config.FlushInterval,
 		logChan:       make(chan *database.LoadBalancerRequestLog, config.ChannelSize),
 		stopChan:      make(chan struct{}),
+		enabled:       config.Enabled,
 	}
 }
 
@@ -93,6 +97,11 @@ func (al *AsyncLogger) Stop() error {
 
 // Log queues a log entry for async processing
 func (al *AsyncLogger) Log(log *database.LoadBalancerRequestLog) {
+	// 如果日志记录被禁用，直接返回
+	if !al.enabled {
+		return
+	}
+
 	select {
 	case al.logChan <- log:
 		// Successfully queued
@@ -101,7 +110,7 @@ func (al *AsyncLogger) Log(log *database.LoadBalancerRequestLog) {
 		al.mu.Lock()
 		al.droppedLogs++
 		al.mu.Unlock()
-		
+
 		logger := utils.GetLogger()
 		logger.Warn("Async logger channel full, dropping log entry")
 	}

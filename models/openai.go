@@ -3,16 +3,18 @@ package models
 // OpenAI API Models
 
 type OpenAIRequest struct {
-	Model         string          `json:"model"`
-	Messages      []OpenAIMessage `json:"messages"`
-	MaxTokens     int             `json:"max_tokens"`
-	Temperature   float64         `json:"temperature,omitempty"`
-	TopP          *float64        `json:"top_p,omitempty"`
-	Stream        bool            `json:"stream,omitempty"`
-	StreamOptions *StreamOptions  `json:"stream_options,omitempty"`
-	Stop          []string        `json:"stop,omitempty"`
-	Tools         []OpenAITool    `json:"tools,omitempty"`
-	ToolChoice    interface{}     `json:"tool_choice,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []OpenAIMessage `json:"messages"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"` // o1/o3 models
+	Temperature         float64         `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
+	Stream              bool            `json:"stream,omitempty"`
+	StreamOptions       *StreamOptions  `json:"stream_options,omitempty"`
+	Stop                interface{}     `json:"stop,omitempty"` // string or []string
+	Tools               []OpenAITool    `json:"tools,omitempty"`
+	ToolChoice          interface{}     `json:"tool_choice,omitempty"`
+	ReasoningEffort     string          `json:"reasoning_effort,omitempty"` // o1/o3 models reasoning effort: low, medium, high
 }
 
 type StreamOptions struct {
@@ -20,10 +22,11 @@ type StreamOptions struct {
 }
 
 type OpenAIMessage struct {
-	Role       string           `json:"role"`
-	Content    interface{}      `json:"content,omitempty"`
-	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          interface{}      `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"` // DeepSeek/gpt-5.x thinking content
+	ToolCalls        []OpenAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
 }
 
 type OpenAIMessageContent struct {

@@ -16,7 +16,47 @@ import (
 )
 
 // ConvertOpenAIToClaudeResponse converts OpenAI response to Claude format
+// DEPRECATED: Use GlobalFactory.ConvertOpenAIToClaude instead
 func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
+	// Convert original request to JSON for factory
+	reqBody, err := json.Marshal(originalReq)
+	if err != nil {
+		// Fallback to legacy conversion
+		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+	}
+
+	// Parse the original request to get InternalRequest
+	internalReq, err := GlobalFactory.ConvertClaudeToInternal(reqBody)
+	if err != nil {
+		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+	}
+
+	// Convert OpenAI response to JSON
+	respBody, err := json.Marshal(openAIResp)
+	if err != nil {
+		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+	}
+
+	// Use factory to convert: OpenAI -> Internal -> Claude
+	claudeBody, _, err := GlobalFactory.ConvertOpenAIToClaude(respBody, internalReq)
+	if err != nil {
+		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+	}
+
+	// Unmarshal to Claude response
+	var claudeResp models.ClaudeResponse
+	if err := json.Unmarshal(claudeBody, &claudeResp); err != nil {
+		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+	}
+
+	// Ensure model is preserved from original request
+	claudeResp.Model = originalReq.Model
+
+	return &claudeResp
+}
+
+// legacyConvertOpenAIToClaude is the original conversion logic as fallback
+func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
 	if openAIResp == nil {
 		return nil
 	}
@@ -30,6 +70,14 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 
 	// Build Claude content blocks
 	contentBlocks := []models.ClaudeContentBlock{}
+
+	// Add reasoning/thinking content first (if present)
+	if message.ReasoningContent != "" {
+		contentBlocks = append(contentBlocks, models.ClaudeContentBlock{
+			Type:     "thinking",
+			Thinking: message.ReasoningContent,
+		})
+	}
 
 	// Add text content
 	if message.Content != nil {
@@ -52,9 +100,16 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 				}
 			}
 
+			// 转换工具调用ID格式: fc_ -> call_
+			// Claude期望call_前缀，OpenAI API使用fc_前缀
+			toolCallID := toolCall.ID
+			if strings.HasPrefix(toolCallID, "fc_") {
+				toolCallID = "call_" + toolCallID[3:]
+			}
+
 			contentBlocks = append(contentBlocks, models.ClaudeContentBlock{
 				Type:  models.ContentToolUse,
-				ID:    toolCall.ID,
+				ID:    toolCallID,
 				Name:  toolCall.Function.Name,
 				Input: input,
 			})
@@ -226,6 +281,30 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 					continue
 				}
 
+				// Handle reasoning/thinking delta (for DeepSeek/gpt-5.x)
+				if delta.ReasoningContent != "" {
+					// First time seeing reasoning content, send thinking block start
+					if !state.hasSentThinkingBlock {
+						state.hasSentThinkingBlock = true
+						sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
+							"type":  models.EventContentBlockStart,
+							"index": 0,
+							"content_block": map[string]interface{}{
+								"type":     "thinking",
+								"thinking": "",
+							},
+						})
+					}
+					sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
+						"type":  models.EventContentBlockDelta,
+						"index": 0,
+						"delta": map[string]interface{}{
+							"type":     "thinking_delta",
+							"thinking": delta.ReasoningContent,
+						},
+					})
+				}
+
 				// Handle text delta
 				if delta.Content != nil {
 					if textContent, ok := delta.Content.(string); ok && textContent != "" {
@@ -374,7 +453,11 @@ func processToolCallDelta(c *gin.Context, state *StreamingState, tcDelta *models
 
 	// Update tool call ID
 	if tcDelta.ID != "" {
+		// 转换工具调用ID格式: fc_ -> call_
 		toolCall.ID = tcDelta.ID
+		if strings.HasPrefix(toolCall.ID, "fc_") {
+			toolCall.ID = "call_" + toolCall.ID[3:]
+		}
 	}
 
 	// Update function name

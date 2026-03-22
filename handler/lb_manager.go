@@ -346,9 +346,9 @@ func DefaultLoadBalancerManagerConfig() LoadBalancerManagerConfig {
 		HealthCheckTimeout:    5 * time.Second,
 		FailureThreshold:      3,
 		RecoveryThreshold:     2,
-		MaxRetries:            3,
-		InitialRetryDelay:     100 * time.Millisecond,
-		MaxRetryDelay:         5 * time.Second,
+		MaxRetries:            20,                // 最多重试 20 次
+		InitialRetryDelay:     1 * time.Second,   // 基础退避 1 秒
+		MaxRetryDelay:         60 * time.Second,  // 最大退避 1 分钟
 		CircuitBreakerEnabled: true,
 		ErrorRateThreshold:    0.5,
 		CircuitBreakerWindow:  60 * time.Second,

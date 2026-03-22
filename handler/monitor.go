@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 )
 
@@ -83,6 +84,11 @@ func (m *DefaultMonitor) Stop() error {
 
 // RecordRequest records a request log asynchronously
 func (m *DefaultMonitor) RecordRequest(log *database.LoadBalancerRequestLog) {
+	// 如果请求日志记录被禁用，直接返回
+	if config.GlobalConfig != nil && !config.GlobalConfig.EnableRequestLogging {
+		return
+	}
+
 	select {
 	case m.logChan <- log:
 		// Successfully queued
