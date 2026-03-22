@@ -374,8 +374,8 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 }
 
 // handleMessageWithLoadBalancer 处理通过负载均衡器的消息请求
-func (h *Handler) handleMessageWithLoadBalancer(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager) {
-	h.handleMessageWithConfigAndManager(c, dbConfig, lbManager)
+func (h *Handler) handleMessageWithLoadBalancer(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager, betaHeaders []string) {
+	h.handleMessageWithConfigAndManager(c, dbConfig, lbManager, betaHeaders)
 }
 
 // executeMessageRequestWithConfig 执行消息请求，返回 error 以便支持重试机制
@@ -542,9 +542,11 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		if forceNonStream {
 			// 工具+流式：使用非流式请求，但包装成SSE流返回
 			logger.Info("  Using non-stream request with SSE wrapper for tool calls")
-			h.handleNonStreamAsStream(c, targetClient, openAIReq, &req, configID, startTime, sessionID)
+			h.handleNonStreamAsStream(c, targetClient, openAIReq, &req, configID, startTime, sessionID, betaHeaders)
 		} else {
 			// 普通流式响应
+			// Set beta headers for upstream request
+			targetClient.BetaHeaders = betaHeaders
 			reader, err := targetClient.CreateChatCompletionStream(openAIReq)
 			if err != nil {
 				logger.Error("← [executeMessageRequestWithConfig] Stream creation failed: %v", err)
@@ -569,6 +571,8 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		}
 	} else {
 		// 非流式响应
+		// Set beta headers for upstream request
+		targetClient.BetaHeaders = betaHeaders
 		openAIResp, err := targetClient.CreateChatCompletion(openAIReq)
 		if err != nil {
 			logger.Error("← [executeMessageRequestWithConfig] Request failed: %v", err)
@@ -610,7 +614,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 }
 
 // handleMessageWithConfigAndManager 处理消息请求的核心逻辑（支持负载均衡器管理器）
-func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager) {
+func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager, betaHeaders []string) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 	logger.Info("→ [handleMessageWithConfig] Processing message request")
@@ -770,7 +774,7 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 		if forceNonStream {
 			// 工具+流式：使用非流式请求，但包装成SSE流返回
 			logger.Info("  Using non-stream request with SSE wrapper for tool calls")
-			h.handleNonStreamAsStream(c, targetClient, openAIReq, &req, configID, startTime, sessionID)
+			h.handleNonStreamAsStream(c, targetClient, openAIReq, &req, configID, startTime, sessionID, betaHeaders)
 		} else {
 			h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime, h.sessionHandler, sessionID)
 		}
@@ -912,8 +916,12 @@ func (h *Handler) handleNonStreamAsStream(
 	configID string,
 	startTime time.Time,
 	sessionID string,
+	betaHeaders []string,
 ) {
 	logger := utils.GetLogger()
+
+	// Set beta headers for upstream request
+	targetClient.BetaHeaders = betaHeaders
 
 	// 执行非流式请求
 	openAIResp, err := targetClient.CreateChatCompletion(openAIReq)

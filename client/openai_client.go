@@ -138,6 +138,7 @@ type OpenAIClient struct {
 	BaseURL       string
 	Timeout       time.Duration
 	CustomHeaders map[string]string
+	BetaHeaders   []string // Beta headers for upstream API (e.g., anthropic-beta)
 	APIVersion    string
 	RetryCount    int // 重试次数
 	httpClient    *http.Client
@@ -253,6 +254,11 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		// Add custom headers
 		for key, value := range c.CustomHeaders {
 			req.Header.Set(key, value)
+		}
+
+		// Add beta headers (e.g., anthropic-beta)
+		for _, betaHeader := range c.BetaHeaders {
+			req.Header.Add("anthropic-beta", betaHeader)
 		}
 
 		if attempt == 0 {
@@ -455,6 +461,11 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		// Add custom headers
 		for key, value := range c.CustomHeaders {
 			req.Header.Set(key, value)
+		}
+
+		// Add beta headers (e.g., anthropic-beta)
+		for _, betaHeader := range c.BetaHeaders {
+			req.Header.Add("anthropic-beta", betaHeader)
 		}
 
 		if attempt == 0 {
