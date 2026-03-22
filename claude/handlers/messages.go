@@ -50,7 +50,7 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 	oldReq := convertToOldFormat(&req)
 
 	// 转换为OpenAI格式
-	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(oldReq, h.config)
+	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(oldReq, h.config, nil)
 
 	// 处理响应
 	if req.Stream {

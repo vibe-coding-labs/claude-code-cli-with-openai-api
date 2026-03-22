@@ -10,12 +10,12 @@ import (
 // ConvertClaudeToOpenAI converts a Claude API request to OpenAI format
 // DEPRECATED: Use GlobalFactory.ConvertClaudeToOpenAI instead
 func ConvertClaudeToOpenAI(claudeReq *models.ClaudeMessagesRequest) *models.OpenAIRequest {
-	return ConvertClaudeToOpenAIWithConfig(claudeReq, config.GlobalConfig)
+	return ConvertClaudeToOpenAIWithConfig(claudeReq, config.GlobalConfig, nil)
 }
 
 // ConvertClaudeToOpenAIWithConfig converts a Claude API request to OpenAI format using specific config
 // This function now uses the new converter architecture internally
-func ConvertClaudeToOpenAIWithConfig(claudeReq *models.ClaudeMessagesRequest, cfg *config.Config) *models.OpenAIRequest {
+func ConvertClaudeToOpenAIWithConfig(claudeReq *models.ClaudeMessagesRequest, cfg *config.Config, betaHeaders []string) *models.OpenAIRequest {
 	// Use the new converter architecture
 	factory := GlobalFactory
 	factory.SetOpenAIConfig(cfg)
@@ -33,6 +33,9 @@ func ConvertClaudeToOpenAIWithConfig(claudeReq *models.ClaudeMessagesRequest, cf
 		// Fallback: try direct conversion
 		return legacyConvert(claudeReq, cfg)
 	}
+
+	// Store beta headers in internal request for upstream propagation
+	internalReq.BetaHeaders = betaHeaders
 
 	// Store internal request in context for later use (if needed)
 	_ = internalReq

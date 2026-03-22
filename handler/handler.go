@@ -207,7 +207,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 			}
 
 			// 执行请求
-			err := h.executeMessageRequestWithConfig(c, config, lbManager)
+			err := h.executeMessageRequestWithConfig(c, config, lbManager, betaHeaders)
 			if err != nil {
 				lastErr = err
 				return err
@@ -251,7 +251,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	h.handleMessageWithConfig(c, dbConfig)
+	h.handleMessageWithConfig(c, dbConfig, betaHeaders)
 }
 
 // maskAPIKey 掩码 API key 用于日志
@@ -266,6 +266,14 @@ func maskAPIKey(key string) string {
 func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
+
+	// 提取 beta headers
+	betaHeaders := extractBetaHeaders(c)
+	if isClaudeCode(c) {
+		logger.Debug("  Detected Claude Code client")
+		betaHeaders = appendDefaultBetaHeaders(betaHeaders)
+	}
+	logger.Debug("  Beta headers: %v", betaHeaders)
 
 	configID := c.Param("id")
 	logger.Info("→ [CreateMessageWithConfig] Request received")
@@ -311,11 +319,11 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 		return
 	}
 
-	h.handleMessageWithConfig(c, dbConfig)
+	h.handleMessageWithConfig(c, dbConfig, betaHeaders)
 }
 
 // handleMessageWithConfig 处理消息请求的核心逻辑（支持重试）
-func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig) {
+func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig, betaHeaders []string) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 
@@ -337,7 +345,7 @@ func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.API
 		}
 
 		// 尝试执行请求
-		err := h.executeMessageRequestWithConfig(c, dbConfig, nil)
+		err := h.executeMessageRequestWithConfig(c, dbConfig, nil, betaHeaders)
 		if err == nil {
 			// 成功
 			if attempt > 0 {
@@ -371,7 +379,7 @@ func (h *Handler) handleMessageWithLoadBalancer(c *gin.Context, dbConfig *databa
 }
 
 // executeMessageRequestWithConfig 执行消息请求，返回 error 以便支持重试机制
-func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager) error {
+func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *database.APIConfig, lbManager *LoadBalancerManager, betaHeaders []string) error {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 	logger.Info("→ [executeMessageRequestWithConfig] Processing message request with config: %s", dbConfig.ID)
@@ -488,7 +496,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel)
 
-	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig)
+	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig, betaHeaders)
 
 	// 检查是否包含工具调用
 	hasTools := len(req.Tools) > 0
@@ -718,7 +726,7 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s, ReasoningEffort=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel, targetConfig.ReasoningEffort)
 
-	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig)
+	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig, nil)
 
 	// 检查是否包含工具调用
 	hasTools := len(req.Tools) > 0
