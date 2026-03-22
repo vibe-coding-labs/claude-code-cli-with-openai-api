@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -273,8 +274,9 @@ func (tm *tenantManager) GetTenantConfig(ctx context.Context, tenantID string) (
 
 	// Parse allowed models JSON
 	if allowedModelsJSON.Valid && allowedModelsJSON.String != "" {
-		// Simple JSON array parsing (could use json.Unmarshal for more complex cases)
-		config.AllowedModels = []string{} // TODO: Parse JSON array
+		if err := json.Unmarshal([]byte(allowedModelsJSON.String), &config.AllowedModels); err != nil {
+			config.AllowedModels = []string{}
+		}
 	}
 
 	return config, nil
@@ -291,7 +293,10 @@ func (tm *tenantManager) UpdateTenantConfig(ctx context.Context, config *databas
 	config.UpdatedAt = time.Now()
 
 	// Convert allowed models to JSON
-	allowedModelsJSON := "" // TODO: Convert to JSON array
+	allowedModelsJSON, err := json.Marshal(config.AllowedModels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal allowed models: %w", err)
+	}
 
 	// Update config
 	query := `
@@ -301,7 +306,7 @@ func (tm *tenantManager) UpdateTenantConfig(ctx context.Context, config *databas
 		WHERE tenant_id = ?
 	`
 	result, err := tm.db.ExecContext(ctx, query,
-		allowedModelsJSON, config.DefaultModel, config.CustomRateLimits,
+		string(allowedModelsJSON), config.DefaultModel, config.CustomRateLimits,
 		config.RequireHMAC, config.WebhookURL, config.AlertEmail,
 		config.UpdatedAt, config.TenantID)
 	if err != nil {
@@ -327,7 +332,10 @@ func (tm *tenantManager) createTenantConfig(ctx context.Context, config *databas
 	}
 
 	// Convert allowed models to JSON
-	allowedModelsJSON := "" // TODO: Convert to JSON array
+	allowedModelsJSON, err := json.Marshal(config.AllowedModels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal allowed models: %w", err)
+	}
 
 	// Insert config
 	query := `
@@ -336,8 +344,8 @@ func (tm *tenantManager) createTenantConfig(ctx context.Context, config *databas
 		                           alert_email, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := tm.db.ExecContext(ctx, query,
-		config.TenantID, allowedModelsJSON, config.DefaultModel,
+	_, err = tm.db.ExecContext(ctx, query,
+		config.TenantID, string(allowedModelsJSON), config.DefaultModel,
 		config.CustomRateLimits, config.RequireHMAC, config.WebhookURL,
 		config.AlertEmail, config.CreatedAt, config.UpdatedAt)
 	if err != nil {

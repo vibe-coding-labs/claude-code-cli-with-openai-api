@@ -17,6 +17,10 @@ import LoadBalancerEditor from './components/LoadBalancerEditor';
 import LoadBalancerDetail from './components/LoadBalancerDetail';
 import UserList from './components/UserList';
 import UserUsage from './components/UserUsage';
+import TenantList from './components/TenantList';
+import TenantCreate from './components/TenantCreate';
+import TenantDetail from './components/TenantDetail';
+import AuditLogViewer from './components/AuditLogViewer';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
@@ -50,6 +54,16 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             key: '/ui/users',
             icon: <SettingOutlined />,
             label: <Link to="/ui/users">用户管理</Link>,
+          },
+          {
+            key: '/ui/tenants',
+            icon: <ClusterOutlined />,
+            label: <Link to="/ui/tenants">租户管理</Link>,
+          },
+          {
+            key: '/ui/audit-logs',
+            icon: <SettingOutlined />,
+            label: <Link to="/ui/audit-logs">审计日志</Link>,
           },
         ]
       : []),
@@ -129,6 +143,10 @@ const App: React.FC = () => {
               <Route path="load-balancers/:id/edit" element={<ProtectedRoute><LoadBalancerEditor /></ProtectedRoute>} />
               <Route path="users" element={<ProtectedRoute><UserList /></ProtectedRoute>} />
               <Route path="users/:id/usage" element={<ProtectedRoute><UserUsage /></ProtectedRoute>} />
+              <Route path="tenants" element={<ProtectedRoute><TenantList /></ProtectedRoute>} />
+              <Route path="tenants/create" element={<ProtectedRoute><TenantCreate /></ProtectedRoute>} />
+              <Route path="tenants/:id" element={<ProtectedRoute><TenantDetail /></ProtectedRoute>} />
+              <Route path="audit-logs" element={<ProtectedRoute><AuditLogViewer /></ProtectedRoute>} />
             </Routes>
           </AppLayout>
         } />
