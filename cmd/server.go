@@ -111,6 +111,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Initialize security components
+	securityComponents, err := handler.InitializeSecurityComponents(database.DB)
+	if err != nil {
+		color.New(color.FgRed, color.Bold).Print("❌ Security Components Error: ")
+		color.New(color.FgRed).Println(err)
+		return err
+	}
+	defer securityComponents.Close()
+
+	// Create admin API handler
+	adminAPIHandler := handler.NewAdminAPIHandler(securityComponents)
+
 	// Load configuration (OPENAI_API_KEY is optional for UI-managed configs)
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -290,6 +302,44 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.GET("/load-balancers/:id/logs", handler.GetLoadBalancerRequestLogs)
 		configAPI.GET("/load-balancers/:id/alerts", handler.GetLoadBalancerAlerts)
 		configAPI.POST("/load-balancers/:id/alerts/:alert_id/acknowledge", handler.AcknowledgeAlert)
+
+		// Security & Multi-tenancy Admin API
+		// Tenant management
+		configAPI.GET("/admin/tenants", adminAPIHandler.ListTenants)
+		configAPI.POST("/admin/tenants", adminAPIHandler.CreateTenant)
+		configAPI.GET("/admin/tenants/:id", adminAPIHandler.GetTenant)
+		configAPI.PUT("/admin/tenants/:id", adminAPIHandler.UpdateTenant)
+		configAPI.DELETE("/admin/tenants/:id", adminAPIHandler.DeleteTenant)
+		configAPI.GET("/admin/tenants/:id/config", adminAPIHandler.GetTenantConfig)
+		configAPI.PUT("/admin/tenants/:id/config", adminAPIHandler.UpdateTenantConfig)
+
+		// API Key management
+		configAPI.GET("/admin/tenants/:tenant_id/api-keys", adminAPIHandler.ListAPIKeys)
+		configAPI.POST("/admin/tenants/:tenant_id/api-keys", adminAPIHandler.CreateAPIKey)
+		configAPI.POST("/admin/api-keys/:key_id/revoke", adminAPIHandler.RevokeAPIKey)
+		configAPI.POST("/admin/api-keys/:key_id/rotate", adminAPIHandler.RotateAPIKey)
+
+		// Quota management
+		configAPI.GET("/admin/tenants/:tenant_id/quota", adminAPIHandler.GetTenantQuota)
+		configAPI.POST("/admin/tenants/:tenant_id/quota", adminAPIHandler.SetTenantQuota)
+		configAPI.POST("/admin/tenants/:tenant_id/quota/:quota_type/reset", adminAPIHandler.ResetTenantQuota)
+
+		// Rate limit management
+		configAPI.GET("/admin/tenants/:tenant_id/rate-limits", adminAPIHandler.ListRateLimits)
+		configAPI.POST("/admin/tenants/:tenant_id/rate-limits", adminAPIHandler.CreateRateLimit)
+		configAPI.DELETE("/admin/rate-limits/:limit_id", adminAPIHandler.DeleteRateLimit)
+
+		// IP rule management
+		configAPI.GET("/admin/tenants/:tenant_id/ip-rules", adminAPIHandler.ListIPRules)
+		configAPI.POST("/admin/tenants/:tenant_id/ip-rules", adminAPIHandler.CreateIPRule)
+		configAPI.DELETE("/admin/ip-rules/:rule_id", adminAPIHandler.DeleteIPRule)
+
+		// Usage and billing
+		configAPI.GET("/admin/tenants/:tenant_id/usage", adminAPIHandler.GetTenantUsage)
+		configAPI.POST("/admin/tenants/:tenant_id/billing-report", adminAPIHandler.GenerateBillingReport)
+
+		// Audit logs
+		configAPI.GET("/admin/audit-logs", adminAPIHandler.ListAuditLogs)
 	}
 
 	// Serve UI static files (embedded or from filesystem)
