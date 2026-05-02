@@ -207,3 +207,33 @@ Our project's direction is INVERSE of litellm: we expose Claude API surface, con
 - [x] #18: Web search options mapping (P2)
 - `models/claude.go` — Added `CacheControl` field to `ClaudeContentBlock` struct
 - `handler/handler.go` — Updated `appendDefaultBetaHeaders` to remove outdated headers
+
+---
+
+## Phase 4: Additional Patterns (2026-05-03)
+
+### 19. Advisor Block Stripping (litellm has it)
+
+**litellm** (`common_utils.py:664-760`): `strip_advisor_blocks_from_messages()` removes `server_tool_use(name='advisor')` and `advisor_tool_result` blocks from conversation history when the advisor tool is not in the tools array. Prevents Anthropic 400 `invalid_request_error`.
+
+**Our status**: ✅ Added `stripAdvisorBlocks()` in claude.go, called during request parsing.
+
+### 20. Dynamic Beta Header Management (litellm has it)
+
+**litellm** (`transformation.py:1365-1380`): `_ensure_beta_header()` dynamically adds feature-specific beta headers based on request content (speed=fast → fast-mode, output_config → structured-output, advisor tool → advisor-tool).
+
+**Our status**: ✅ Added `ensureBetaHeader()` and `detectBetaHeadersFromRequest()` in handler.go.
+
+### 21. Signature and Data Fields for Thinking Blocks (litellm has it)
+
+**litellm** (`handler.py:636-643`): Preserves `signature` field in thinking blocks and `data` field in redacted_thinking blocks.
+
+**Our status**: ✅ Added `Signature` and `Data` fields to both `ClaudeContentBlock` and `ContentBlock`.
+
+### Phase 4 Implementation Status
+
+- [x] #19: Advisor block stripping — stripAdvisorBlocks() in claude.go
+- [x] #20: Dynamic beta header management — ensureBetaHeader() + detectBetaHeadersFromRequest() in handler.go
+- [x] #21: Signature/Data fields for thinking blocks — ClaudeContentBlock + ContentBlock
+
+### Total: 43 protocol patterns implemented

@@ -184,6 +184,11 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 		req.Messages = append(req.Messages, internalMsg)
 	}
 
+	// Strip advisor blocks from message history (litellm pattern).
+	// When advisor_tool_result blocks exist in history but the advisor tool
+	// is not in the tools array, Anthropic API returns 400 invalid_request_error.
+	stripAdvisorBlocks(req)
+
 	return req, nil
 }
 
@@ -438,4 +443,61 @@ func (c *ClaudeConverter) ParseStreamEvent(line []byte) (*StreamEvent, error) {
 // For Claude, we just marshal the StreamEvent directly since we use native format.
 func (c *ClaudeConverter) BuildStreamEvent(event *StreamEvent) ([]byte, error) {
 	return json.Marshal(event)
+}
+
+// stripAdvisorBlocks removes advisor server_tool_use and advisor_tool_result blocks
+// from assistant message content (litellm strip_advisor_blocks_from_messages pattern).
+// When advisor_tool_result blocks exist in history but the advisor tool is not in the
+// tools array, Anthropic API returns 400 invalid_request_error.
+func stripAdvisorBlocks(req *InternalRequest) {
+	// Check if advisor tool is present in the tools list
+	hasAdvisorTool := false
+	for _, tool := range req.Tools {
+		if strings.Contains(tool.Name, "advisor") {
+			hasAdvisorTool = true
+			break
+		}
+	}
+	if hasAdvisorTool {
+		return // Advisor tool present, no stripping needed
+	}
+
+	// Collect advisor tool_use IDs from assistant messages
+	advisorIDs := make(map[string]bool)
+	for i := range req.Messages {
+		if req.Messages[i].Role != "assistant" {
+			continue
+		}
+		for _, cb := range req.Messages[i].Content {
+			if (cb.Type == "server_tool_use" || cb.Type == "tool_use") && strings.Contains(cb.Name, "advisor") && cb.ID != "" {
+				advisorIDs[cb.ID] = true
+			}
+		}
+	}
+
+	if len(advisorIDs) == 0 {
+		return
+	}
+
+	// Strip advisor blocks from all messages
+	for i := range req.Messages {
+		if req.Messages[i].Role != "assistant" && req.Messages[i].Role != "user" {
+			continue
+		}
+		var filtered []ContentBlock
+		for _, cb := range req.Messages[i].Content {
+			// Skip advisor server_tool_use / tool_use blocks
+			if (cb.Type == "server_tool_use" || cb.Type == "tool_use") && strings.Contains(cb.Name, "advisor") {
+				continue
+			}
+			// Skip advisor tool_result blocks
+			if (cb.Type == "tool_result" || cb.Type == "advisor_tool_result") && advisorIDs[cb.ToolUseID] {
+				continue
+			}
+			filtered = append(filtered, cb)
+		}
+		if len(filtered) != len(req.Messages[i].Content) {
+			req.Messages[i].Content = filtered
+		}
+	}
 }

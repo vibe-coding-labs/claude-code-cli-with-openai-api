@@ -1148,12 +1148,54 @@ func isClaudeCode(c *gin.Context) bool {
 }
 
 // appendDefaultBetaHeaders 为 Claude Code 客户端添加默认 beta headers
-// Updated based on litellm's get_anthropic_beta_list pattern.
-// Anthropic no longer requires prompt-caching beta header (works automatically).
+// Updated based on litellm's _ensure_beta_header dynamic management pattern.
+// Detects request features and adds required feature-specific beta headers.
 func appendDefaultBetaHeaders(existing []string) []string {
-	// No default beta headers needed — prompt caching works automatically.
-	// Feature-specific beta headers should be set by the client or detected
-	// from the request (e.g., output_format, context_management).
-	// Reference: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+	// Prompt caching works automatically — no beta header needed.
+	// Feature-specific beta headers are forwarded from the client.
+	return existing
+}
+
+// ensureBetaHeader adds a beta header if not already present (litellm pattern).
+func ensureBetaHeader(existing []string, header string) []string {
+	for _, h := range existing {
+		if strings.HasPrefix(h, header) {
+			return existing
+		}
+	}
+	return append(existing, header)
+}
+
+// detectBetaHeadersFromRequest inspects the Claude request body and adds
+// required feature-specific beta headers (litellm _ensure_beta_header pattern).
+func detectBetaHeadersFromRequest(existing []string, body []byte) []string {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return existing
+	}
+
+	// Speed parameter: fast-mode beta header
+	if speed, ok := req["speed"].(string); ok && speed == "fast" {
+		existing = ensureBetaHeader(existing, "fast-mode-")
+	}
+
+	// Output config / structured output
+	if _, ok := req["output_config"]; ok {
+		existing = ensureBetaHeader(existing, "structured-output-")
+	}
+
+	// Advisor tool detection: check tools array for advisor type
+	if tools, ok := req["tools"].([]interface{}); ok {
+		for _, t := range tools {
+			if tool, ok := t.(map[string]interface{}); ok {
+				toolType, _ := tool["type"].(string)
+				if strings.Contains(toolType, "advisor") {
+					existing = ensureBetaHeader(existing, "advisor-tool-")
+					break
+				}
+			}
+		}
+	}
+
 	return existing
 }
