@@ -106,6 +106,11 @@ func (o *OpenAIConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 		req.ToolChoice = openAIReq.ToolChoice
 	}
 
+	// 解析 response_format for structured output support
+	if openAIReq.ResponseFormat != nil {
+		req.ResponseFormat = openAIReq.ResponseFormat
+	}
+
 	return req, nil
 }
 
@@ -651,8 +656,12 @@ func (o *OpenAIConverter) convertInternalToolChoiceToOpenAI(choice interface{}) 
 		choiceType, _ := choiceMap["type"].(string)
 
 		switch choiceType {
-		case "auto", "any":
+		case "auto":
 			return "auto"
+		case "any":
+			return "required"
+		case "none":
+			return "none"
 		case "tool":
 			if name, ok := choiceMap["name"].(string); ok {
 				return map[string]interface{}{
