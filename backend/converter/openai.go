@@ -495,6 +495,30 @@ func (o *OpenAIConverter) validateAndFixMessageSequence(messages []models.OpenAI
 		_ = i
 	}
 
+	// Deduplicate tool results with the same tool_call_id (litellm pattern).
+	// Anthropic requires exactly one tool_result per tool_use.
+	// Keep only the last occurrence within each contiguous block of tool results.
+	{
+		var deduped []models.OpenAIMessage
+		seenInBlock := make(map[string]int) // tool_call_id -> index in deduped
+		for _, msg := range result {
+			if msg.Role == "tool" && msg.ToolCallID != "" {
+				if prevIdx, exists := seenInBlock[msg.ToolCallID]; exists {
+					// Replace previous occurrence with this one (keep last)
+					deduped[prevIdx] = msg
+					utils.GetLogger().Warn("[validateMessages] Deduplicating tool_result for tool_call_id=%s", msg.ToolCallID)
+					continue
+				}
+				seenInBlock[msg.ToolCallID] = len(deduped)
+			} else {
+				// Non-tool message marks a turn boundary - reset tracking
+				seenInBlock = make(map[string]int)
+			}
+			deduped = append(deduped, msg)
+		}
+		result = deduped
+	}
+
 	// Log final sequence for debugging
 	roles := make([]string, 0, len(result))
 	for _, m := range result {

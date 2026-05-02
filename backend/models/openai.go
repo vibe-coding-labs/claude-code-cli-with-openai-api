@@ -15,6 +15,7 @@ type OpenAIRequest struct {
 	Tools               []OpenAITool    `json:"tools,omitempty"`
 	ToolChoice          interface{}     `json:"tool_choice,omitempty"`
 	ReasoningEffort     string          `json:"reasoning_effort,omitempty"` // o1/o3 models reasoning effort: low, medium, high
+	ResponseFormat      interface{}     `json:"response_format,omitempty"`  // structured output support
 }
 
 type StreamOptions struct {

@@ -14,7 +14,6 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
-	litellmBridge "github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter/litellm_bridge"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
@@ -325,23 +324,13 @@ func (h *Handler) CreateMessageWithConfig(c *gin.Context) {
 	h.handleMessageWithConfig(c, dbConfig, betaHeaders)
 }
 
-// handleMessageWithConfig 处理消息请求的核心逻辑（智能重试）
+// handleMessageWithConfig 处理消息请求的核心逻辑
+// Note: 不在外层包装 retry Engine，因为 executeMessageRequestWithConfig 内部已有重试逻辑
+// （流式创建有内层 Engine），外层重试会导致 request body 二次消费失败
 func (h *Handler) handleMessageWithConfig(c *gin.Context, dbConfig *database.APIConfig, betaHeaders []string) {
-	logger := utils.GetLogger()
-
-	result := retry.NewEngine().Execute(c.Request.Context(), func() error {
-		return h.executeMessageRequestWithConfig(c, dbConfig, nil, betaHeaders)
-	})
-
-	if result.Succeeded {
-		if result.Attempts > 1 {
-			logger.Info("  Request succeeded after %d attempts (category: %s, total delay: %v)",
-				result.Attempts, result.Category, result.TotalDelay)
-		}
-		return
+	if err := h.executeMessageRequestWithConfig(c, dbConfig, nil, betaHeaders); err != nil {
+		utils.GetLogger().Error("← [handleMessageWithConfig] %v", err)
 	}
-
-	logger.Error("← [handleMessageWithConfig] %s", result.ErrorSummary())
 }
 
 // handleMessageWithLoadBalancer 处理通过负载均衡器的消息请求
@@ -379,6 +368,11 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		h.requestValidator.HandleConnectivityTest(c, &req)
 		return nil
 	}
+
+		// one-api pattern: set MaxTokens default to 4096 if not specified
+		if req.MaxTokens <= 0 {
+			req.MaxTokens = 4096
+		}
 
 	// 验证请求参数
 	logger.Debug("  Validating request...")
@@ -472,7 +466,9 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel)
 
-	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig, betaHeaders)
+	conversionResult := converter.ConvertClaudeToOpenAIWithConfigAndMapping(&req, targetConfig, betaHeaders)
+	openAIReq := conversionResult.Request
+	toolNameMapping := conversionResult.ToolNameMapping
 
 	hasTools := len(req.Tools) > 0
 
@@ -540,31 +536,11 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 
 		logger.Info("  Stream created successfully, processing response...")
 
-		// 尝试使用 litellm bridge 做流式协议转换
-		bridgeURL := ""
+		// Use Go converter directly for streaming
 		var streamResult *converter.StreamingResult
+		logger.Info("  Using Go converter for streaming conversion")
+		streamResult = converter.ConvertOpenAIStreamingToClaudeWithMapping(c, reader, &req, c.Request.Context(), toolNameMapping)
 
-		if litellmBridge.IsHealthy(bridgeURL) {
-			logger.Info("  Using litellm bridge for streaming conversion")
-			sc := litellmBridge.NewStreamConverter(
-				bridgeURL, reader, openAIReq.Model, req.Model, nil,
-			)
-			if bridgeErr := sc.ConvertToAnthropicSSE(c); bridgeErr != nil {
-				logger.Warn("  litellm bridge stream failed, falling back to Go converter: %v", bridgeErr)
-				reader2, err2 := targetClient.CreateChatCompletionStream(openAIReq)
-				if err2 != nil {
-					h.responseHandler.SendErrorResponse(c, err2)
-					return fmt.Errorf("stream recreation failed: %w", err2)
-				}
-				defer reader2.Close()
-				streamResult = converter.ConvertOpenAIStreamingToClaude(c, reader2, &req, c.Request.Context())
-			} else {
-				logger.Info("  litellm bridge streaming completed successfully")
-			}
-		} else {
-			logger.Info("  litellm bridge not available, using Go converter")
-			streamResult = converter.ConvertOpenAIStreamingToClaude(c, reader, &req, c.Request.Context())
-		}
 
 		if streamResult != nil {
 			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", &req)
@@ -685,6 +661,11 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 		return
 	}
 
+		// one-api pattern: set MaxTokens default to 4096 if not specified
+		if req.MaxTokens <= 0 {
+			req.MaxTokens = 4096
+		}
+
 	// 验证请求参数
 	logger.Debug("  Validating request...")
 	if err := h.requestValidator.ValidateRequest(&req); err != nil {
@@ -776,7 +757,9 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s, ReasoningEffort=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel, targetConfig.ReasoningEffort)
 
-	openAIReq := converter.ConvertClaudeToOpenAIWithConfig(&req, targetConfig, nil)
+	conversionResult2 := converter.ConvertClaudeToOpenAIWithConfigAndMapping(&req, targetConfig, nil)
+	openAIReq := conversionResult2.Request
+	_ = conversionResult2.ToolNameMapping
 	hasTools := len(req.Tools) > 0
 
 	logger.Info("  Converted to OpenAI model: %s", openAIReq.Model)
@@ -810,25 +793,9 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 	}
 
 	if req.Stream {
-		// 优先使用 litellm bridge 做流式转换
+		// Use Go converter directly for streaming
 		targetClient.BetaHeaders = betaHeaders
-		bridgeURL := ""
-		if litellmBridge.IsHealthy(bridgeURL) {
-			logger.Info("  Using litellm bridge for streaming conversion")
-			reader, err := targetClient.CreateChatCompletionStream(openAIReq)
-			if err != nil {
-				h.responseHandler.SendErrorResponse(c, err)
-				return
-			}
-			defer reader.Close()
-			sc := litellmBridge.NewStreamConverter(bridgeURL, reader, openAIReq.Model, req.Model, nil)
-			if bridgeErr := sc.ConvertToAnthropicSSE(c); bridgeErr != nil {
-				logger.Warn("  litellm bridge failed, falling back: %v", bridgeErr)
-				h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime, h.sessionHandler, sessionID)
-			}
-		} else {
-			h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime, h.sessionHandler, sessionID)
-		}
+		h.responseHandler.HandleStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime, h.sessionHandler, sessionID)
 	} else {
 		h.responseHandler.HandleNonStreamingResponse(c, targetClient, openAIReq, &req, configID, startTime, h.sessionHandler, sessionID)
 	}
@@ -1181,22 +1148,12 @@ func isClaudeCode(c *gin.Context) bool {
 }
 
 // appendDefaultBetaHeaders 为 Claude Code 客户端添加默认 beta headers
+// Updated based on litellm's get_anthropic_beta_list pattern.
+// Anthropic no longer requires prompt-caching beta header (works automatically).
 func appendDefaultBetaHeaders(existing []string) []string {
-	defaultBetaHeaders := []string{
-		"prompt-caching-2024-07-31",
-		"max-tokens-3-5-sonnet-2024-07-15",
-	}
-
-	// 合并现有 headers 和默认 headers，避免重复
-	headerSet := make(map[string]bool)
-	for _, h := range existing {
-		headerSet[h] = true
-	}
-	for _, h := range defaultBetaHeaders {
-		if !headerSet[h] {
-			existing = append(existing, h)
-			headerSet[h] = true
-		}
-	}
+	// No default beta headers needed — prompt caching works automatically.
+	// Feature-specific beta headers should be set by the client or detected
+	// from the request (e.g., output_format, context_management).
+	// Reference: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 	return existing
 }

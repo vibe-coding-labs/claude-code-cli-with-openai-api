@@ -13,19 +13,34 @@ const (
 )
 
 // NormalizeToolCallID standardizes tool call IDs to use the Claude prefix.
+// Also sanitizes IDs to match Anthropic's ^[a-zA-Z0-9_-]+\$ pattern (litellm pattern).
 func NormalizeToolCallID(id string) string {
 	if id == "" {
 		return ""
 	}
 	if strings.HasPrefix(id, IDPrefixClaude) {
-		return id
+		return sanitizeToolCallID(id)
 	}
 	for _, prefix := range []string{IDPrefixOpenAI, IDPrefixGeneric} {
 		if strings.HasPrefix(id, prefix) {
-			return IDPrefixClaude + strings.TrimPrefix(id, prefix)
+			return sanitizeToolCallID(IDPrefixClaude + strings.TrimPrefix(id, prefix))
 		}
 	}
-	return IDPrefixClaude + id
+	return sanitizeToolCallID(IDPrefixClaude + id)
+}
+
+// sanitizeToolCallID removes characters not allowed in Anthropic tool call IDs.
+// Anthropic requires ^[a-zA-Z0-9_-]+\$ — any other character is replaced with underscore.
+func sanitizeToolCallID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // CamelToSnake converts camelCase or PascalCase to snake_case.

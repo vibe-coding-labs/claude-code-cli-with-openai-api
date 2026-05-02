@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
@@ -21,7 +21,6 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 	// Convert original request to JSON for factory
 	reqBody, err := json.Marshal(originalReq)
 	if err != nil {
-		// Fallback to legacy conversion
 		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
 	}
 
@@ -49,9 +48,7 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
 	}
 
-	// Ensure model is preserved from original request
 	claudeResp.Model = originalReq.Model
-
 	return &claudeResp
 }
 
@@ -87,10 +84,8 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 	choice := openAIResp.Choices[0]
 	message := choice.Message
 
-	// Build Claude content blocks
 	contentBlocks := []models.ClaudeContentBlock{}
 
-	// Add reasoning/thinking content first (if present)
 	if message.ReasoningContent != "" {
 		contentBlocks = append(contentBlocks, models.ClaudeContentBlock{
 			Type:     "thinking",
@@ -98,7 +93,6 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		})
 	}
 
-	// Add text content
 	if message.Content != nil {
 		if textContent, ok := message.Content.(string); ok && textContent != "" {
 			contentBlocks = append(contentBlocks, models.ClaudeContentBlock{
@@ -108,7 +102,6 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		}
 	}
 
-	// Add tool calls
 	for _, toolCall := range message.ToolCalls {
 		if toolCall.Type == models.ToolFunction {
 			var input map[string]interface{}
@@ -128,7 +121,6 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		}
 	}
 
-	// Ensure at least one content block
 	if len(contentBlocks) == 0 {
 		contentBlocks = append(contentBlocks, models.ClaudeContentBlock{
 			Type: models.ContentText,
@@ -136,20 +128,18 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		})
 	}
 
-	// Map finish reason
 	stopReason := models.StopEndTurn
 	switch choice.FinishReason {
 	case "length":
 		stopReason = models.StopMaxTokens
 	case "tool_calls", "function_call":
 		stopReason = models.StopToolUse
-	case "content_filter", "interrupt":
+	case "content_filter", "refusal", "content_filtered", "interrupt", models.StopSequence, "compaction":
 		stopReason = models.StopEndTurn
 	default:
 		stopReason = models.StopEndTurn
 	}
 
-	// Build usage
 	usage := models.ClaudeUsage{
 		InputTokens:  openAIResp.Usage.PromptTokens,
 		OutputTokens: openAIResp.Usage.CompletionTokens,
@@ -180,24 +170,21 @@ type StreamingResult struct {
 	ToolCalls    []map[string]interface{}
 }
 
-// ConvertOpenAIStreamingToClaude converts OpenAI streaming response to Claude format
-// Returns the collected content and token usage information
+// ConvertOpenAIStreamingToClaude converts OpenAI streaming response to Claude format.
+//
+// This is a complete rewrite porting litellm's AnthropicStreamWrapper state machine.
+// Key architectural changes from the old implementation:
+//   - Text block is started eagerly (before any content), matching litellm exactly
+//   - Block type transitions detected via shouldStartNewBlock()
+//   - Uses event queue to ensure proper SSE event ordering (close → open → delta)
+//   - Handles tool_use and thinking blocks with proper sequential transitions
 func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context) *StreamingResult {
-	state := &StreamingState{
-		messageID:        fmt.Sprintf("msg_%s", uuid.New().String()[:24]),
-		textBlockIndex:   0,
-		toolBlockCounter: 0,
-		currentToolCalls: make(map[int]*ToolCallState),
-		finalStopReason:  models.StopEndTurn,
-		usage: models.ClaudeUsage{
-			InputTokens:  0,
-			OutputTokens: 0,
-		},
-		hasStartedTextBlock:    false,
-		hasFinishedTextBlock:   false,
-		hasStartedThinkingBlock: false,
-		hasFinishedThinkingBlock: false,
-	}
+	return ConvertOpenAIStreamingToClaudeWithMapping(c, reader, originalReq, ctx, nil)
+}
+
+// ConvertOpenAIStreamingToClaudeWithMapping converts OpenAI streaming response to Claude format with tool name mapping.
+func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string) *StreamingResult {
+	state := newStreamingState(originalReq.Model, toolNameMapping)
 	var collectedContent strings.Builder
 
 	// Set SSE headers
@@ -208,29 +195,11 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 	c.Header("Access-Control-Allow-Headers", "*")
 	c.Header("X-Accel-Buffering", "no")
 
-	// Send initial message_start event (NO content_block_start yet — wait for actual content)
-	sendSSE(c, models.EventMessageStart, map[string]interface{}{
-		"type": models.EventMessageStart,
-		"message": map[string]interface{}{
-			"id":            state.messageID,
-			"type":          "message",
-			"role":          models.RoleAssistant,
-			"model":         originalReq.Model,
-			"content":       []interface{}{},
-			"stop_reason":   nil,
-			"stop_sequence": nil,
-			"usage": map[string]int{
-				"input_tokens":  0,
-				"output_tokens": 0,
-			},
-		},
-	})
+	// Emit initial events (litellm: sent_first_chunk + sent_content_block_start)
+	emitMessageStart(c, state)
+	emitPing(c)
 
-	sendSSE(c, models.EventPing, map[string]interface{}{
-		"type": models.EventPing,
-	})
-
-	// Start heartbeat to keep connection alive (ping every 5 seconds)
+	// Start heartbeat to keep connection alive
 	heartbeatStop := StartHeartbeat(c, ctx, 5*time.Second)
 	defer StopHeartbeat(heartbeatStop)
 
@@ -245,7 +214,6 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 	go func() {
 		defer close(done)
 		for scanner.Scan() {
-			// Check if context is cancelled (client disconnected)
 			select {
 			case <-ctx.Done():
 				errChan <- fmt.Errorf("client disconnected")
@@ -254,162 +222,141 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 			}
 
 			line := scanner.Text()
-			if strings.TrimSpace(line) == "" {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if strings.HasPrefix(trimmed, ":") {
 				continue
 			}
 
-			if strings.HasPrefix(line, "data:") {
-				line = "data: " + strings.TrimPrefix(line, "data:")
+			var chunkData string
+			if strings.HasPrefix(trimmed, "data: ") {
+				chunkData = strings.TrimPrefix(trimmed, "data: ")
+			} else if strings.HasPrefix(trimmed, "data:") {
+				chunkData = strings.TrimPrefix(trimmed, "data:")
+			} else {
+				continue
 			}
 
-			if strings.HasPrefix(line, "data: ") {
-				chunkData := strings.TrimPrefix(line, "data: ")
-				if strings.TrimSpace(chunkData) == "[DONE]" {
-					return
-				}
+			if strings.TrimSpace(chunkData) == "[DONE]" {
+				return
+			}
 
-				var chunk models.OpenAIResponse
-				if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
-					continue
-				}
+			var chunk models.OpenAIResponse
+			if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
+				continue
+			}
+			state.updateUsage(&chunk)
 
-				// Extract usage information with mutex protection
-				if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-					state.mu.Lock()
-					state.usage.InputTokens = chunk.Usage.PromptTokens
-					state.usage.OutputTokens = chunk.Usage.CompletionTokens
-					if chunk.Usage.PromptTokensDetails != nil {
-						state.usage.CacheReadInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
-					}
-					state.mu.Unlock()
-				}
+			if len(chunk.Choices) == 0 {
+				continue
+			}
 
-				if len(chunk.Choices) == 0 {
-					continue
-				}
+			choice := &chunk.Choices[0]
+			delta := choice.Delta
+			if delta == nil {
+				continue
+			}
 
-				choice := chunk.Choices[0]
-				delta := choice.Delta
+			// --- litellm state machine core ---
+			hasContent := delta.Content != nil || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0
 
-				if delta == nil {
-					continue
-				}
+			if hasContent {
+					emittedToolArgsInTransition := false
 
-				// Handle reasoning/thinking delta (for DeepSeek/gpt-5.x)
-				if delta.ReasoningContent != "" {
-					// First time seeing reasoning content — send thinking block start
-					if !state.hasStartedThinkingBlock {
-						state.mu.Lock()
-						state.hasStartedThinkingBlock = true
-						state.mu.Unlock()
-						sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
-							"type":  models.EventContentBlockStart,
-							"index": 0,
-							"content_block": map[string]interface{}{
-								"type":     "thinking",
-								"thinking": "",
-							},
-						})
-					}
-					sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
-						"type":  models.EventContentBlockDelta,
-						"index": 0,
-						"delta": map[string]interface{}{
-							"type":     "thinking_delta",
-							"thinking": delta.ReasoningContent,
-						},
-					})
-				}
-
-				// Handle text delta
-				if delta.Content != nil {
-					if textContent, ok := delta.Content.(string); ok && textContent != "" {
-						// Close thinking block if it was started and text is now arriving
-						if state.hasStartedThinkingBlock && !state.hasFinishedThinkingBlock {
-							state.mu.Lock()
-							state.hasFinishedThinkingBlock = true
-							// Text block goes after thinking block
-							state.textBlockIndex = 1
-							state.mu.Unlock()
-							// Send content_block_stop for thinking block
-							sendSSE(c, models.EventContentBlockStop, map[string]interface{}{
-								"type":  models.EventContentBlockStop,
-								"index": 0,
-							})
+					if !state.sentContentBlockStart {
+						// Lazy start: start first content block only when content arrives
+						initType, initBlockData := state.detectBlockType(delta)
+						state.currentBlockType = initType
+						if initBlockData != nil {
+							state.currentBlockStart = initBlockData
 						}
+						emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
+						state.sentContentBlockStart = true
+					} else {
+						// Block transitions only when a block was already established on a previous chunk
+						shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
+						if shouldStart {
+							emitContentBlockStop(c, state.currentBlockIndex)
+							state.currentBlockIndex++
+							state.currentBlockType = newType
+							if blockStartData != nil {
+								state.currentBlockStart = blockStartData
+							}
+							emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
 
-						// Start text block on first text content
-						if !state.hasStartedTextBlock {
-							state.mu.Lock()
-							state.hasStartedTextBlock = true
-							textIdx := state.textBlockIndex
-							state.mu.Unlock()
-							sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
-								"type":  models.EventContentBlockStart,
-								"index": textIdx,
-								"content_block": map[string]interface{}{
-									"type": models.ContentText,
-									"text": "",
-								},
-							})
+							// litellm pattern: if trigger chunk has tool arguments, emit them
+							// after content_block_start (some providers send args with name/ID)
+							if state.currentBlockType == BlockToolUse && len(delta.ToolCalls) > 0 {
+								for _, tc := range delta.ToolCalls {
+									idx := tc.Index
+									if state.toolCalls[idx] == nil {
+										state.toolCalls[idx] = &toolCallInfo{}
+									}
+									if tc.ID != "" {
+										state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
+									}
+									toolName := state.restoreToolName(tc.Function.Name)
+									if toolName != "" {
+										state.toolCalls[idx].name = toolName
+									}
+									if tc.Function.Arguments != "" {
+										state.toolCalls[idx].argsBuffer += tc.Function.Arguments
+										emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
+										emittedToolArgsInTransition = true
+									}
+								}
+							}
 						}
+					}
 
-						// Collect content for logging
-						collectedContent.WriteString(textContent)
-
-						state.mu.Lock()
-						textIdx := state.textBlockIndex
-						state.mu.Unlock()
-						sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
-							"type":  models.EventContentBlockDelta,
-							"index": textIdx,
-							"delta": map[string]interface{}{
-								"type": models.DeltaText,
-								"text": textContent,
-							},
-						})
+					switch state.currentBlockType {
+					case BlockText:
+					if delta.Content != nil {
+						if textContent, ok := delta.Content.(string); ok && textContent != "" {
+							collectedContent.WriteString(textContent)
+							emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaText, textContent)
+						}
+					}
+				case BlockToolUse:
+					if !emittedToolArgsInTransition && len(delta.ToolCalls) > 0 {
+						tc := delta.ToolCalls[0]
+						idx := tc.Index
+						if state.toolCalls[idx] == nil {
+							state.toolCalls[idx] = &toolCallInfo{}
+						}
+						if tc.ID != "" {
+							state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
+						}
+						if tc.Function.Name != "" {
+							state.toolCalls[idx].name = state.restoreToolName(tc.Function.Name)
+						}
+						if tc.Function.Arguments != "" {
+							state.toolCalls[idx].argsBuffer += tc.Function.Arguments
+							emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
+						}
+					}
+				case BlockThinking:
+					if delta.ReasoningContent != "" {
+						emitContentBlockDelta(c, state.currentBlockIndex, "thinking_delta", delta.ReasoningContent)
 					}
 				}
+			}
 
-				// Handle tool call deltas
-				if len(delta.ToolCalls) > 0 {
-					// Ensure text block is started and closed before tool blocks
-					if !state.hasStartedTextBlock && !state.hasStartedThinkingBlock {
-						state.mu.Lock()
-						state.hasStartedTextBlock = true
-						textIdx := state.textBlockIndex
-						state.mu.Unlock()
-						sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
-							"type":  models.EventContentBlockStart,
-							"index": textIdx,
-							"content_block": map[string]interface{}{
-								"type": models.ContentText,
-								"text": "",
-							},
-						})
-					}
-
-					for _, tcDelta := range delta.ToolCalls {
-						processToolCallDelta(c, state, &tcDelta)
-					}
+			if choice.FinishReason != "" {
+				state.mu.Lock()
+				state.finalStopReason = translateFinishReason(choice.FinishReason)
+				state.mu.Unlock()
+				if !state.sentContentBlockFinish {
+					// one-api pattern: emit {} for tool_use blocks that never received arguments
+					emitEmptyToolArgsIfNeeded(c, state)
+					state.sentContentBlockFinish = true
+					emitContentBlockStop(c, state.currentBlockIndex)
 				}
-
-				// Handle finish reason
-				if choice.FinishReason != "" {
-					state.mu.Lock()
-					switch choice.FinishReason {
-					case "length":
-						state.finalStopReason = models.StopMaxTokens
-					case "tool_calls", "function_call":
-						state.finalStopReason = models.StopToolUse
-					case "content_filter", "interrupt":
-						state.finalStopReason = models.StopEndTurn
-					default:
-						state.finalStopReason = models.StopEndTurn
-					}
-					state.mu.Unlock()
-					return
-				}
+				emitMessageDelta(c, state)
+				state.emittedMessageDelta = true
+				return
 			}
 		}
 
@@ -439,45 +386,159 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 		return nil
 	}
 
-	// Close thinking block if still open
-	if state.hasStartedThinkingBlock && !state.hasFinishedThinkingBlock {
-		sendSSE(c, models.EventContentBlockStop, map[string]interface{}{
-			"type":  models.EventContentBlockStop,
-			"index": 0,
-		})
-		state.hasFinishedThinkingBlock = true
-		if !state.hasStartedTextBlock {
-			state.textBlockIndex = 1
-		}
+	// If content_block_finish was never sent (stream ended without finish_reason),
+	// close the current block
+	if !state.sentContentBlockFinish {
+		// one-api pattern: emit {} for tool_use blocks that never received arguments
+		emitEmptyToolArgsIfNeeded(c, state)
+		emitContentBlockStop(c, state.currentBlockIndex)
+		state.sentContentBlockFinish = true
 	}
 
-	// Close text block if started and not yet closed
-	if state.hasStartedTextBlock && !state.hasFinishedTextBlock {
-		state.hasFinishedTextBlock = true
-		sendSSE(c, models.EventContentBlockStop, map[string]interface{}{
-			"type":  models.EventContentBlockStop,
-			"index": state.textBlockIndex,
-		})
-	}
-
-	// Send final events (with mutex protection for reading state)
+	// If no stop reason was set, default to end_turn
 	state.mu.Lock()
+	if state.finalStopReason == "" {
+		state.finalStopReason = models.StopEndTurn
+	}
 	finalStopReason := state.finalStopReason
 	usage := state.usage
-	currentToolCalls := make(map[int]*ToolCallState)
-	for k, v := range state.currentToolCalls {
-		currentToolCalls[k] = v
+	toolCalls := make(map[int]*toolCallInfo)
+	for k, v := range state.toolCalls {
+		toolCalls[k] = v
 	}
 	state.mu.Unlock()
 
-	for _, toolData := range currentToolCalls {
-		if toolData.Started {
-			sendSSE(c, models.EventContentBlockStop, map[string]interface{}{
-				"type":  models.EventContentBlockStop,
-				"index": toolData.ClaudeIndex,
-			})
+	// Emit final message_delta if not already sent (finish_reason path already emits it)
+	if !state.emittedMessageDelta {
+		usageData := map[string]interface{}{
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
 		}
+		if usage.CacheReadInputTokens > 0 {
+			usageData["cache_read_input_tokens"] = usage.CacheReadInputTokens
+		}
+		sendSSE(c, models.EventMessageDelta, map[string]interface{}{
+			"type": models.EventMessageDelta,
+			"delta": map[string]interface{}{
+				"stop_reason":   finalStopReason,
+				"stop_sequence": nil,
+			},
+			"usage": usageData,
+		})
 	}
+
+	// Emit message_stop (litellm: sent_last_message)
+	state.sentLastMessage = true
+	sendSSE(c, models.EventMessageStop, map[string]interface{}{
+		"type": models.EventMessageStop,
+	})
+
+		// Collect tool calls for session saving (sorted by OpenAI index for deterministic order)
+		resultToolCalls := []map[string]interface{}{}
+		toolIndices := make([]int, 0, len(toolCalls))
+		for idx := range toolCalls {
+			toolIndices = append(toolIndices, idx)
+		}
+		sort.Ints(toolIndices)
+		for _, idx := range toolIndices {
+			toolData := toolCalls[idx]
+			if toolData.id != "" {
+				var input map[string]interface{}
+				if toolData.argsBuffer != "" {
+					_ = json.Unmarshal([]byte(toolData.argsBuffer), &input)
+				}
+				if input == nil {
+					input = map[string]interface{}{}
+				}
+				resultToolCalls = append(resultToolCalls, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    toolData.id,
+					"name":  toolData.name,
+					"input": input,
+				})
+			}
+		}
+
+	c.Writer.Flush()
+
+	return &StreamingResult{
+		Content:      collectedContent.String(),
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		StopReason:   string(finalStopReason),
+		ToolCalls:    resultToolCalls,
+	}
+}
+
+// --- SSE event emitters (litellm pattern) ---
+
+func emitMessageStart(c *gin.Context, state *StreamingState) {
+	sendSSE(c, models.EventMessageStart, map[string]interface{}{
+		"type": models.EventMessageStart,
+		"message": map[string]interface{}{
+			"id":            state.messageID,
+			"type":          "message",
+			"role":          models.RoleAssistant,
+			"model":         state.model,
+			"content":       []interface{}{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage": map[string]int{
+				"input_tokens":              0,
+				"output_tokens":             0,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":     0,
+			},
+		},
+	})
+	state.sentFirstChunk = true
+}
+
+func emitPing(c *gin.Context) {
+	sendSSE(c, models.EventPing, map[string]interface{}{
+		"type": models.EventPing,
+	})
+}
+
+func emitContentBlockStart(c *gin.Context, index int, blockData map[string]interface{}) {
+	sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
+		"type":          models.EventContentBlockStart,
+		"index":         index,
+		"content_block": blockData,
+	})
+}
+
+func emitContentBlockStop(c *gin.Context, index int) {
+	sendSSE(c, models.EventContentBlockStop, map[string]interface{}{
+		"type":  models.EventContentBlockStop,
+		"index": index,
+	})
+}
+
+func emitContentBlockDelta(c *gin.Context, index int, deltaType string, text string) {
+	delta := map[string]interface{}{
+		"type": deltaType,
+	}
+	switch deltaType {
+	case models.DeltaInputJSON:
+		delta["partial_json"] = text
+	case "thinking_delta":
+		delta["thinking"] = text
+	default:
+		delta["text"] = text
+	}
+	sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
+		"type":  models.EventContentBlockDelta,
+		"index": index,
+		"delta": delta,
+	})
+}
+
+func emitMessageDelta(c *gin.Context, state *StreamingState) {
+	state.mu.Lock()
+	stopReason := state.finalStopReason
+	usage := state.usage
+	state.mu.Unlock()
 
 	usageData := map[string]interface{}{
 		"input_tokens":  usage.InputTokens,
@@ -490,117 +551,30 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 	sendSSE(c, models.EventMessageDelta, map[string]interface{}{
 		"type": models.EventMessageDelta,
 		"delta": map[string]interface{}{
-			"stop_reason":   finalStopReason,
+			"stop_reason":   stopReason,
 			"stop_sequence": nil,
 		},
 		"usage": usageData,
 	})
-
-	sendSSE(c, models.EventMessageStop, map[string]interface{}{
-		"type": models.EventMessageStop,
-	})
-
-	// Collect tool calls for session saving
-	toolCalls := []map[string]interface{}{}
-	for _, toolData := range currentToolCalls {
-		if toolData.Started && toolData.ID != "" {
-			var input map[string]interface{}
-			if toolData.ArgsBuffer != "" {
-				_ = json.Unmarshal([]byte(toolData.ArgsBuffer), &input)
-			}
-			if input == nil {
-				input = map[string]interface{}{}
-			}
-			toolCalls = append(toolCalls, map[string]interface{}{
-				"type":  "tool_use",
-				"id":    toolData.ID,
-				"name":  toolData.Name,
-				"input": input,
-			})
-		}
-	}
-
-	c.Writer.Flush()
-
-	return &StreamingResult{
-		Content:      collectedContent.String(),
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		StopReason:   string(finalStopReason),
-		ToolCalls:    toolCalls,
-	}
 }
 
-func processToolCallDelta(c *gin.Context, state *StreamingState, tcDelta *models.OpenAIToolCall) {
-	tcIndex := tcDelta.Index
 
-	state.mu.Lock()
-	// Initialize tool call tracking
-	if _, exists := state.currentToolCalls[tcIndex]; !exists {
-		state.currentToolCalls[tcIndex] = &ToolCallState{
-			ID:          "",
-			Name:        "",
-			ArgsBuffer:  "",
-			ClaudeIndex: 0,
-			Started:     false,
+// emitEmptyToolArgsIfNeeded emits a partial_json delta with "{}" for the current
+// tool_use block if it never received any argument deltas (one-api pattern).
+// This prevents client-side parsing errors when tool calls have no arguments.
+func emitEmptyToolArgsIfNeeded(c *gin.Context, state *StreamingState) {
+	if state.currentBlockType != BlockToolUse {
+		return
+	}
+	// Check if any tool call has received args
+	needsEmptyArgs := true
+	for _, tc := range state.toolCalls {
+		if tc.argsBuffer != "" {
+			needsEmptyArgs = false
+			break
 		}
 	}
-
-	toolCall := state.currentToolCalls[tcIndex]
-
-	if tcDelta.ID != "" {
-		toolCall.ID = tcDelta.ID
-	}
-
-	if tcDelta.Function.Name != "" {
-		toolCall.Name = tcDelta.Function.Name
-	}
-
-	// Start content block when we have complete initial data
-	shouldStartBlock := toolCall.ID != "" && toolCall.Name != "" && !toolCall.Started
-	var claudeIndex int
-	var toolID, toolName string
-	if shouldStartBlock {
-		state.toolBlockCounter++
-		toolCall.ClaudeIndex = state.textBlockIndex + state.toolBlockCounter
-		toolCall.Started = true
-		claudeIndex = toolCall.ClaudeIndex
-		toolID = toolCall.ID
-		toolName = toolCall.Name
-	}
-
-	var shouldProcessArgs bool
-	var deltaArgs string
-	if tcDelta.Function.Arguments != "" && toolCall.Started {
-		toolCall.ArgsBuffer += tcDelta.Function.Arguments
-		shouldProcessArgs = true
-		deltaArgs = tcDelta.Function.Arguments
-		claudeIndex = toolCall.ClaudeIndex
-	}
-
-	state.mu.Unlock()
-
-	if shouldStartBlock {
-		sendSSE(c, models.EventContentBlockStart, map[string]interface{}{
-			"type":  models.EventContentBlockStart,
-			"index": claudeIndex,
-			"content_block": map[string]interface{}{
-				"type":  models.ContentToolUse,
-				"id":    toolID,
-				"name":  toolName,
-				"input": map[string]interface{}{},
-			},
-		})
-	}
-
-	if shouldProcessArgs {
-		sendSSE(c, models.EventContentBlockDelta, map[string]interface{}{
-			"type":  models.EventContentBlockDelta,
-			"index": claudeIndex,
-			"delta": map[string]interface{}{
-				"type":         models.DeltaInputJSON,
-				"partial_json": deltaArgs,
-			},
-		})
+	if needsEmptyArgs {
+		emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
 	}
 }
