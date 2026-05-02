@@ -37,17 +37,19 @@ type ClaudeMessage struct {
 }
 
 type ClaudeContentBlock struct {
-	Type        string                 `json:"type"`
-	Text        string                 `json:"text,omitempty"`
-	Thinking    string                 `json:"thinking,omitempty"` // For thinking content blocks
-	Source      interface{}            `json:"source,omitempty"`
-	ID          string                 `json:"id,omitempty"`
-	Name        string                 `json:"name,omitempty"`
-	Input       map[string]interface{} `json:"input,omitempty"`
-	ToolUseID   string                 `json:"tool_use_id,omitempty"`
-	Content     interface{}            `json:"content,omitempty"`
-	IsError     bool                   `json:"is_error,omitempty"`
-	CacheControl interface{}           `json:"cache_control,omitempty"` // litellm pattern: prompt caching
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`  // For thinking content blocks
+	Signature    string                 `json:"signature,omitempty"` // Anthropic thinking signature verification
+	Data         string                 `json:"data,omitempty"`      // For redacted_thinking opaque data
+	Source       interface{}            `json:"source,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        map[string]interface{} `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      interface{}            `json:"content,omitempty"`
+	IsError      bool                   `json:"is_error,omitempty"`
+	CacheControl interface{}            `json:"cache_control,omitempty"` // litellm pattern: prompt caching
 	Citations    interface{}            `json:"citations,omitempty"`     // Anthropic citation support
 }
 

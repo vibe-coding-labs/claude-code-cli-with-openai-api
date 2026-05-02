@@ -39,17 +39,20 @@ type InternalMessage struct {
 
 // ContentBlock 表示消息中的一个内容块
 type ContentBlock struct {
-	Type        string                 `json:"type"` // text, image, video, audio, tool_use, tool_result, compaction
-	Text        string                 `json:"text,omitempty"`
-	Source      *ImageSource           `json:"source,omitempty"`        // for image
-	VideoSource *VideoSource           `json:"video_source,omitempty"`  // for video
-	AudioSource *AudioSource           `json:"audio_source,omitempty"`  // for audio
-	ID          string                 `json:"id,omitempty"`            // for tool_use
-	Name        string                 `json:"name,omitempty"`          // for tool_use
-	Input       map[string]interface{} `json:"input,omitempty"`         // for tool_use
-	ToolUseID   string                 `json:"tool_use_id,omitempty"`   // for tool_result
-	Content     string                 `json:"content,omitempty"`       // for tool_result
-	CacheControl interface{}           `json:"cache_control,omitempty"` // litellm pattern: prompt caching
+	Type         string                 `json:"type"` // text, image, video, audio, tool_use, tool_result, compaction, thinking, redacted_thinking
+	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`      // for thinking blocks
+	Signature    string                 `json:"signature,omitempty"`     // Anthropic thinking signature verification
+	Data         string                 `json:"data,omitempty"`          // for redacted_thinking opaque data
+	Source       *ImageSource           `json:"source,omitempty"`        // for image
+	VideoSource  *VideoSource           `json:"video_source,omitempty"`  // for video
+	AudioSource  *AudioSource           `json:"audio_source,omitempty"`  // for audio
+	ID           string                 `json:"id,omitempty"`            // for tool_use
+	Name         string                 `json:"name,omitempty"`          // for tool_use
+	Input        map[string]interface{} `json:"input,omitempty"`         // for tool_use
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`   // for tool_result
+	Content      string                 `json:"content,omitempty"`       // for tool_result
+	CacheControl interface{}            `json:"cache_control,omitempty"` // litellm pattern: prompt caching
 	Citations    interface{}            `json:"citations,omitempty"`     // Anthropic citation support
 }
 

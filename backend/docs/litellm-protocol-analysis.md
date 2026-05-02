@@ -188,13 +188,13 @@ Our project's direction is INVERSE of litellm: we expose Claude API surface, con
 
 **litellm** (`handler.py:632-634`): Preserves `signature` field in thinking blocks for Anthropic's signature-based thinking verification.
 
-**Our status**: Not yet implemented. Low priority — only affects internal Anthropic verification.
+**Our status**: ✅ Added `Signature` field to `ClaudeContentBlock` and `ContentBlock`, preserved in claude.go parsing.
 
 ### 18. Web Search Options → Anthropic Tool (litellm has it)
 
 **litellm** (`transformation.py:1127-1130`): Maps `web_search_options` from OpenAI to Anthropic's hosted web search tool format.
 
-**Our status**: Not yet implemented. Medium priority — relevant for Claude Code when using web search.
+**Our status**: ✅ Hosted tools (web_search, computer_use, text_editor, bash) converted to function tools for OpenAI compatibility. server_tool_use and tool_result subtypes handled in claude.go.
 
 ### Phase 3 Implementation Status
 
@@ -203,7 +203,7 @@ Our project's direction is INVERSE of litellm: we expose Claude API surface, con
 - [x] #14: System message cache_control preservation
 - [x] #15: BlockCompaction in streaming_state.go
 - [x] #16: OutputConfig field on ClaudeMessagesRequest
-- [ ] #17: Signature field in thinking blocks (P2)
-- [ ] #18: Web search options mapping (P2)
+- [x] #17: Signature field in thinking blocks (P2)
+- [x] #18: Web search options mapping (P2)
 - `models/claude.go` — Added `CacheControl` field to `ClaudeContentBlock` struct
 - `handler/handler.go` — Updated `appendDefaultBetaHeaders` to remove outdated headers

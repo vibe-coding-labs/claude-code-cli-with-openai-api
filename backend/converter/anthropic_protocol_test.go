@@ -279,8 +279,8 @@ func TestClaudeProtocol_ParseRequest_ContentBlocks(t *testing.T) {
 				if cb.Type != "thinking" {
 					t.Errorf("type = %q, want thinking", cb.Type)
 				}
-				if cb.Text != "Let me think..." {
-					t.Errorf("text = %q, want 'Let me think...'", cb.Text)
+				if cb.Thinking != "Let me think..." {
+					t.Errorf("thinking = %q, want 'Let me think...'", cb.Thinking)
 				}
 			},
 		},

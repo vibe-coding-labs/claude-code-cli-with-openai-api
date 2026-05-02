@@ -155,10 +155,11 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 					// If content is nil/missing, cb.Content stays "" which is correct
 				case "thinking":
 					cb.Type = "thinking"
-					cb.Text, _ = blockMap["thinking"].(string)
+					cb.Thinking, _ = blockMap["thinking"].(string)
+					cb.Signature, _ = blockMap["signature"].(string)
 				case "redacted_thinking":
 					cb.Type = "redacted_thinking"
-					cb.Text, _ = blockMap["data"].(string)
+					cb.Data, _ = blockMap["data"].(string)
 					case "compaction":
 						cb.Type = "compaction"
 						if c, ok := blockMap["content"]; ok {
