@@ -287,9 +287,17 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 		Stop:   req.StopSeqs,
 	}
 
-	// Support max_completion_tokens for o1/o3 models
+	// Support max_completion_tokens for o1/o3 models with provider-specific capping
 	if req.MaxTokens > 0 {
-		openAIReq.MaxTokens = req.MaxTokens
+		capTokens := req.MaxTokens
+		if o.cfg != nil {
+			provider := DetectProvider(o.cfg.OpenAIBaseURL)
+			if maxCap := GetMaxTokensCap(provider); maxCap > 0 && capTokens > maxCap {
+				utils.GetLogger().Debug("[BuildRequest] Capping max_tokens %d -> %d for provider %v", capTokens, maxCap, provider)
+				capTokens = maxCap
+			}
+		}
+		openAIReq.MaxTokens = capTokens
 	}
 
 	if req.Temperature != nil {
@@ -340,12 +348,25 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 		// tool messages must immediately follow assistant(tool_calls)
 		// OpenAI spec: assistant(tool_calls) -> tool -> tool -> user
 		for _, tr := range toolResults {
-			toolMsg := models.OpenAIMessage{
-				Role:       "tool",
-				ToolCallID: tr.ToolUseID,
-				Content:    tr.Content,
+			var provider ProviderType
+			if o.cfg != nil {
+				provider = DetectProvider(o.cfg.OpenAIBaseURL)
 			}
-			openAIReq.Messages = append(openAIReq.Messages, toolMsg)
+			if !SupportsFunctionCalling(provider) {
+				// Provider doesn't support function calling, fall back to descriptive text
+				fallbackMsg := models.OpenAIMessage{
+					Role:    "user",
+					Content: toolResultToFallbackText(tr),
+				}
+				openAIReq.Messages = append(openAIReq.Messages, fallbackMsg)
+			} else {
+				toolMsg := models.OpenAIMessage{
+					Role:       "tool",
+					ToolCallID: tr.ToolUseID,
+					Content:    tr.Content,
+				}
+				openAIReq.Messages = append(openAIReq.Messages, toolMsg)
+			}
 		}
 
 		// then emit remaining content blocks after tool messages
@@ -360,20 +381,28 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 	// Validate and fix message sequence for strict providers like Mistral
 	openAIReq.Messages = o.validateAndFixMessageSequence(openAIReq.Messages)
 
-	// 构建 tools
-	for _, tool := range req.Tools {
-		toolName := truncateToolName(tool.Name)
-		if toolName != tool.Name {
-			utils.GetLogger().Debug("[BuildRequest] Tool name truncated: %q -> %q", tool.Name, toolName)
+		// 构建 tools with Gemini schema cleaning
+		isGeminiProvider := false
+		if o.cfg != nil {
+			isGeminiProvider = IsGeminiProvider(o.cfg.OpenAIBaseURL)
 		}
-		openAIReq.Tools = append(openAIReq.Tools, models.OpenAITool{
-			Type: "function",
-			Function: models.OpenAIFunction{
-				Name:        toolName,
-				Description: tool.Description,
-				Parameters:  tool.Parameters,
-			},
-		})
+		for _, tool := range req.Tools {
+			toolName := truncateToolName(tool.Name)
+			if toolName != tool.Name {
+				utils.GetLogger().Debug("[BuildRequest] Tool name truncated: %q -> %q", tool.Name, toolName)
+			}
+				parameters := tool.Parameters
+			if isGeminiProvider && parameters != nil {
+				parameters = CleanSchemaForGemini(parameters)
+			}
+			openAIReq.Tools = append(openAIReq.Tools, models.OpenAITool{
+				Type: "function",
+				Function: models.OpenAIFunction{
+					Name:        toolName,
+					Description: tool.Description,
+					Parameters:  parameters,
+				},
+			})
 	}
 
 	// 构建 tool_choice
@@ -1054,3 +1083,18 @@ func truncateToolName(name string) string {
 	prefix := name[:maxToolNameLength-9]
 	return prefix + "_" + hashSuffix
 }
+
+// toolResultToFallbackText converts a tool_result content block to descriptive text
+// when the provider doesn't support function calling (参考 claude-code-proxy 模式)
+func toolResultToFallbackText(tr ContentBlock) string {
+	name := tr.Name
+	if name == "" {
+		name = tr.ToolUseID
+	}
+	content := tr.Content
+	if content == "" {
+		content = "(empty result)"
+	}
+	return fmt.Sprintf("[Tool Result for %s]: %s", name, content)
+}
+
