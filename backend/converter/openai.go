@@ -779,7 +779,7 @@ func (o *OpenAIConverter) ParseResponse(body []byte) (*InternalResponse, error) 
 
 	// 解析 tool_calls
 	for _, tc := range message.ToolCalls {
-		if tc.Type == "function" {
+		if tc.Type == "function" || tc.Type == "" {
 			var input map[string]interface{}
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
