@@ -263,6 +263,9 @@ var networkSignals = []string{
 	"no such host", "network is unreachable", "broken pipe",
 	"i/o timeout", "temporary failure", "dns error",
 	"tls handshake timeout", "temporary error",
+	"timeout awaiting response headers",
+	"timeout awaiting response",
+	"context deadline exceeded",
 }
 
 func isNetworkError(errStr string) bool {

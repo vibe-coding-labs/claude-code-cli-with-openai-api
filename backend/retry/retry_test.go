@@ -43,7 +43,9 @@ func TestClassifyError_ServerError(t *testing.T) {
 }
 
 func TestClassifyError_Network(t *testing.T) {
-	signals := []string{"connection refused", "connection reset", "i/o timeout", "broken pipe"}
+	signals := []string{"connection refused", "connection reset", "i/o timeout", "broken pipe",
+		"timeout awaiting response headers", "timeout awaiting response",
+		"context deadline exceeded"}
 	for _, sig := range signals {
 		err := fmt.Errorf("%s something", sig)
 		if got := ClassifyError(err); got != CategoryNetwork {
@@ -451,5 +453,21 @@ func TestResult_ErrorSummary(t *testing.T) {
 	summary := r2.ErrorSummary()
 	if !strings.Contains(summary, "5 attempts") || !strings.Contains(summary, "rate_limit") {
 		t.Errorf("summary missing context: %s", summary)
+	}
+}
+
+func TestClassifyError_WrappedTimeout(t *testing.T) {
+	innerErr := fmt.Errorf("net/http: timeout awaiting response headers")
+	wrappedErr := fmt.Errorf("all retry attempts failed, last error: %w", innerErr)
+	if got := ClassifyError(wrappedErr); got != CategoryNetwork {
+		t.Errorf("wrapped timeout error: got %v, want CategoryNetwork", got)
+	}
+}
+
+func TestClassifyError_WrappedContextDeadline(t *testing.T) {
+	innerErr := fmt.Errorf("context deadline exceeded")
+	wrappedErr := fmt.Errorf("all retry attempts failed, last error: %w", innerErr)
+	if got := ClassifyError(wrappedErr); got != CategoryNetwork {
+		t.Errorf("wrapped context deadline: got %v, want CategoryNetwork", got)
 	}
 }

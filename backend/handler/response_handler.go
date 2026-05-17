@@ -1,0 +1,490 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
+)
+
+// ResponseHandler 处理响应生成
+type ResponseHandler struct{}
+
+// NewResponseHandler 创建响应处理器
+func NewResponseHandler() *ResponseHandler {
+	return &ResponseHandler{}
+}
+
+func getUserIDFromContext(c *gin.Context) int64 {
+	value, ok := c.Get("user_id")
+	if !ok || value == nil {
+		return 0
+	}
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
+// HandleStreamingResponse 处理流式响应
+func (r *ResponseHandler) HandleStreamingResponse(
+	c *gin.Context,
+	targetClient *client.OpenAIClient,
+	openAIReq *models.OpenAIRequest,
+	claudeReq *models.ClaudeMessagesRequest,
+	configID string,
+	startTime time.Time,
+	sessionHandler *SessionHandler,
+	sessionID string,
+	toolNameMapping ...map[string]string,
+) {
+	fmt.Printf("\n🌊 [Streaming Mode]\n")
+	fmt.Printf("   Initiating streaming request to upstream API\n")
+	logger := utils.GetLogger()
+	logger.Info("[Streaming] Initiating streaming request to upstream API (model=%s)", openAIReq.Model)
+
+	reader, err := targetClient.CreateChatCompletionStream(openAIReq)
+	if err != nil {
+		fmt.Printf("❌ [Streaming] Failed to create stream: %v\n", err)
+		utils.GetLogger().ErrorWithCause(err, "[Streaming] Failed to create stream: model=%s base_url=%s", openAIReq.Model, targetClient.BaseURL)
+		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		return
+	}
+	defer reader.Close()
+
+	fmt.Printf("✅ [Streaming] Stream created, starting conversion to Claude format\n")
+	utils.GetLogger().Info("[Streaming] Stream created, converting to Claude format (model=%s)", openAIReq.Model)
+	var mapping map[string]string
+	if len(toolNameMapping) > 0 {
+		mapping = toolNameMapping[0]
+	}
+	streamResult := converter.ConvertOpenAIStreamingToClaudeWithMapping(c, reader, claudeReq, c.Request.Context(), mapping, 0)
+	fmt.Printf("✅ [Streaming] Stream completed\n")
+
+	// 记录请求日志（使用收集的流式响应数据）
+	if streamResult != nil {
+		r.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
+
+		// 保存消息到会话
+		if sessionHandler != nil && sessionID != "" {
+			r.SaveMessagesToSession(sessionHandler, sessionID, claudeReq, streamResult.Content, streamResult.InputTokens, streamResult.OutputTokens)
+		}
+	} else {
+		// 如果streamResult为nil，说明发生了错误，记录基本信息
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
+	}
+}
+
+// HandleNonStreamingResponse 处理非流式响应
+func (r *ResponseHandler) HandleNonStreamingResponse(
+	c *gin.Context,
+	targetClient *client.OpenAIClient,
+	openAIReq *models.OpenAIRequest,
+	claudeReq *models.ClaudeMessagesRequest,
+	configID string,
+	startTime time.Time,
+	sessionHandler *SessionHandler,
+	sessionID string,
+) {
+	fmt.Printf("\n📝 [Non-Streaming Mode]\n")
+	fmt.Printf("   Sending non-streaming request to upstream API\n")
+
+	openAIResp, err := targetClient.CreateChatCompletion(openAIReq)
+	if err != nil {
+		fmt.Printf("❌ [Non-Streaming] Request failed: %v\n", err)
+		utils.GetLogger().ErrorWithCause(err, "[Non-Streaming] Request failed: model=%s base_url=%s", openAIReq.Model, targetClient.BaseURL)
+		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		return
+	}
+
+	fmt.Printf("✅ [Non-Streaming] Response received from upstream API\n")
+	fmt.Printf("   Choices: %d\n", len(openAIResp.Choices))
+	if len(openAIResp.Choices) > 0 {
+		fmt.Printf("   First choice finish_reason: %s\n", openAIResp.Choices[0].FinishReason)
+	}
+
+	claudeResp := converter.ConvertOpenAIToClaudeResponse(openAIResp, claudeReq)
+	if claudeResp == nil {
+		fmt.Printf("❌ [Non-Streaming] Failed to convert response - response is nil\n")
+		utils.GetLogger().Error("[Non-Streaming] Response conversion failed: nil response (model=%s)", openAIReq.Model)
+		err := fmt.Errorf("failed to convert OpenAI response to Claude format: response or choices is empty")
+		r.sendErrorResponse(c, err)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		return
+	}
+
+	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
+
+	// 记录请求日志（含详细请求和响应）
+	r.logRequestWithDetails(c, configID, openAIReq.Model,
+		claudeResp.Usage.InputTokens,
+		claudeResp.Usage.OutputTokens,
+		startTime, "success", "", claudeReq, claudeResp)
+
+	c.JSON(http.StatusOK, claudeResp)
+	fmt.Printf("✅ [Non-Streaming] Response sent successfully\n")
+
+	// 保存消息到会话
+	if sessionHandler != nil && sessionID != "" {
+		// 提取助手回复内容
+		assistantContent := ""
+		if len(claudeResp.Content) > 0 {
+			if claudeResp.Content[0].Type == "text" {
+				assistantContent = claudeResp.Content[0].Text
+			}
+		}
+		r.SaveMessagesToSession(sessionHandler, sessionID, claudeReq, assistantContent,
+			claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens)
+	}
+}
+
+// logRequestWithStreamingDetails 记录流式请求日志到数据库
+func (r *ResponseHandler) logRequestWithStreamingDetails(
+	c *gin.Context,
+	configID string,
+	model string,
+	streamResult *converter.StreamingResult,
+	startTime time.Time,
+	status string,
+	errorMsg string,
+	claudeReq *models.ClaudeMessagesRequest,
+) {
+	// 如果 configID 为空，使用 "default" 作为标识
+	if configID == "" {
+		configID = "default"
+	}
+
+	duration := time.Since(startTime)
+
+	// 序列化请求体
+	requestBody := ""
+	if claudeReq != nil {
+		if reqJSON, err := json.Marshal(claudeReq); err == nil {
+			requestBody = string(reqJSON)
+		}
+	}
+
+	// 生成响应预览（使用收集的内容）
+	responsePreview := streamResult.Content
+	if len(responsePreview) > 500 {
+		responsePreview = responsePreview[:500] + "..."
+	}
+
+	// 生成请求摘要
+	requestSummary := ""
+	if claudeReq != nil {
+		if len(claudeReq.Messages) > 0 {
+			lastMsg := claudeReq.Messages[len(claudeReq.Messages)-1]
+			if lastMsg.Role == "user" {
+				// 尝试提取文本内容
+				if contentStr, ok := lastMsg.Content.(string); ok {
+					if len(contentStr) > 200 {
+						requestSummary = contentStr[:200] + "..."
+					} else {
+						requestSummary = contentStr
+					}
+				} else if contentArr, ok := lastMsg.Content.([]interface{}); ok && len(contentArr) > 0 {
+					// 处理数组形式的content
+					if contentMap, ok := contentArr[0].(map[string]interface{}); ok {
+						if text, ok := contentMap["text"].(string); ok {
+							if len(text) > 200 {
+								requestSummary = text[:200] + "..."
+							} else {
+								requestSummary = text
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 获取客户端信息
+	clientIP, userAgent := GetClientInfo(c)
+	userID := getUserIDFromContext(c)
+
+	log := &database.RequestLog{
+		ConfigID:        configID,
+		UserID:          userID,
+		Model:           model,
+		InputTokens:     streamResult.InputTokens,
+		OutputTokens:    streamResult.OutputTokens,
+		TotalTokens:     streamResult.InputTokens + streamResult.OutputTokens,
+		DurationMs:      int(duration.Milliseconds()),
+		Status:          status,
+		ErrorMessage:    errorMsg,
+		RequestBody:     requestBody,
+		ResponseBody:    streamResult.Content, // 存储完整的响应内容
+		RequestSummary:  requestSummary,
+		ResponsePreview: responsePreview,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
+	}
+
+	if err := database.LogRequest(log); err != nil {
+		logger := utils.GetLogger()
+		logger.Error("Failed to log streaming request: %v", err)
+	}
+}
+
+// logRequestWithDetails 记录请求日志到数据库（含详细请求和响应）
+func (r *ResponseHandler) logRequestWithDetails(
+	c *gin.Context,
+	configID string,
+	model string,
+	inputTokens int,
+	outputTokens int,
+	startTime time.Time,
+	status string,
+	errorMsg string,
+	claudeReq *models.ClaudeMessagesRequest,
+	claudeResp *models.ClaudeResponse,
+) {
+	// 如果 configID 为空，使用 "default" 作为标识
+	if configID == "" {
+		configID = "default"
+	}
+
+	duration := time.Since(startTime)
+
+	// 序列化请求体
+	requestBody := ""
+	if claudeReq != nil {
+		if reqJSON, err := json.Marshal(claudeReq); err == nil {
+			requestBody = string(reqJSON)
+		}
+	}
+
+	// 序列化响应体
+	responseBody := ""
+	responsePreview := ""
+	if claudeResp != nil {
+		if respJSON, err := json.Marshal(claudeResp); err == nil {
+			responseBody = string(respJSON)
+			// 生成响应预览（前500字符）
+			if len(responseBody) > 500 {
+				responsePreview = responseBody[:500] + "..."
+			} else {
+				responsePreview = responseBody
+			}
+		}
+	}
+
+	// 生成请求摘要
+	requestSummary := ""
+	if claudeReq != nil {
+		if len(claudeReq.Messages) > 0 {
+			lastMsg := claudeReq.Messages[len(claudeReq.Messages)-1]
+			if lastMsg.Role == "user" {
+				// 尝试提取文本内容
+				if contentStr, ok := lastMsg.Content.(string); ok {
+					if len(contentStr) > 200 {
+						requestSummary = contentStr[:200] + "..."
+					} else {
+						requestSummary = contentStr
+					}
+				} else if contentArr, ok := lastMsg.Content.([]interface{}); ok && len(contentArr) > 0 {
+					// 处理数组形式的content
+					if contentMap, ok := contentArr[0].(map[string]interface{}); ok {
+						if text, ok := contentMap["text"].(string); ok {
+							if len(text) > 200 {
+								requestSummary = text[:200] + "..."
+							} else {
+								requestSummary = text
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 获取客户端信息
+	clientIP, userAgent := GetClientInfo(c)
+	userID := getUserIDFromContext(c)
+
+	log := &database.RequestLog{
+		ConfigID:        configID,
+		UserID:          userID,
+		Model:           model,
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
+		TotalTokens:     inputTokens + outputTokens,
+		DurationMs:      int(duration.Milliseconds()),
+		Status:          status,
+		ErrorMessage:    errorMsg,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
+		RequestBody:     requestBody,
+		ResponseBody:    responseBody,
+		RequestSummary:  requestSummary,
+		ResponsePreview: responsePreview,
+	}
+
+	if err := database.LogRequest(log); err != nil {
+		logger := utils.GetLogger()
+		logger.Error("Failed to log request: %v", err)
+	}
+}
+
+// SendErrorResponse 发送错误响应
+func (r *ResponseHandler) SendErrorResponse(c *gin.Context, err error) {
+	logger := utils.GetLogger()
+	errorMsg := err.Error()
+	statusCode := http.StatusInternalServerError
+
+	// 尝试从错误消息中提取状态码
+	// 错误格式: "OpenAI API error (status 401): ..."
+	if strings.Contains(errorMsg, "status") {
+		var extractedStatus int
+		if n, _ := fmt.Sscanf(errorMsg, "OpenAI API error (status %d):", &extractedStatus); n == 1 {
+			if extractedStatus >= 400 && extractedStatus < 600 {
+				statusCode = extractedStatus
+			}
+		}
+	}
+
+	// 提取实际的错误消息（状态码之后的部分）
+	// 格式: "OpenAI API error (status 401): actual error message"
+	if idx := strings.Index(errorMsg, "): "); idx > 0 {
+		errorMsg = errorMsg[idx+3:]
+	}
+
+	// Unwrap nested JSON error payloads from upstream providers.
+	// Some providers return: {"error":{"message":"...","type":"..."}}
+	// Extract the inner message so ClassifyOpenAIError sees plain text.
+	if strings.HasPrefix(errorMsg, "{") {
+		var outer map[string]interface{}
+		if json.Unmarshal([]byte(errorMsg), &outer) == nil {
+			if inner, ok := outer["error"].(map[string]interface{}); ok {
+				if msg, ok := inner["message"].(string); ok && msg != "" {
+					errorMsg = msg
+				}
+			}
+		}
+	}
+
+	// Detect upstream model routing errors and return overloaded_error.
+	// Claude Code auto-retries on overloaded_error with backoff,
+	// so transient "unknown aliased model" errors don't surface to the user.
+	isModelError := client.IsModelRoutingError(errorMsg)
+	if isModelError {
+		statusCode = http.StatusServiceUnavailable // 503
+		classifiedError := "API is temporarily overloaded. Please retry."
+		logger.Warn("← [SendErrorResponse] Model routing error, returning overloaded_error: %s", errorMsg)
+		c.JSON(statusCode, gin.H{
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":    "overloaded_error",
+				"message": classifiedError,
+			},
+		})
+		return
+	}
+
+	// Detect timeout errors and return overloaded_error.
+	// Claude Code auto-retries on overloaded_error with backoff,
+	// so timeout errors don't immediately surface to the user.
+	isTimeout := strings.Contains(strings.ToLower(errorMsg), "timeout") ||
+		strings.Contains(strings.ToLower(err.Error()), "context deadline")
+	if isTimeout {
+		statusCode = http.StatusServiceUnavailable // 503
+		logger.Warn("← [SendErrorResponse] Timeout error, returning overloaded_error: %s", errorMsg)
+		c.JSON(statusCode, gin.H{
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":    "overloaded_error",
+				"message": "Upstream provider timeout. Please retry.",
+			},
+		})
+		return
+	}
+
+	// 分类并格式化错误消息
+	classifiedError := client.ClassifyOpenAIError(errorMsg)
+
+	// Log the error — previously SendErrorResponse was silent
+	logger.ErrorWithCause(err, "← [SendErrorResponse] Returning error response (status %d): %s", statusCode, classifiedError)
+
+	c.JSON(statusCode, gin.H{
+		"type": "error",
+		"error": map[string]interface{}{
+			"type":    "api_error",
+			"message": classifiedError,
+		},
+	})
+}
+
+// sendErrorResponse 发送错误响应（向后兼容）
+func (r *ResponseHandler) sendErrorResponse(c *gin.Context, err error) {
+	r.SendErrorResponse(c, err)
+}
+
+// SaveMessagesToSession 保存用户消息和助手回复到会话
+func (r *ResponseHandler) SaveMessagesToSession(
+	sessionHandler *SessionHandler,
+	sessionID string,
+	claudeReq *models.ClaudeMessagesRequest,
+	assistantContent interface{}, // 改为interface{}以支持字符串或内容块数组
+	inputTokens int,
+	outputTokens int,
+) {
+	if sessionHandler == nil || sessionID == "" {
+		return
+	}
+
+	logger := utils.GetLogger()
+
+	// 保存用户消息（最后一条）
+	var userMessages []models.ClaudeMessage
+	for _, msg := range claudeReq.Messages {
+		if msg.Role == "user" {
+			userMessages = append(userMessages, msg)
+		}
+	}
+
+	// 获取最后一条用户消息
+	if len(userMessages) > 0 {
+		lastUserMsg := []models.ClaudeMessage{userMessages[len(userMessages)-1]}
+		usage := &models.ClaudeUsage{
+			InputTokens: inputTokens,
+		}
+		if err := sessionHandler.SaveMessages(sessionID, lastUserMsg, usage); err != nil {
+			logger.Warn("  Failed to save user message to session: %v", err)
+		} else {
+			logger.Debug("  Saved user message to session")
+		}
+	}
+
+	// 保存助手回复
+	if assistantContent != nil && assistantContent != "" {
+		assistantMsg := models.ClaudeMessage{
+			Role:    "assistant",
+			Content: assistantContent,
+		}
+		usage := &models.ClaudeUsage{
+			OutputTokens: outputTokens,
+		}
+		if err := sessionHandler.SaveMessages(sessionID, []models.ClaudeMessage{assistantMsg}, usage); err != nil {
+			logger.Warn("  Failed to save assistant message to session: %v", err)
+		} else {
+			logger.Debug("  Saved assistant message to session")
+		}
+	}
+}
