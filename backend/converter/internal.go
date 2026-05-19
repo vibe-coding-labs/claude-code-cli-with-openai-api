@@ -17,6 +17,7 @@ type InternalRequest struct {
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 	Extra           map[string]interface{} `json:"extra,omitempty"` // 透传额外字段
 	ReasoningEffort *string                `json:"reasoning_effort,omitempty"`
+	ThinkingEnabled bool                   `json:"thinking_enabled,omitempty"` // true when Claude request has thinking with budget_tokens > 0
 	BetaHeaders     []string               `json:"-"` // Beta headers for Claude API, not serialized
 	ResponseFormat  interface{}            `json:"response_format,omitempty"` // OpenAI response_format for structured output
 }

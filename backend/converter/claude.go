@@ -87,6 +87,11 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 		req.ToolChoice = claudeReq.ToolChoice
 	}
 
+	// Detect thinking mode from the Claude request
+	if claudeReq.Thinking != nil && claudeReq.Thinking.BudgetTokens > 0 {
+		req.ThinkingEnabled = true
+	}
+
 	// 解析 messages
 	for _, msg := range claudeReq.Messages {
 		internalMsg := InternalMessage{Role: msg.Role}

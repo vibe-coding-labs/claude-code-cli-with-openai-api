@@ -410,6 +410,26 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 		openAIReq.ToolChoice = o.convertInternalToolChoiceToOpenAI(req.ToolChoice)
 	}
 
+	// Downgrade tool_choice when thinking is enabled: many providers (DeepSeek, SenseNova)
+	// reject tool_choice=required/object combined with thinking/reasoning mode.
+	if req.ThinkingEnabled && openAIReq.ToolChoice != nil {
+		needsDowngrade := false
+		switch tc := openAIReq.ToolChoice.(type) {
+		case string:
+			if tc == "required" {
+				needsDowngrade = true
+			}
+		case map[string]interface{}:
+			if tc["type"] == "function" {
+				needsDowngrade = true
+			}
+		}
+		if needsDowngrade {
+			utils.GetLogger().Info("[BuildRequest] Downgrading tool_choice from %v to 'auto' (thinking+tool_choice incompatible for this provider)", openAIReq.ToolChoice)
+			openAIReq.ToolChoice = "auto"
+		}
+	}
+
 	body, err := json.Marshal(openAIReq)
 	if err != nil {
 		return nil, err
