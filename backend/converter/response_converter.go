@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -179,13 +180,20 @@ type StreamingResult struct {
 //   - Uses event queue to ensure proper SSE event ordering (close → open → delta)
 //   - Handles tool_use and thinking blocks with proper sequential transitions
 func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context) *StreamingResult {
-	return ConvertOpenAIStreamingToClaudeWithMapping(c, reader, originalReq, ctx, nil)
+	return ConvertOpenAIStreamingToClaudeWithMapping(c, reader, originalReq, ctx, nil, 0)
 }
 
 // ConvertOpenAIStreamingToClaudeWithMapping converts OpenAI streaming response to Claude format with tool name mapping.
-func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string) *StreamingResult {
+// stallTimeout controls the mid-stream idle timeout — if upstream sends no data for this duration,
+// an overloaded_error is sent to trigger client-side retry. Pass 0 to use the default (120 seconds).
+func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string, stallTimeout time.Duration) *StreamingResult {
 	state := newStreamingState(originalReq.Model, toolNameMapping)
 	var collectedContent strings.Builder
+
+	// Default mid-stream idle timeout
+	if stallTimeout <= 0 {
+		stallTimeout = 120 * time.Second
+	}
 
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
@@ -207,13 +215,26 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	// Idle timeout for stall detection: if upstream sends nothing for stallTimeout,
+	// treat as stalled and return overloaded_error so Claude Code auto-retries.
+	idleTimer := time.NewTimer(stallTimeout)
+	defer idleTimer.Stop()
+
 	done := make(chan bool, 1)
 	errChan := make(chan error, 1)
 
 	// Read from stream in a goroutine
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[converter] panic recovered in streaming: %v", r)
+				errChan <- fmt.Errorf("streaming panic: %v", r)
+			}
+		}()
 		defer close(done)
 		for scanner.Scan() {
+			// Reset idle timer — upstream sent data (stall detection)
+			idleTimer.Reset(stallTimeout)
 			select {
 			case <-ctx.Done():
 				errChan <- fmt.Errorf("client disconnected")
@@ -245,6 +266,14 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 
 			var chunk models.OpenAIResponse
 			if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
+				state.chunkErrors++
+				if state.chunkErrors <= 5 {
+					log.Printf("[converter] chunk parse error #%d: %v (data: %.100s)", state.chunkErrors, err, chunkData)
+				}
+				if state.chunkErrors > 50 {
+					log.Printf("[converter] too many chunk errors (%d), aborting stream", state.chunkErrors)
+					return
+				}
 				continue
 			}
 			state.updateUsage(&chunk)
@@ -278,6 +307,8 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 						// Block transitions only when a block was already established on a previous chunk
 						shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
 						if shouldStart {
+							// Emit empty args for current tool_use block before closing
+							emitEmptyToolArgsForBlock(c, state)
 							emitContentBlockStop(c, state.currentBlockIndex)
 							state.currentBlockIndex++
 							state.currentBlockType = newType
@@ -296,6 +327,10 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 									}
 									if tc.ID != "" {
 										state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
+									} else if state.toolCalls[idx].id == "" {
+										if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
+											state.toolCalls[idx].id = id
+										}
 									}
 									toolName := state.restoreToolName(tc.Function.Name)
 									if toolName != "" {
@@ -328,6 +363,11 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 						}
 						if tc.ID != "" {
 							state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
+						} else if state.toolCalls[idx].id == "" {
+							// Sync the generated ID from content_block_start
+							if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
+								state.toolCalls[idx].id = id
+							}
 						}
 						if tc.Function.Name != "" {
 							state.toolCalls[idx].name = state.restoreToolName(tc.Function.Name)
@@ -375,11 +415,19 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			return nil
 		}
 		errorMsg := err.Error()
-		classifiedError := client.ClassifyOpenAIError(errorMsg)
-		sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
+			// Model routing errors → overloaded_error so Claude Code auto-retries
+			if client.IsModelRoutingError(errorMsg) {
+				sendSSEError(c, "overloaded_error", "API is temporarily overloaded. Please retry.")
+				return nil
+			}
+			classifiedError := client.ClassifyOpenAIError(errorMsg)
+			sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
 		return nil
 	case <-ctx.Done():
 		sendSSEError(c, "cancelled", "Request was cancelled by client")
+		return nil
+	case <-idleTimer.C:
+		sendSSEError(c, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
 		return nil
 	case <-time.After(5 * time.Minute):
 		sendSSEError(c, "api_error", "Streaming timeout")
@@ -566,15 +614,27 @@ func emitEmptyToolArgsIfNeeded(c *gin.Context, state *StreamingState) {
 	if state.currentBlockType != BlockToolUse {
 		return
 	}
-	// Check if any tool call has received args
-	needsEmptyArgs := true
+	emitEmptyToolArgsForBlock(c, state)
+}
+
+// emitEmptyToolArgsForBlock checks if the current tool_use block's tool call
+// has received any arguments, and emits "{}" if not.
+func emitEmptyToolArgsForBlock(c *gin.Context, state *StreamingState) {
+	if state.currentBlockType != BlockToolUse {
+		return
+	}
+	// Match the current block to its tool call by comparing the block's ID.
+	blockID, _ := state.currentBlockStart["id"].(string)
 	for _, tc := range state.toolCalls {
-		if tc.argsBuffer != "" {
-			needsEmptyArgs = false
-			break
+		if tc.id == blockID {
+			if tc.argsBuffer != "" {
+				return
+			}
+			emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
+			tc.argsBuffer = "{}"
+			return
 		}
 	}
-	if needsEmptyArgs {
-		emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
-	}
+	// No tracked tool call yet for this block — emit {} as default.
+	emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
 }

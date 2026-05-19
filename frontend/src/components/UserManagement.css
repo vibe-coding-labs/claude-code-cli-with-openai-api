@@ -5,7 +5,7 @@
 }
 
 .user-management .ant-card {
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .user-management__toolbar {
@@ -25,17 +25,17 @@
 }
 
 .user-management .ant-table {
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 .user-management .ant-table-thead > tr > th {
-  background: #fafafa;
+  background: var(--color-bg);
   font-weight: 600;
 }
 
 .user-management .ant-btn {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .user-management .ant-form-item {
@@ -43,7 +43,7 @@
 }
 
 .user-management__stats-grid .ant-card {
-  background: #fafafa;
+  background: var(--color-bg);
 }
 
 .user-management__filter-row {

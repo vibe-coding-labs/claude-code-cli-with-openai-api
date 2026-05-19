@@ -1,22 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box,
+  Card,
   Typography,
-  Paper,
-  Tabs,
-  Tab,
-  Alert,
-  CircularProgress,
+  Tag,
   Button,
-  TextField,
-  Chip,
-  Divider,
-} from '@mui/material';
+  Space,
+  Tabs,
+  Input,
+  Select,
+  message,
+  Descriptions,
+  Spin,
+  Result,
+} from 'antd';
+import {
+  ArrowLeftOutlined,
+  EditOutlined,
+  SaveOutlined,
+  CloseOutlined,
+} from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { tenantService, Tenant, TenantConfig } from '../services/tenantService';
 import APIKeyManager from './APIKeyManager';
 import QuotaManager from './QuotaManager';
 import IPRuleManager from './IPRuleManager';
+import './TenantDetail.css';
+
+const { Title } = Typography;
+
+const statusColors: Record<string, string> = {
+  active: 'success',
+  suspended: 'error',
+  deleted: 'default',
+};
 
 const TenantDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -24,30 +40,25 @@ const TenantDetail: React.FC = () => {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState<Partial<Tenant>>({});
 
   useEffect(() => {
-    if (id) {
-      loadTenant();
-    }
+    if (id) loadTenant();
   }, [id]);
 
   const loadTenant = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [tenantResponse, configResponse] = await Promise.all([
+      const [tenantRes, configRes] = await Promise.all([
         tenantService.getTenant(id!),
         tenantService.getTenantConfig(id!),
       ]);
-      setTenant(tenantResponse.tenant);
-      setConfig(configResponse.config);
-      setEditData(tenantResponse.tenant);
-      setError(null);
-    } catch (err) {
-      setError('Failed to load tenant details');
+      setTenant(tenantRes.tenant);
+      setConfig(configRes.config);
+      setEditData(tenantRes.tenant);
+    } catch {
+      message.error('Failed to load tenant details');
     } finally {
       setLoading(false);
     }
@@ -62,225 +73,185 @@ const TenantDetail: React.FC = () => {
         status: editData.status || tenant.status,
         metadata: editData.metadata || '',
       });
+      message.success('Tenant updated');
       setIsEditing(false);
       loadTenant();
-    } catch (err) {
-      setError('Failed to update tenant');
+    } catch {
+      message.error('Failed to update tenant');
     }
-  };
-
-  const getStatusChip = (status: string) => {
-    const colorMap: { [key: string]: 'success' | 'error' | 'default' } = {
-      active: 'success',
-      suspended: 'error',
-      deleted: 'default',
-    };
-    return <Chip label={status} color={colorMap[status] || 'default'} />;
   };
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 120 }}>
+        <Spin size="large" />
+      </div>
     );
   }
 
   if (!tenant) {
     return (
-      <Box>
-        <Alert severity="error">Tenant not found</Alert>
-        <Button onClick={() => navigate('/admin/tenants')} sx={{ mt: 2 }}>
-          Back to Tenants
-        </Button>
-      </Box>
+      <Card style={{ borderRadius: 'var(--radius-lg)' }}>
+        <Result
+          status="404"
+          title="Tenant not found"
+          extra={
+            <Button type="primary" onClick={() => navigate('/ui/tenants')}>
+              Back to Tenants
+            </Button>
+          }
+        />
+      </Card>
     );
   }
 
+  const renderEditForm = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 480 }}>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>Name</label>
+        <Input
+          value={editData.name || ''}
+          onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>Description</label>
+        <Input.TextArea
+          value={editData.description || ''}
+          onChange={(e) => setEditData({ ...editData, description: e.target.value })}
+          rows={2}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>Status</label>
+        <Select
+          value={editData.status || tenant.status}
+          onChange={(value) => setEditData({ ...editData, status: value })}
+          style={{ width: '100%' }}
+          options={[
+            { value: 'active', label: 'Active' },
+            { value: 'suspended', label: 'Suspended' },
+            { value: 'deleted', label: 'Deleted' },
+          ]}
+        />
+      </div>
+    </div>
+  );
+
+  const renderInfo = () => (
+    <Descriptions column={{ xs: 1, sm: 2 }} size="small" colon={false}>
+      <Descriptions.Item label="Status">
+        <Tag color={statusColors[tenant.status] || 'default'}>{tenant.status}</Tag>
+      </Descriptions.Item>
+      <Descriptions.Item label="ID">
+        <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+          {tenant.id}
+        </span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Description" span={2}>
+        {tenant.description || '—'}
+      </Descriptions.Item>
+      <Descriptions.Item label="Created">
+        {new Date(tenant.created_at).toLocaleString()}
+      </Descriptions.Item>
+      <Descriptions.Item label="Updated">
+        {new Date(tenant.updated_at).toLocaleString()}
+      </Descriptions.Item>
+    </Descriptions>
+  );
+
   return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">{tenant.name}</Typography>
-        <Box display="flex" gap={1}>
+    <div className="tenant-detail">
+      <div className="tenant-detail__header">
+        <div className="tenant-detail__title-wrap">
+          <Title level={4} className="tenant-detail__title">{tenant.name}</Title>
+          <span className="tenant-detail__id">{tenant.id}</span>
+        </div>
+        <Space>
           {isEditing ? (
             <>
-              <Button variant="outlined" onClick={() => setIsEditing(false)}>
+              <Button icon={<CloseOutlined />} onClick={() => { setIsEditing(false); setEditData(tenant); }}>
                 Cancel
               </Button>
-              <Button variant="contained" onClick={handleSave}>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
                 Save
               </Button>
             </>
           ) : (
-            <Button variant="outlined" onClick={() => setIsEditing(true)}>
+            <Button icon={<EditOutlined />} onClick={() => setIsEditing(true)}>
               Edit
             </Button>
           )}
-          <Button variant="outlined" onClick={() => navigate('/admin/tenants')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ui/tenants')}>
             Back
           </Button>
-        </Box>
-      </Box>
+        </Space>
+      </div>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Paper sx={{ mb: 3, p: 3 }}>
-        {isEditing ? (
-          <Box display="grid" gap={2}>
-            <TextField
-              label="Name"
-              value={editData.name || ''}
-              onChange={(e) => setEditData({ ...editData, name: e.target.value })}
-              fullWidth
-            />
-            <TextField
-              label="Description"
-              value={editData.description || ''}
-              onChange={(e) => setEditData({ ...editData, description: e.target.value })}
-              fullWidth
-              multiline
-              rows={2}
-            />
-            <TextField
-              label="Status"
-              select
-              value={editData.status || ''}
-              onChange={(e) => setEditData({ ...editData, status: e.target.value })}
-              fullWidth
-            >
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-              <option value="deleted">Deleted</option>
-            </TextField>
-          </Box>
-        ) : (
-          <Box>
-            <Box display="flex" justifyContent="space-between" mb={2}>
-              <Typography variant="body1" color="text.secondary">
-                Status
-              </Typography>
-              {getStatusChip(tenant.status)}
-            </Box>
-            <Divider sx={{ my: 1 }} />
-            <Box mb={2}>
-              <Typography variant="body2" color="text.secondary">
-                Description
-              </Typography>
-              <Typography>{tenant.description || 'No description'}</Typography>
-            </Box>
-            <Box mb={2}>
-              <Typography variant="body2" color="text.secondary">
-                ID
-              </Typography>
-              <Typography fontFamily="monospace" variant="body2">
-                {tenant.id}
-              </Typography>
-            </Box>
-            <Box display="flex" gap={4}>
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  Created At
-                </Typography>
-                <Typography>
-                  {new Date(tenant.created_at).toLocaleString()}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  Updated At
-                </Typography>
-                <Typography>
-                  {new Date(tenant.updated_at).toLocaleString()}
-                </Typography>
-              </Box>
-            </Box>
-          </Box>
-        )}
-      </Paper>
+      <Card className="tenant-detail__card">
+        <div className="tenant-detail__card-title">Details</div>
+        {isEditing ? renderEditForm() : renderInfo()}
+      </Card>
 
       {config && (
-        <Paper sx={{ mb: 3, p: 3 }}>
-          <Typography variant="h6" mb={2}>
-            Configuration
-          </Typography>
-          <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                Default Model
-              </Typography>
-              <Typography>{config.default_model || 'Not set'}</Typography>
-            </Box>
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                Allowed Models
-              </Typography>
-              <Typography>
-                {config.allowed_models?.length
-                  ? config.allowed_models.join(', ')
-                  : 'All models'}
-              </Typography>
-            </Box>
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                Custom Rate Limits
-              </Typography>
-              <Chip
-                label={config.custom_rate_limits ? 'Enabled' : 'Disabled'}
-                color={config.custom_rate_limits ? 'success' : 'default'}
-                size="small"
-              />
-            </Box>
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                Require HMAC
-              </Typography>
-              <Chip
-                label={config.require_hmac ? 'Required' : 'Optional'}
-                color={config.require_hmac ? 'success' : 'default'}
-                size="small"
-              />
-            </Box>
+        <Card className="tenant-detail__card">
+          <div className="tenant-detail__card-title">Configuration</div>
+          <div className="tenant-detail__config-grid">
+            <div className="tenant-detail__config-item">
+              <div className="tenant-detail__config-label">Default Model</div>
+              <div className="tenant-detail__config-value">{config.default_model || 'Not set'}</div>
+            </div>
+            <div className="tenant-detail__config-item">
+              <div className="tenant-detail__config-label">Allowed Models</div>
+              <div className="tenant-detail__config-value">
+                {config.allowed_models?.length ? config.allowed_models.join(', ') : 'All models'}
+              </div>
+            </div>
+            <div className="tenant-detail__config-item">
+              <div className="tenant-detail__config-label">Custom Rate Limits</div>
+              <div className="tenant-detail__config-value">
+                <Tag color={config.custom_rate_limits ? 'success' : 'default'}>
+                  {config.custom_rate_limits ? 'Enabled' : 'Disabled'}
+                </Tag>
+              </div>
+            </div>
+            <div className="tenant-detail__config-item">
+              <div className="tenant-detail__config-label">Require HMAC</div>
+              <div className="tenant-detail__config-value">
+                <Tag color={config.require_hmac ? 'success' : 'default'}>
+                  {config.require_hmac ? 'Required' : 'Optional'}
+                </Tag>
+              </div>
+            </div>
             {config.webhook_url && (
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  Webhook URL
-                </Typography>
-                <Typography variant="body2">{config.webhook_url}</Typography>
-              </Box>
+              <div className="tenant-detail__config-item">
+                <div className="tenant-detail__config-label">Webhook URL</div>
+                <div className="tenant-detail__config-value" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                  {config.webhook_url}
+                </div>
+              </div>
             )}
             {config.alert_email && (
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  Alert Email
-                </Typography>
-                <Typography variant="body2">{config.alert_email}</Typography>
-              </Box>
+              <div className="tenant-detail__config-item">
+                <div className="tenant-detail__config-label">Alert Email</div>
+                <div className="tenant-detail__config-value">{config.alert_email}</div>
+              </div>
             )}
-          </Box>
-        </Paper>
+          </div>
+        </Card>
       )}
 
-      <Paper sx={{ mb: 3 }}>
+      <Card className="tenant-detail__tabs-card">
         <Tabs
-          value={activeTab}
-          onChange={(_, newValue) => setActiveTab(newValue)}
-          sx={{ borderBottom: 1, borderColor: 'divider' }}
-        >
-          <Tab label="API Keys" />
-          <Tab label="Quotas" />
-          <Tab label="IP Rules" />
-        </Tabs>
-        <Box p={3}>
-          {activeTab === 0 && <APIKeyManager tenantId={id!} />}
-          {activeTab === 1 && <QuotaManager tenantId={id!} />}
-          {activeTab === 2 && <IPRuleManager tenantId={id!} />}
-        </Box>
-      </Paper>
-    </Box>
+          defaultActiveKey="api-keys"
+          items={[
+            { key: 'api-keys', label: 'API Keys', children: <APIKeyManager tenantId={id!} /> },
+            { key: 'quotas', label: 'Quotas', children: <QuotaManager tenantId={id!} /> },
+            { key: 'ip-rules', label: 'IP Rules', children: <IPRuleManager tenantId={id!} /> },
+          ]}
+        />
+      </Card>
+    </div>
   );
 };
 

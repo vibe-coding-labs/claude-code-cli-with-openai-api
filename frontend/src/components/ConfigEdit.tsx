@@ -19,7 +19,7 @@ import {
   Row,
   Col,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import ModelSelector from './ModelSelector';
 import dayjs from 'dayjs';
@@ -38,6 +38,8 @@ interface Config {
   max_tokens_limit: number;
   request_timeout: number;
   retry_count: number;
+  retry_backoff_base: number;
+  retry_backoff_max: number;
   reasoning_effort?: string;
   big_model_reasoning_effort?: string;
   middle_model_reasoning_effort?: string;
@@ -167,6 +169,39 @@ const ConfigEdit: React.FC = () => {
           </Form.Item>
 
           <Form.Item
+            name="proxy_url"
+            label="代理 URL"
+            tooltip="访问上游 API 时使用的 HTTP 代理地址（如 http://127.0.0.1:7890）。留空则直连或使用环境变量中的代理"
+          >
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="http://127.0.0.1:7890（可选）" style={{ flex: 1 }} />
+              <Button
+                icon={<SearchOutlined />}
+                onClick={async () => {
+                  try {
+                    const res = await axios.get('/api/proxy/detect');
+                    const proxies = res.data;
+                    if (!proxies || proxies.length === 0) {
+                      message.info('未检测到本地代理');
+                      return;
+                    }
+                    const first = proxies[0];
+                    const url = first.http_url || first.socks_url || '';
+                    if (url) {
+                      form.setFieldsValue({ proxy_url: url });
+                      message.success(`已检测到 ${first.name} (${url})`);
+                    }
+                  } catch {
+                    message.warning('代理检测失败');
+                  }
+                }}
+              >
+                自动检测
+              </Button>
+            </Space.Compact>
+          </Form.Item>
+
+          <Form.Item
             name="big_model"
             label="大模型 (Opus)"
             rules={[{ required: true, message: '请输入大模型名称' }]}
@@ -186,6 +221,7 @@ const ConfigEdit: React.FC = () => {
                     <Select.Option value="low">Low</Select.Option>
                     <Select.Option value="medium">Medium</Select.Option>
                     <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
                   </Select>
                 </Form.Item>
               </Col>
@@ -212,6 +248,7 @@ const ConfigEdit: React.FC = () => {
                     <Select.Option value="low">Low</Select.Option>
                     <Select.Option value="medium">Medium</Select.Option>
                     <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
                   </Select>
                 </Form.Item>
               </Col>
@@ -238,6 +275,7 @@ const ConfigEdit: React.FC = () => {
                     <Select.Option value="low">Low</Select.Option>
                     <Select.Option value="medium">Medium</Select.Option>
                     <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
                   </Select>
                 </Form.Item>
               </Col>
@@ -289,6 +327,26 @@ const ConfigEdit: React.FC = () => {
             tooltip="失败重试次数定义了当OpenAI API调用失败时，系统自动重试的次数。合理的重试机制能够：1) 提高成功率 - 应对网络抖动或API临时故障；2) 改善用户体验 - 避免因偶发错误导致请求失败；3) 节省成本 - 减少因临时问题导致的手动重试。建议值：稳定环境3次、不稳定网络5次、高可用需求5-10次。默认3次可以应对大多数场景。注意：设置过少可能导致偶发故障影响使用，设置过多则可能在API持续故障时增加响应延迟。每次重试之间会有短暂延迟（指数退避），最大支持100次重试。"
           >
             <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="默认为3次" />
+          </Form.Item>
+
+          <Form.Item
+            name="retry_backoff_base"
+            label="指数退避基数（秒）"
+            rules={[{ required: true, message: '请输入指数退避基数' }]}
+            initialValue={1}
+            tooltip="指数退避的基数，用于计算每次重试的等待时间。第一次重试等待时间 = 基数 × 2^0，第二次 = 基数 × 2^1，以此类推。建议值：1秒（默认），对于快速恢复的服务可设置为0.5秒，对于较慢的服务可设置为2-5秒。"
+          >
+            <InputNumber min={0.1} max={60} step={0.5} style={{ width: '100%' }} placeholder="默认为1秒" />
+          </Form.Item>
+
+          <Form.Item
+            name="retry_backoff_max"
+            label="指数退避最大上限（秒）"
+            rules={[{ required: true, message: '请输入指数退避最大上限' }]}
+            initialValue={60}
+            tooltip="指数退避的最大等待时间上限。当计算出的退避时间超过此值时，将使用此上限值。用于防止退避时间过长导致用户体验变差。建议值：30-120秒。默认60秒。"
+          >
+            <InputNumber min={1} max={600} style={{ width: '100%' }} placeholder="默认为60秒" />
           </Form.Item>
 
           <Divider />

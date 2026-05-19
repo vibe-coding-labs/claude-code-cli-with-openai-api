@@ -44,6 +44,9 @@ interface Config {
   big_model: string;
   middle_model: string;
   small_model: string;
+  big_model_reasoning_effort?: string;
+  middle_model_reasoning_effort?: string;
+  small_model_reasoning_effort?: string;
   anthropic_api_key?: string;
   max_tokens_limit: number;
   request_timeout: number;
@@ -186,7 +189,7 @@ const ConfigDetail: React.FC = () => {
         try {
           await axios.delete(`/api/configs/${id}`);
           message.success('删除成功');
-          navigate('/ui');
+          navigate('/ui/configs');
         } catch (error) {
           message.error('删除失败');
         }
@@ -376,7 +379,7 @@ const ConfigDetail: React.FC = () => {
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ui')}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ui/configs')}>
           返回
         </Button>
         <Button icon={<EditOutlined />} onClick={handleEdit}>
@@ -427,9 +430,30 @@ const ConfigDetail: React.FC = () => {
                     </Descriptions.Item>
                     <Descriptions.Item label="OpenAI API Key">{config.openai_api_key_masked}</Descriptions.Item>
                     <Descriptions.Item label="Base URL">{config.openai_base_url}</Descriptions.Item>
-                    <Descriptions.Item label="大模型 (Opus)">{config.big_model}</Descriptions.Item>
-                    <Descriptions.Item label="中模型 (Sonnet)">{config.middle_model}</Descriptions.Item>
-                    <Descriptions.Item label="小模型 (Haiku)">{config.small_model}</Descriptions.Item>
+                    <Descriptions.Item label="大模型 (Opus)">
+                      {config.big_model}
+                      {config.big_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          思考: {config.big_model_reasoning_effort}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="中模型 (Sonnet)">
+                      {config.middle_model}
+                      {config.middle_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          思考: {config.middle_model_reasoning_effort}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="小模型 (Haiku)">
+                      {config.small_model}
+                      {config.small_model_reasoning_effort && (
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          思考: {config.small_model_reasoning_effort}
+                        </Tag>
+                      )}
+                    </Descriptions.Item>
                     <Descriptions.Item label="最大Token限制">{config.max_tokens_limit}</Descriptions.Item>
                     <Descriptions.Item label="请求超时(秒)">{config.request_timeout}</Descriptions.Item>
                     <Descriptions.Item label="创建时间">
@@ -569,11 +593,38 @@ claude`}
           <Form.Item name="big_model" label="大模型 (Opus)" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
+          <Form.Item name="big_model_reasoning_effort" label="大模型思考级别">
+            <Select placeholder="选择思考级别（可选）" allowClear>
+              <Option value="">默认</Option>
+              <Option value="low">Low</Option>
+              <Option value="medium">Medium</Option>
+              <Option value="high">High</Option>
+              <Option value="xhigh">XHigh</Option>
+            </Select>
+          </Form.Item>
           <Form.Item name="middle_model" label="中模型 (Sonnet)" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
+          <Form.Item name="middle_model_reasoning_effort" label="中模型思考级别">
+            <Select placeholder="选择思考级别（可选）" allowClear>
+              <Option value="">默认</Option>
+              <Option value="low">Low</Option>
+              <Option value="medium">Medium</Option>
+              <Option value="high">High</Option>
+              <Option value="xhigh">XHigh</Option>
+            </Select>
+          </Form.Item>
           <Form.Item name="small_model" label="小模型 (Haiku)" rules={[{ required: true }]}>
             <Input />
+          </Form.Item>
+          <Form.Item name="small_model_reasoning_effort" label="小模型思考级别">
+            <Select placeholder="选择思考级别（可选）" allowClear>
+              <Option value="">默认</Option>
+              <Option value="low">Low</Option>
+              <Option value="medium">Medium</Option>
+              <Option value="high">High</Option>
+              <Option value="xhigh">XHigh</Option>
+            </Select>
           </Form.Item>
           <Form.Item name="max_tokens_limit" label="最大Token限制">
             <Input type="number" />

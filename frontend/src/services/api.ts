@@ -166,3 +166,6 @@ export const userAPI = {
 
 export default api;
 
+// Export api as apiClient for multi-tenant service compatibility
+export const apiClient = api;
+

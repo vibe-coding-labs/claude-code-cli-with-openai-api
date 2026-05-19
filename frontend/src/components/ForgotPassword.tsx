@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Card, Typography, Input, Button, Space, message, Steps, Tooltip } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Card, Typography, Input, Button, Space, message, Steps, Tooltip, Spin } from 'antd';
 import { ArrowLeftOutlined, CopyOutlined, SafetyOutlined, GithubOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { getApiOrigin } from '../services/apiBase';
 import './ForgotPassword.css';
 
 const { Title, Paragraph, Text } = Typography;
@@ -9,8 +11,23 @@ const { Title, Paragraph, Text } = Typography;
 const ForgotPassword: React.FC = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(0);
+  const [binaryPath, setBinaryPath] = useState<string>('');
+  const [loading, setLoading] = useState(true);
 
-  const resetCommand = './claude-code-cli-with-openai-api reset-password';
+  useEffect(() => {
+    axios.get(`${getApiOrigin()}/api/auth/server-info`)
+      .then(res => {
+        setBinaryPath(res.data.binary_path || '');
+      })
+      .catch(() => {
+        setBinaryPath('');
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const resetCommand = binaryPath
+    ? `${binaryPath} reset-password`
+    : './ccr-server reset-password';
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText(resetCommand).then(() => {
@@ -20,6 +37,10 @@ const ForgotPassword: React.FC = () => {
       message.error('复制失败，请手动复制');
     });
   };
+
+  if (loading) {
+    return <Spin style={{ display: 'flex', justifyContent: 'center', marginTop: '40vh' }} />;
+  }
 
   return (
     <div className="forgot-password">
@@ -118,15 +139,15 @@ const ForgotPassword: React.FC = () => {
                 1. 打开服务器终端（运行此应用的服务器）
               </Paragraph>
               <Paragraph style={{ marginBottom: 8 }}>
-                2. 进入应用目录：
+                2. 二进制文件位置：
               </Paragraph>
               <Input
-                value="cd /path/to/claude-code-cli-with-openai-api"
+                value={binaryPath || '/path/to/ccr-server'}
                 readOnly
                 className="forgot-password__path-input"
               />
               <Paragraph style={{ marginBottom: 8 }}>
-                3. 粘贴并执行刚才复制的命令
+                3. 粘贴并执行刚才复制的命令（需要上述二进制文件的执行权限）
               </Paragraph>
               <Paragraph style={{ marginBottom: 8 }}>
                 4. 按照提示输入新密码（密码长度至少6个字符）

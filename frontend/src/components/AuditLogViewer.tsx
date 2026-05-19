@@ -1,38 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Box,
-  Paper,
   Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TablePagination,
+  Card,
   Typography,
-  TextField,
-  MenuItem,
-  FormControl,
-  InputLabel,
+  Tag,
   Select,
-  Chip,
-  Alert,
-  CircularProgress,
-  IconButton,
+  Input,
+  Space,
+  Button,
+  Modal,
+  Empty,
   Tooltip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-} from '@mui/material';
-import { Info as InfoIcon } from '@mui/icons-material';
+} from 'antd';
+import {
+  SearchOutlined,
+  ReloadOutlined,
+  InfoCircleOutlined,
+  SafetyCertificateOutlined,
+  CloseOutlined,
+} from '@ant-design/icons';
 import { auditLogService, AuditEvent } from '../services/auditLogService';
+import './AuditLogViewer.css';
+
+const { Title } = Typography;
+
+const eventTypeColors: Record<string, string> = {
+  authentication: 'blue',
+  ip_filter: 'orange',
+  rate_limit: 'red',
+  quota: 'purple',
+  api_key: 'cyan',
+};
+
+const resultColors: Record<string, string> = {
+  success: 'success',
+  failure: 'error',
+};
 
 const AuditLogViewer: React.FC = () => {
   const [logs, setLogs] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [filters, setFilters] = useState({
     event_type: '',
     result: '',
@@ -40,209 +49,251 @@ const AuditLogViewer: React.FC = () => {
   });
   const [selectedLog, setSelectedLog] = useState<AuditEvent | null>(null);
 
-  useEffect(() => {
-    loadLogs();
-  }, [filters]);
-
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const response = await auditLogService.queryEvents({
         ...filters,
-        limit: rowsPerPage,
-        offset: page * rowsPerPage,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
       });
-      setLogs(response.audit_logs);
-      setError(null);
-    } catch (err) {
-      setError('Failed to load audit logs');
+      setLogs(response.audit_logs || []);
+    } catch {
+      setLogs([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, page, pageSize]);
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage);
+  useEffect(() => {
     loadLogs();
-  };
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
-    loadLogs();
-  };
-
-  const getResultChip = (result: string) => {
-    if (result === 'success') {
-      return <Chip label="Success" color="success" size="small" />;
-    }
-    return <Chip label={result} color="error" size="small" />;
-  };
+  }, [loadLogs]);
 
   const formatTimestamp = (timestamp: string) => {
     return new Date(timestamp).toLocaleString();
   };
 
-  if (loading && logs.length === 0) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
+  const columns = [
+    {
+      title: 'Timestamp',
+      dataIndex: 'timestamp',
+      key: 'timestamp',
+      width: 180,
+      render: (ts: string) => (
+        <span style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
+          {formatTimestamp(ts)}
+        </span>
+      ),
+    },
+    {
+      title: 'Event Type',
+      dataIndex: 'event_type',
+      key: 'event_type',
+      width: 140,
+      render: (type: string) => (
+        <Tag color={eventTypeColors[type] || 'default'}>{type}</Tag>
+      ),
+    },
+    {
+      title: 'Actor',
+      dataIndex: 'actor',
+      key: 'actor',
+      width: 140,
+      ellipsis: true,
+    },
+    {
+      title: 'Action',
+      dataIndex: 'action',
+      key: 'action',
+      width: 130,
+      ellipsis: true,
+    },
+    {
+      title: 'Resource',
+      dataIndex: 'resource',
+      key: 'resource',
+      width: 140,
+      ellipsis: true,
+    },
+    {
+      title: 'Result',
+      dataIndex: 'result',
+      key: 'result',
+      width: 100,
+      render: (result: string) => (
+        <Tag color={resultColors[result] || 'default'}>{result}</Tag>
+      ),
+    },
+    {
+      title: 'IP Address',
+      dataIndex: 'ip_address',
+      key: 'ip_address',
+      width: 140,
+      render: (ip: string) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          {ip}
+        </span>
+      ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 48,
+      render: (_: unknown, record: AuditEvent) => (
+        <Tooltip title="View Details">
+          <Button
+            type="text"
+            size="small"
+            icon={<InfoCircleOutlined />}
+            onClick={() => setSelectedLog(record)}
+            style={{ color: 'var(--color-accent)' }}
+          />
+        </Tooltip>
+      ),
+    },
+  ];
 
   return (
-    <Box>
-      <Typography variant="h4" mb={3}>
-        Audit Logs
-      </Typography>
+    <Card className="audit-log-viewer">
+      <div className="audit-log-viewer__header">
+        <div className="audit-log-viewer__title-wrap">
+          <Title level={4} className="audit-log-viewer__title">
+            <SafetyCertificateOutlined style={{ marginRight: 8, color: 'var(--color-accent)' }} />
+            Audit Logs
+          </Title>
+          <span className="audit-log-viewer__subtitle">Security event history and audit trail</span>
+        </div>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={loadLogs}
+          loading={loading}
+        >
+          Refresh
+        </Button>
+      </div>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Paper sx={{ mb: 2, p: 2 }}>
-        <Box display="flex" gap={2}>
-          <FormControl sx={{ minWidth: 150 }}>
-            <InputLabel>Event Type</InputLabel>
-            <Select
-              value={filters.event_type}
-              onChange={(e) => setFilters({ ...filters, event_type: e.target.value })}
-              label="Event Type"
-            >
-              <MenuItem value="">All</MenuItem>
-              <MenuItem value="authentication">Authentication</MenuItem>
-              <MenuItem value="ip_filter">IP Filter</MenuItem>
-              <MenuItem value="rate_limit">Rate Limit</MenuItem>
-              <MenuItem value="quota">Quota</MenuItem>
-              <MenuItem value="api_key">API Key</MenuItem>
-            </Select>
-          </FormControl>
-
-          <FormControl sx={{ minWidth: 120 }}>
-            <InputLabel>Result</InputLabel>
-            <Select
-              value={filters.result}
-              onChange={(e) => setFilters({ ...filters, result: e.target.value })}
-              label="Result"
-            >
-              <MenuItem value="">All</MenuItem>
-              <MenuItem value="success">Success</MenuItem>
-              <MenuItem value="failure">Failure</MenuItem>
-            </Select>
-          </FormControl>
-
-          <TextField
-            label="Tenant ID"
-            value={filters.tenant_id}
-            onChange={(e) => setFilters({ ...filters, tenant_id: e.target.value })}
-          />
-        </Box>
-      </Paper>
-
-      <TableContainer component={Paper}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Timestamp</TableCell>
-              <TableCell>Event Type</TableCell>
-              <TableCell>Actor</TableCell>
-              <TableCell>Action</TableCell>
-              <TableCell>Resource</TableCell>
-              <TableCell>Result</TableCell>
-              <TableCell>IP Address</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {logs.map((log) => (
-              <TableRow key={log.id}>
-                <TableCell>{formatTimestamp(log.timestamp)}</TableCell>
-                <TableCell>
-                  <Chip label={log.event_type} size="small" variant="outlined" />
-                </TableCell>
-                <TableCell>{log.actor}</TableCell>
-                <TableCell>{log.action}</TableCell>
-                <TableCell>{log.resource}</TableCell>
-                <TableCell>{getResultChip(log.result)}</TableCell>
-                <TableCell>{log.ip_address}</TableCell>
-                <TableCell align="right">
-                  <Tooltip title="View Details">
-                    <IconButton onClick={() => setSelectedLog(log)}>
-                      <InfoIcon />
-                    </IconButton>
-                  </Tooltip>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <TablePagination
-          component="div"
-          count={-1}
-          page={page}
-          onPageChange={handleChangePage}
-          rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          rowsPerPageOptions={[10, 25, 50, 100]}
+      <div className="audit-log-viewer__filters">
+        <Select
+          placeholder="Event Type"
+          allowClear
+          style={{ width: 160 }}
+          value={filters.event_type || undefined}
+          onChange={(value) => {
+            setFilters(prev => ({ ...prev, event_type: value || '' }));
+            setPage(1);
+          }}
+          options={[
+            { value: 'authentication', label: 'Authentication' },
+            { value: 'ip_filter', label: 'IP Filter' },
+            { value: 'rate_limit', label: 'Rate Limit' },
+            { value: 'quota', label: 'Quota' },
+            { value: 'api_key', label: 'API Key' },
+          ]}
         />
-      </TableContainer>
+        <Select
+          placeholder="Result"
+          allowClear
+          style={{ width: 120 }}
+          value={filters.result || undefined}
+          onChange={(value) => {
+            setFilters(prev => ({ ...prev, result: value || '' }));
+            setPage(1);
+          }}
+          options={[
+            { value: 'success', label: 'Success' },
+            { value: 'failure', label: 'Failure' },
+          ]}
+        />
+        <Input
+          placeholder="Tenant ID"
+          prefix={<SearchOutlined />}
+          allowClear
+          style={{ width: 200 }}
+          value={filters.tenant_id}
+          onChange={(e) => {
+            setFilters(prev => ({ ...prev, tenant_id: e.target.value }));
+            setPage(1);
+          }}
+        />
+      </div>
 
-      {/* Detail Dialog */}
-      <Dialog
+      <Card className="audit-log-viewer__table-card">
+        <Table
+          dataSource={logs}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          size="middle"
+          pagination={{
+            current: page,
+            pageSize,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '25', '50', '100'],
+            showTotal: (total) => `${total} events`,
+            onChange: (newPage, newPageSize) => {
+              setPage(newPage);
+              setPageSize(newPageSize);
+            },
+          }}
+          locale={{
+            emptyText: (
+              <div className="audit-log-viewer__empty">
+                <Empty description="No audit logs found" />
+              </div>
+            ),
+          }}
+        />
+      </Card>
+
+      <Modal
+        title="Audit Log Details"
         open={!!selectedLog}
-        onClose={() => setSelectedLog(null)}
-        maxWidth="md"
-        fullWidth
+        onCancel={() => setSelectedLog(null)}
+        footer={
+          <Button icon={<CloseOutlined />} onClick={() => setSelectedLog(null)}>
+            Close
+          </Button>
+        }
+        width={640}
+        className="audit-log-viewer__detail-modal"
+        destroyOnClose
       >
-        <DialogTitle>Audit Log Details</DialogTitle>
-        <DialogContent>
-          {selectedLog && (
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                ID: {selectedLog.id}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Timestamp: {formatTimestamp(selectedLog.timestamp)}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Tenant ID: {selectedLog.tenant_id || 'N/A'}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Event Type: {selectedLog.event_type}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Actor: {selectedLog.actor}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Action: {selectedLog.action}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Resource: {selectedLog.resource}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Result: {selectedLog.result}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                IP Address: {selectedLog.ip_address}
-              </Typography>
-              {selectedLog.details && (
-                <Box mt={2}>
-                  <Typography variant="subtitle2">Details:</Typography>
-                  <Paper sx={{ p: 2, bgcolor: 'grey.100' }}>
-                    <pre style={{ margin: 0, overflow: 'auto' }}>
-                      {JSON.stringify(JSON.parse(selectedLog.details), null, 2)}
-                    </pre>
-                  </Paper>
-                </Box>
-              )}
-            </Box>
-          )}
-        </DialogContent>
-      </Dialog>
-    </Box>
+        {selectedLog && (
+          <div>
+            {[
+              { label: 'ID', value: selectedLog.id },
+              { label: 'Timestamp', value: formatTimestamp(selectedLog.timestamp) },
+              { label: 'Event Type', value: <Tag color={eventTypeColors[selectedLog.event_type] || 'default'}>{selectedLog.event_type}</Tag> },
+              { label: 'Actor', value: selectedLog.actor },
+              { label: 'Action', value: selectedLog.action },
+              { label: 'Resource', value: selectedLog.resource },
+              { label: 'Result', value: <Tag color={resultColors[selectedLog.result] || 'default'}>{selectedLog.result}</Tag> },
+              { label: 'IP Address', value: selectedLog.ip_address },
+              { label: 'Tenant ID', value: selectedLog.tenant_id || 'N/A' },
+            ].map((item) => (
+              <div key={item.label} className="audit-log-viewer__detail-row">
+                <span className="audit-log-viewer__detail-label">{item.label}</span>
+                <span className="audit-log-viewer__detail-value">{item.value}</span>
+              </div>
+            ))}
+            {selectedLog.details && (
+              <div style={{ marginTop: 16 }}>
+                <span className="audit-log-viewer__detail-label">Details</span>
+                <div className="audit-log-viewer__detail-json">
+                  {(() => {
+                    try {
+                      return JSON.stringify(JSON.parse(selectedLog.details), null, 2);
+                    } catch {
+                      return selectedLog.details;
+                    }
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+    </Card>
   );
 };
 

@@ -365,6 +365,24 @@ config.local.*
 playwright-test-results/
 test-results/
 
+# CCR gateway archives
+cc-gateway-*/
+
+# Additional build artifacts
+claude-bridge
+claude-bridge-server
+claude-code-cli
+
+# Backend binaries
+backend/ccr-server
+backend/claude-proxy
+backend/claude-proxy-server
+backend/server
+
+# Backend frontend build artifacts
+backend/frontend/
+backend/frontend_build/
+
 # Database migration backups
 *.sql.bak
 *.sql.backup

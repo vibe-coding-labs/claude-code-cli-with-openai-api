@@ -49,6 +49,9 @@ type StreamingState struct {
 	// Track whether message_delta was already emitted
 	emittedMessageDelta bool
 
+	// Conversion error tracking
+	chunkErrors int
+
 	// Tool tracking for OpenAI's streaming tool call deltas
 	// Maps OpenAI tool_call index to accumulated state
 	toolCalls map[int]*toolCallInfo
@@ -112,8 +115,6 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 
 	// Check if type changed
 	if blockType != s.currentBlockType {
-		s.currentBlockType = blockType
-		s.currentBlockStart = blockStart
 		return true, blockType, blockStart
 	}
 
@@ -130,10 +131,8 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 					"type":  "tool_use",
 					"id":    toolID,
 					"name":  toolName,
-					"input": map[string]interface{}{},
+					"input": "",
 				}
-				s.currentBlockType = blockType
-				s.currentBlockStart = blockStart
 				return true, blockType, blockStart
 			}
 		}
@@ -154,11 +153,17 @@ func (s *StreamingState) detectBlockType(delta *models.OpenAIMessage) (ContentBl
 			toolID = "toolu_" + generateShortID()
 		}
 		toolName := s.restoreToolName(tc.Function.Name)
+		// Don't switch to tool_use if name is empty — wait for the name chunk.
+		// Some providers send name on a separate chunk from the initial tool_call detection.
+		// Emitting a tool_use block with empty name causes Claude Code CLI parse failures.
+		if toolName == "" {
+			return s.currentBlockType, s.currentBlockStart
+		}
 		return BlockToolUse, map[string]interface{}{
 			"type":  "tool_use",
 			"id":    toolID,
 			"name":  toolName,
-			"input": map[string]interface{}{},
+			"input": "",
 		}
 	}
 

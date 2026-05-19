@@ -1,16 +1,31 @@
-import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, message, Space, Tooltip } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Form, Input, Button, Card, Typography, message, Space, Tooltip, Spin } from 'antd';
 import { UserOutlined, LockOutlined, CopyOutlined, GithubOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { usePageTitle } from '../utils/pageTitle';
-import { initializeSystem, setToken, setCurrentUser } from '../services/auth';
+import { initializeSystem, checkInitialized, setToken, setCurrentUser } from '../services/auth';
 
 const { Title, Paragraph } = Typography;
 
 const Initialize: React.FC = () => {
   usePageTitle('系统初始化');
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    checkInitialized().then((initialized) => {
+      if (initialized) {
+        navigate('/ui/login', { replace: true });
+      } else {
+        setChecking(false);
+      }
+    });
+  }, [navigate]);
+
+  if (checking) {
+    return <Spin style={{ display: 'flex', justifyContent: 'center', marginTop: '40vh' }} />;
+  }
 
   const resetCommand = './claude-code-cli-with-openai-api reset-password';
 
@@ -26,7 +41,7 @@ const Initialize: React.FC = () => {
       setToken(response.token);
       setCurrentUser(response.user);
       message.success('系统初始化成功！');
-      navigate('/ui');
+      navigate('/ui/configs');
     } catch (error: any) {
       message.error(error.response?.data?.error || '初始化失败，请重试');
     } finally {

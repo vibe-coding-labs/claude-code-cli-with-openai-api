@@ -943,7 +943,7 @@ func TestIntegration_ClaudeCode_ToolNameRestoration(t *testing.T) {
 		},
 	}
 
-	result := ConvertOpenAIStreamingToClaudeWithMapping(c, strings.NewReader(sse), req, context.Background(), mapping)
+	result := ConvertOpenAIStreamingToClaudeWithMapping(c, strings.NewReader(sse), req, context.Background(), mapping, 0)
 	if result == nil {
 		t.Fatal("result is nil")
 	}

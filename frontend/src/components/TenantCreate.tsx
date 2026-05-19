@@ -1,23 +1,26 @@
 import React, { useState } from 'react';
 import {
-  Box,
-  Paper,
+  Card,
   Typography,
-  TextField,
+  Input,
   Button,
-  Alert,
-  Stepper,
-  Step,
-  StepLabel,
-  FormControl,
-  InputLabel,
+  Space,
+  Steps,
   Select,
-  MenuItem,
-} from '@mui/material';
+  message,
+  Alert,
+} from 'antd';
+import {
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
+  CheckOutlined,
+} from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { tenantService } from '../services/tenantService';
+import './TenantCreate.css';
 
-const steps = ['Basic Info', 'Configuration', 'Review'];
+const { Title } = Typography;
+const { TextArea } = Input;
 
 const TenantCreate: React.FC = () => {
   const navigate = useNavigate();
@@ -27,7 +30,7 @@ const TenantCreate: React.FC = () => {
   const [tenantData, setTenantData] = useState({
     name: '',
     description: '',
-    status: 'active',
+    status: 'active' as string,
     metadata: '',
   });
   const [configData, setConfigData] = useState({
@@ -38,257 +41,222 @@ const TenantCreate: React.FC = () => {
     alert_email: '',
   });
 
-  const handleNext = () => {
-    setActiveStep((prev) => prev + 1);
-  };
+  const steps = [
+    { title: 'Basic Info', description: 'Name and status' },
+    { title: 'Configuration', description: 'Model and limits' },
+    { title: 'Review', description: 'Confirm details' },
+  ];
 
-  const handleBack = () => {
-    setActiveStep((prev) => prev - 1);
+  const isStepValid = () => {
+    if (activeStep === 0) return tenantData.name.length >= 3;
+    return true;
   };
 
   const handleCreate = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
       const response = await tenantService.createTenant({
         name: tenantData.name,
         description: tenantData.description,
         status: tenantData.status,
         metadata: tenantData.metadata,
       });
-
-      // Update tenant config if provided
-      if (response.tenant.id) {
-        await tenantService.updateTenantConfig(response.tenant.id, configData);
+      if (response.tenant?.id) {
+        await tenantService.updateTenantConfig(response.tenant.id, configData).catch(() => {});
       }
-
-      navigate(`/admin/tenants/${response.tenant.id}`);
-    } catch (err) {
+      message.success('Tenant created successfully');
+      navigate(`/ui/tenants/${response.tenant.id}`);
+    } catch {
       setError('Failed to create tenant');
       setLoading(false);
     }
   };
 
-  const isStepValid = () => {
-    switch (activeStep) {
-      case 0:
-        return tenantData.name.length >= 3;
-      case 1:
-        return true;
-      default:
-        return true;
-    }
-  };
+  const renderBasicInfo = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 520 }}>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Tenant Name <span style={{ color: 'var(--color-error)' }}>*</span>
+        </label>
+        <Input
+          placeholder="Enter tenant name"
+          value={tenantData.name}
+          onChange={(e) => setTenantData({ ...tenantData, name: e.target.value })}
+          status={tenantData.name.length > 0 && tenantData.name.length < 3 ? 'error' : undefined}
+        />
+        {tenantData.name.length > 0 && tenantData.name.length < 3 && (
+          <span style={{ fontSize: 12, color: 'var(--color-error)' }}>Minimum 3 characters</span>
+        )}
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Description
+        </label>
+        <TextArea
+          placeholder="Optional description"
+          value={tenantData.description}
+          onChange={(e) => setTenantData({ ...tenantData, description: e.target.value })}
+          rows={3}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Status
+        </label>
+        <Select
+          value={tenantData.status}
+          onChange={(value) => setTenantData({ ...tenantData, status: value })}
+          style={{ width: '100%' }}
+          options={[
+            { value: 'active', label: 'Active' },
+            { value: 'suspended', label: 'Suspended' },
+          ]}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Metadata (JSON)
+        </label>
+        <TextArea
+          placeholder='{"key": "value"}'
+          value={tenantData.metadata}
+          onChange={(e) => setTenantData({ ...tenantData, metadata: e.target.value })}
+          rows={3}
+        />
+      </div>
+    </div>
+  );
 
-  const renderStepContent = () => {
-    switch (activeStep) {
-      case 0:
-        return (
-          <Box display="grid" gap={3}>
-            <TextField
-              label="Tenant Name"
-              required
-              value={tenantData.name}
-              onChange={(e) =>
-                setTenantData({ ...tenantData, name: e.target.value })
-              }
-              helperText="Minimum 3 characters"
-              fullWidth
-            />
-            <TextField
-              label="Description"
-              value={tenantData.description}
-              onChange={(e) =>
-                setTenantData({ ...tenantData, description: e.target.value })
-              }
-              multiline
-              rows={3}
-              fullWidth
-            />
-            <FormControl fullWidth>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={tenantData.status}
-                onChange={(e) =>
-                  setTenantData({ ...tenantData, status: e.target.value })
-                }
-                label="Status"
-              >
-                <MenuItem value="active">Active</MenuItem>
-                <MenuItem value="suspended">Suspended</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              label="Metadata (JSON)"
-              value={tenantData.metadata}
-              onChange={(e) =>
-                setTenantData({ ...tenantData, metadata: e.target.value })
-              }
-              multiline
-              rows={3}
-              helperText="Optional JSON metadata"
-              fullWidth
-            />
-          </Box>
-        );
-      case 1:
-        return (
-          <Box display="grid" gap={3}>
-            <TextField
-              label="Default Model"
-              value={configData.default_model}
-              onChange={(e) =>
-                setConfigData({ ...configData, default_model: e.target.value })
-              }
-              helperText="Default model for this tenant"
-              fullWidth
-            />
-            <FormControl fullWidth>
-              <InputLabel>Custom Rate Limits</InputLabel>
-              <Select
-                value={configData.custom_rate_limits.toString()}
-                onChange={(e) =>
-                  setConfigData({
-                    ...configData,
-                    custom_rate_limits: e.target.value === 'true',
-                  })
-                }
-                label="Custom Rate Limits"
-              >
-                <MenuItem value="false">Disabled</MenuItem>
-                <MenuItem value="true">Enabled</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl fullWidth>
-              <InputLabel>Require HMAC</InputLabel>
-              <Select
-                value={configData.require_hmac.toString()}
-                onChange={(e) =>
-                  setConfigData({
-                    ...configData,
-                    require_hmac: e.target.value === 'true',
-                  })
-                }
-                label="Require HMAC"
-              >
-                <MenuItem value="false">Optional</MenuItem>
-                <MenuItem value="true">Required</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              label="Webhook URL"
-              value={configData.webhook_url}
-              onChange={(e) =>
-                setConfigData({ ...configData, webhook_url: e.target.value })
-              }
-              helperText="URL for webhook notifications"
-              fullWidth
-            />
-            <TextField
-              label="Alert Email"
-              value={configData.alert_email}
-              onChange={(e) =>
-                setConfigData({ ...configData, alert_email: e.target.value })
-              }
-              helperText="Email for alerts and notifications"
-              fullWidth
-            />
-          </Box>
-        );
-      case 2:
-        return (
-          <Box>
-            <Typography variant="h6" mb={2}>
-              Review
-            </Typography>
-            <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="subtitle2" color="text.secondary">
-                Name
-              </Typography>
-              <Typography mb={1}>{tenantData.name}</Typography>
-              <Typography variant="subtitle2" color="text.secondary">
-                Description
-              </Typography>
-              <Typography mb={1}>
-                {tenantData.description || 'None'}
-              </Typography>
-              <Typography variant="subtitle2" color="text.secondary">
-                Status
-              </Typography>
-              <Typography mb={1}>{tenantData.status}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="subtitle2" color="text.secondary">
-                Default Model
-              </Typography>
-              <Typography mb={1}>
-                {configData.default_model || 'Not set'}
-              </Typography>
-              <Typography variant="subtitle2" color="text.secondary">
-                Custom Rate Limits
-              </Typography>
-              <Typography mb={1}>
-                {configData.custom_rate_limits ? 'Enabled' : 'Disabled'}
-              </Typography>
-              <Typography variant="subtitle2" color="text.secondary">
-                Require HMAC
-              </Typography>
-              <Typography mb={1}>
-                {configData.require_hmac ? 'Required' : 'Optional'}
-              </Typography>
-            </Paper>
-          </Box>
-        );
-      default:
-        return null;
-    }
-  };
+  const renderConfiguration = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 520 }}>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Default Model
+        </label>
+        <Input
+          placeholder="e.g., gpt-4o"
+          value={configData.default_model}
+          onChange={(e) => setConfigData({ ...configData, default_model: e.target.value })}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Custom Rate Limits
+        </label>
+        <Select
+          value={configData.custom_rate_limits ? 'true' : 'false'}
+          onChange={(v) => setConfigData({ ...configData, custom_rate_limits: v === 'true' })}
+          style={{ width: '100%' }}
+          options={[
+            { value: 'false', label: 'Disabled' },
+            { value: 'true', label: 'Enabled' },
+          ]}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Require HMAC
+        </label>
+        <Select
+          value={configData.require_hmac ? 'true' : 'false'}
+          onChange={(v) => setConfigData({ ...configData, require_hmac: v === 'true' })}
+          style={{ width: '100%' }}
+          options={[
+            { value: 'false', label: 'Optional' },
+            { value: 'true', label: 'Required' },
+          ]}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Webhook URL
+        </label>
+        <Input
+          placeholder="https://example.com/webhook"
+          value={configData.webhook_url}
+          onChange={(e) => setConfigData({ ...configData, webhook_url: e.target.value })}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          Alert Email
+        </label>
+        <Input
+          placeholder="admin@example.com"
+          value={configData.alert_email}
+          onChange={(e) => setConfigData({ ...configData, alert_email: e.target.value })}
+        />
+      </div>
+    </div>
+  );
+
+  const renderReview = () => (
+    <div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Name</div>
+        <div className="tenant-create__review-value">{tenantData.name}</div>
+      </div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Description</div>
+        <div className="tenant-create__review-value">{tenantData.description || '—'}</div>
+      </div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Status</div>
+        <div className="tenant-create__review-value">{tenantData.status}</div>
+      </div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Default Model</div>
+        <div className="tenant-create__review-value">{configData.default_model || 'Not set'}</div>
+      </div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Custom Rate Limits</div>
+        <div className="tenant-create__review-value">{configData.custom_rate_limits ? 'Enabled' : 'Disabled'}</div>
+      </div>
+      <div className="tenant-create__review-section">
+        <div className="tenant-create__review-label">Require HMAC</div>
+        <div className="tenant-create__review-value">{configData.require_hmac ? 'Required' : 'Optional'}</div>
+      </div>
+    </div>
+  );
 
   return (
-    <Box>
-      <Typography variant="h4" mb={3}>
-        Create Tenant
-      </Typography>
+    <Card className="tenant-create">
+      <div className="tenant-create__header">
+        <div className="tenant-create__title-wrap">
+          <Title level={4} className="tenant-create__title">Create Tenant</Title>
+          <span className="tenant-create__subtitle">Set up a new tenant with configuration</span>
+        </div>
+      </div>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+      {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} closable onClose={() => setError(null)} />}
 
-      <Paper sx={{ p: 3 }}>
-        <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
-          {steps.map((label) => (
-            <Step key={label}>
-              <StepLabel>{label}</StepLabel>
-            </Step>
-          ))}
-        </Stepper>
+      <Card className="tenant-create__form-card">
+        <Steps current={activeStep} items={steps} className="tenant-create__steps" size="small" />
 
-        {renderStepContent()}
+        {activeStep === 0 && renderBasicInfo()}
+        {activeStep === 1 && renderConfiguration()}
+        {activeStep === 2 && renderReview()}
 
-        <Box display="flex" justifyContent="space-between" mt={4}>
+        <div className="tenant-create__actions">
           <Button
-            variant="outlined"
-            onClick={() =>
-              activeStep === 0 ? navigate('/admin/tenants') : handleBack()
-            }
+            icon={<ArrowLeftOutlined />}
+            onClick={() => activeStep === 0 ? navigate('/ui/tenants') : setActiveStep(activeStep - 1)}
           >
             {activeStep === 0 ? 'Cancel' : 'Back'}
           </Button>
           <Button
-            variant="contained"
-            onClick={activeStep === steps.length - 1 ? handleCreate : handleNext}
+            type="primary"
+            icon={activeStep === steps.length - 1 ? <CheckOutlined /> : <ArrowRightOutlined />}
+            onClick={activeStep === steps.length - 1 ? handleCreate : () => setActiveStep(activeStep + 1)}
             disabled={!isStepValid() || loading}
+            loading={loading && activeStep === steps.length - 1}
           >
-            {activeStep === steps.length - 1
-              ? loading
-                ? 'Creating...'
-                : 'Create'
-              : 'Next'}
+            {activeStep === steps.length - 1 ? 'Create' : 'Next'}
           </Button>
-        </Box>
-      </Paper>
-    </Box>
+        </div>
+      </Card>
+    </Card>
   );
 };
 

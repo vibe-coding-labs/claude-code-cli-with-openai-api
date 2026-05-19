@@ -53,10 +53,21 @@ interface Config {
   updated_at: string;
 }
 
+interface ConfigLastStatus {
+  config_id: string;
+  last_status: string;    // "success", "error", or ""
+  last_error: string;
+  last_time: string;      // ISO timestamp
+  success_count: number;  // last 24h
+  error_count: number;    // last 24h
+  avg_latency_ms: number;
+}
+
 const ConfigListV2: React.FC = () => {
   usePageTitle('配置列表');
   const navigate = useNavigate();
   const [configs, setConfigs] = useState<Config[]>([]);
+  const [lastStatusMap, setLastStatusMap] = useState<Record<string, ConfigLastStatus>>({});
   const [filteredConfigs, setFilteredConfigs] = useState<Config[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -75,6 +86,7 @@ const ConfigListV2: React.FC = () => {
     try {
       const response = await axios.get('/api/configs');
       setConfigs(response.data.configs || []);
+      setLastStatusMap(response.data.last_status || {});
     } catch (error: any) {
       message.error('加载配置失败');
     } finally {
@@ -140,6 +152,21 @@ const ConfigListV2: React.FC = () => {
       result = result.filter(config => config.enabled);
     } else if (statusFilter === 'disabled') {
       result = result.filter(config => !config.enabled);
+    } else if (statusFilter === 'healthy') {
+      result = result.filter(config => {
+        const s = lastStatusMap[config.id];
+        return s && s.last_status === 'success';
+      });
+    } else if (statusFilter === 'failing') {
+      result = result.filter(config => {
+        const s = lastStatusMap[config.id];
+        return s && s.last_status === 'error';
+      });
+    } else if (statusFilter === 'unused') {
+      result = result.filter(config => {
+        const s = lastStatusMap[config.id];
+        return !s || !s.last_status;
+      });
     }
 
     // Model filter
@@ -172,7 +199,7 @@ const ConfigListV2: React.FC = () => {
     });
 
     setFilteredConfigs(result);
-  }, [configs, searchText, statusFilter, modelFilter, sortField, sortOrder]);
+  }, [configs, lastStatusMap, searchText, statusFilter, modelFilter, sortField, sortOrder]);
 
   const handleCreate = () => {
     navigate('/ui/configs/create');
@@ -302,7 +329,7 @@ const ConfigListV2: React.FC = () => {
       width: 150,
       ellipsis: true,
       render: (text: string) => (
-        <Tag color="purple" style={{ fontSize: 11 }}>{text}</Tag>
+        <Tag color="orange" style={{ fontSize: 11 }}>{text}</Tag>
       ),
     },
     {
@@ -367,6 +394,46 @@ const ConfigListV2: React.FC = () => {
           {text || '-'}
         </code>
       ),
+    },
+    {
+      title: '请求状态',
+      key: 'request_status',
+      width: 180,
+      align: 'center' as const,
+      render: (_: any, record: Config) => {
+        const status = lastStatusMap[record.id];
+        if (!status || !status.last_status) {
+          return <Tag style={{ fontSize: 11 }}>无请求记录</Tag>;
+        }
+        const isSuccess = status.last_status === 'success';
+        const lastTime = status.last_time
+          ? new Date(status.last_time).toLocaleString('zh-CN', {
+              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            })
+          : '-';
+        const total24h = status.success_count + status.error_count;
+        const successRate = total24h > 0 ? Math.round((status.success_count / total24h) * 100) : 0;
+        return (
+          <Tooltip title={
+            `最后请求: ${status.last_time ? new Date(status.last_time).toLocaleString('zh-CN') : '-'}\n` +
+            `24h: ${status.success_count}成功 / ${status.error_count}失败` +
+            (status.avg_latency_ms > 0 ? `\n平均延迟: ${Math.round(status.avg_latency_ms)}ms` : '') +
+            (status.last_error ? `\n错误: ${status.last_error.substring(0, 100)}` : '')
+          }>
+            <Space direction="vertical" size={2} style={{ lineHeight: 1.2 }}>
+              <Tag color={isSuccess ? 'success' : 'error'} style={{ fontSize: 11, margin: 0 }}>
+                {isSuccess ? '✓ 成功' : '✗ 失败'}
+              </Tag>
+              <span style={{ fontSize: 10, color: '#999' }}>{lastTime}</span>
+              {total24h > 0 && (
+                <span style={{ fontSize: 10, color: successRate >= 80 ? '#52c41a' : successRate >= 50 ? '#faad14' : '#ff4d4f' }}>
+                  {successRate}% ({total24h}次)
+                </span>
+              )}
+            </Space>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '状态',
@@ -507,6 +574,9 @@ const ConfigListV2: React.FC = () => {
               >
                 <Option value="enabled">✓ 仅启用</Option>
                 <Option value="disabled">✗ 仅禁用</Option>
+                <Option value="healthy">● 最后成功</Option>
+                <Option value="failing">✗ 最后失败</Option>
+                <Option value="unused">○ 无请求记录</Option>
               </Select>
             </Space>
           </Col>
@@ -645,7 +715,7 @@ const ConfigListV2: React.FC = () => {
                         <strong>URL:</strong> {config.openai_base_url.length > 30 ? config.openai_base_url.substring(0, 30) + '...' : config.openai_base_url}
                       </div>
                       <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>
-                        <strong>模型:</strong> <Tag color="purple" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{config.big_model}</Tag>
+                        <strong>模型:</strong> <Tag color="orange" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{config.big_model}</Tag>
                         {config.supported_models && config.supported_models.length > 0 && (
                           <Tag color="green" style={{ fontSize: 10, padding: '0 4px', marginLeft: 4 }}>
                             +{config.supported_models.length}个
@@ -663,6 +733,27 @@ const ConfigListV2: React.FC = () => {
                 />
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
                   <Space size={4} wrap>
+                    {(() => {
+                      const s = lastStatusMap[config.id];
+                      if (s && s.last_status) {
+                        const isOk = s.last_status === 'success';
+                        const total = s.success_count + s.error_count;
+                        const rate = total > 0 ? Math.round((s.success_count / total) * 100) : 0;
+                        return (
+                          <Tooltip title={
+                            `最后: ${s.last_time ? new Date(s.last_time).toLocaleString('zh-CN') : '-'}\n` +
+                            `24h: ${s.success_count}成功 / ${s.error_count}失败` +
+                            (s.last_error ? `\n错误: ${s.last_error.substring(0, 80)}` : '')
+                          }>
+                            <Tag color={isOk ? 'success' : 'error'} style={{ fontSize: 10 }}>
+                              {isOk ? '✓' : '✗'} {isOk ? '成功' : '失败'}
+                              {total > 0 && ` ${rate}%`}
+                            </Tag>
+                          </Tooltip>
+                        );
+                      }
+                      return <Tag style={{ fontSize: 10 }}>无记录</Tag>;
+                    })()}
                     <Tag color={config.enabled ? 'success' : 'default'}>
                       {config.enabled ? '启用' : '禁用'}
                     </Tag>

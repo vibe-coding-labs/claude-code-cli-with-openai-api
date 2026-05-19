@@ -21,6 +21,7 @@ import TenantList from './components/TenantList';
 import TenantCreate from './components/TenantCreate';
 import TenantDetail from './components/TenantDetail';
 import AuditLogViewer from './components/AuditLogViewer';
+import SystemSettings from './components/SystemSettings';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import Initialize from './components/Initialize';
@@ -35,13 +36,18 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const currentUser = getCurrentUser();
   
-  const normalizedPath = location.pathname === '/ui' || location.pathname === '/ui/' ? '/ui' : location.pathname;
+  // Normalize: /ui, /ui/, and /ui/configs all map to the config list menu item
+  const normalizedPath = (() => {
+    const p = location.pathname;
+    if (p === '/ui' || p === '/ui/') return '/ui/configs';
+    return p;
+  })();
 
   const menuItems = [
     {
-      key: '/ui',
+      key: '/ui/configs',
       icon: <SettingOutlined />,
-      label: <Link to="/ui">OpenAI API配置</Link>,
+      label: <Link to="/ui/configs">OpenAI API配置</Link>,
     },
     {
       key: '/ui/load-balancers',
@@ -65,6 +71,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             icon: <SettingOutlined />,
             label: <Link to="/ui/audit-logs">审计日志</Link>,
           },
+          {
+            key: '/ui/settings',
+            icon: <SettingOutlined />,
+            label: <Link to="/ui/settings">系统设置</Link>,
+          },
         ]
       : []),
   ];
@@ -75,19 +86,19 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#001529', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ color: '#fff', margin: '16px 0' }}>
+    <Layout style={{ minHeight: '100vh', background: 'var(--color-bg)' }}>
+      <Header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Title level={4} style={{ margin: 0 }}>
           Use ClaudeCode CLI With OpenAI API
         </Title>
         {currentUser && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ color: '#fff' }}>欢迎, {currentUser.username}</span>
-            <Button 
-              type="text" 
-              icon={<LogoutOutlined />} 
+            <span style={{ color: 'var(--color-header-text)', fontSize: 13 }}>欢迎, {currentUser.username}</span>
+            <Button
+              type="text"
+              icon={<LogoutOutlined />}
               onClick={handleLogout}
-              style={{ color: '#fff' }}
+              style={{ color: 'var(--color-header-text)', fontSize: 13 }}
             >
               退出登录
             </Button>
@@ -95,21 +106,20 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         )}
       </Header>
       <Layout>
-        <Sider width={200} style={{ background: '#fff' }}>
+        <Sider width={220}>
           <Menu
             mode="inline"
             selectedKeys={[normalizedPath]}
-            style={{ height: '100%', borderRight: 0 }}
+            style={{ height: '100%' }}
             items={menuItems}
           />
         </Sider>
-        <Layout style={{ padding: '24px' }}>
+        <Layout style={{ padding: '28px', background: 'var(--color-bg)' }}>
           <Content
             style={{
-              background: '#fff',
-              padding: 24,
-              margin: 0,
+              padding: 32,
               minHeight: 280,
+              width: '100%',
             }}
           >
             {children}
@@ -124,14 +134,16 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Navigate to="/ui" replace />} />
+        <Route path="/" element={<Navigate to="/ui/configs" replace />} />
+        <Route path="/ui" element={<Navigate to="/ui/configs" replace />} />
         <Route path="/ui/login" element={<Login />} />
         <Route path="/ui/forgot-password" element={<ForgotPassword />} />
         <Route path="/ui/initialize" element={<Initialize />} />
         <Route path="/ui/*" element={
           <AppLayout>
             <Routes>
-              <Route path="/" element={<ProtectedRoute><ConfigList /></ProtectedRoute>} />
+              <Route path="/" element={<Navigate to="/ui/configs" replace />} />
+              <Route path="configs" element={<ProtectedRoute><ConfigList /></ProtectedRoute>} />
               <Route path="configs/create" element={<ProtectedRoute><ConfigCreate /></ProtectedRoute>} />
               <Route path="configs/:id" element={<ProtectedRoute><ConfigDetailV2 /></ProtectedRoute>} />
               <Route path="configs/:id/edit" element={<ProtectedRoute><ConfigEdit /></ProtectedRoute>} />
@@ -147,10 +159,11 @@ const App: React.FC = () => {
               <Route path="tenants/create" element={<ProtectedRoute><TenantCreate /></ProtectedRoute>} />
               <Route path="tenants/:id" element={<ProtectedRoute><TenantDetail /></ProtectedRoute>} />
               <Route path="audit-logs" element={<ProtectedRoute><AuditLogViewer /></ProtectedRoute>} />
+              <Route path="settings" element={<ProtectedRoute><SystemSettings /></ProtectedRoute>} />
             </Routes>
           </AppLayout>
         } />
-        <Route path="*" element={<Navigate to="/ui" replace />} />
+        <Route path="*" element={<Navigate to="/ui/configs" replace />} />
       </Routes>
     </Router>
   );

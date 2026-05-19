@@ -13,7 +13,11 @@ export interface APIConfig {
   max_tokens_limit: number;
   min_tokens_limit: number;
   request_timeout: number;
+  retry_count?: number;
+  retry_backoff_base?: number;
+  retry_backoff_max?: number;
   custom_headers?: Record<string, string>;
+  proxy_url?: string;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -37,6 +41,7 @@ export interface APIConfigRequest {
   min_tokens_limit?: number;
   request_timeout?: number;
   custom_headers?: Record<string, string>;
+  proxy_url?: string;
   enabled?: boolean;
 }
 

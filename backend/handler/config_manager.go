@@ -33,8 +33,12 @@ func (h *Handler) GetAllConfigs(c *gin.Context) {
 		return
 	}
 
+	// Get last request status for each config
+	lastStatusMap, _ := database.GetAllConfigsLastStatus()
+
 	c.JSON(http.StatusOK, gin.H{
-		"configs": configs,
+		"configs":     configs,
+		"last_status": lastStatusMap,
 	})
 }
 
@@ -310,6 +314,7 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		RetryBackoffBase: dbConfig.RetryBackoffBase,
 		RetryBackoffMax:  dbConfig.RetryBackoffMax,
 		AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
+		ProxyURL:         dbConfig.ProxyURL,
 	}
 
 	// Create client

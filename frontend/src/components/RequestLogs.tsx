@@ -349,7 +349,7 @@ const RequestLogs: React.FC<RequestLogsProps> = ({ configId }) => {
                 />
                 <div style={{ marginTop: 4, height: 24, display: 'flex', alignItems: 'center' }}>
                   <Tag 
-                    color={stats.avg_duration_ms > 5000 ? 'error' : stats.avg_duration_ms > 2000 ? 'warning' : 'purple'}
+                    color={stats.avg_duration_ms > 5000 ? 'error' : stats.avg_duration_ms > 2000 ? 'warning' : 'orange'}
                     style={{ fontSize: 12, margin: 0 }}
                   >
                     {(stats.avg_duration_ms / 1000).toFixed(2)}秒

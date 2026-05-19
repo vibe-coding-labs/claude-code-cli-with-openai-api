@@ -1,0 +1,131 @@
+.tenant-detail {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.tenant-detail .ant-card-body {
+  padding: 24px;
+}
+
+.tenant-detail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.tenant-detail__title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tenant-detail__title {
+  margin: 0 !important;
+  font-weight: 600 !important;
+  color: var(--color-text-primary);
+}
+
+.tenant-detail__id {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.tenant-detail__card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+
+.tenant-detail__card .ant-card-body {
+  padding: 20px;
+}
+
+.tenant-detail__card-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.tenant-detail__field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.tenant-detail__field:last-child {
+  border-bottom: none;
+}
+
+.tenant-detail__field-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.tenant-detail__field-value {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.tenant-detail__config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.tenant-detail__config-item {
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.tenant-detail__config-label {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+
+.tenant-detail__config-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.tenant-detail__tabs-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.tenant-detail__tabs-card .ant-tabs-nav {
+  padding: 0 20px;
+  margin-bottom: 0;
+}
+
+.tenant-detail__tabs-card .ant-card-body {
+  padding: 20px;
+}
+
+@media (max-width: 768px) {
+  .tenant-detail__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tenant-detail__config-grid {
+    grid-template-columns: 1fr;
+  }
+}

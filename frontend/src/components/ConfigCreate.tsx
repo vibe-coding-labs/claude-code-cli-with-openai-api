@@ -11,8 +11,11 @@ import {
   Space,
   Typography,
   Divider,
+  Select,
+  Row,
+  Col,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import ModelSelector from './ModelSelector';
 
@@ -40,12 +43,12 @@ const ConfigCreate: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: 1000, margin: '0 auto' }}>
-      <Card>
+    <div style={{ padding: '24px' }}>
+      <Card style={{ width: '100%' }} bodyStyle={{ padding: '24px' }}>
         <Space style={{ marginBottom: 24 }}>
           <Button
             icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/ui')}
+            onClick={() => navigate('/ui/configs')}
           >
             返回列表
           </Button>
@@ -84,7 +87,7 @@ const ConfigCreate: React.FC = () => {
 
           <Form.Item
             name="anthropic_api_key"
-            label="Anthropic API Token"
+            label="自定义Anthropic API Token"
             tooltip="Anthropic API Token是Claude CLI客户端用于识别和认证配置的唯一标识符。留空时系统会自动生成UUID格式的Token；也可以自定义便于记忆的Token名称，只能包含英文大小写字母、数字和下划线，长度不超过100字符。此Token会配置在Claude Desktop或CLI的配置文件中，作为ANTHROPIC_API_KEY使用。自定义Token示例：'dev_api_2024'、'production_key'等。注意：Token必须在系统中保持唯一，不能与其他配置重复。"
             help="这是 Claude CLI 用于识别配置的唯一标识，会在 Claude 配置文件中使用"
           >
@@ -116,11 +119,44 @@ const ConfigCreate: React.FC = () => {
             <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
 
+          <Form.Item
+            name="proxy_url"
+            label="代理 URL"
+            tooltip="访问上游 API 时使用的 HTTP 代理地址（如 http://127.0.0.1:7890）。留空则直连或使用环境变量中的代理"
+          >
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="http://127.0.0.1:7890（可选）" style={{ flex: 1 }} />
+              <Button
+                icon={<SearchOutlined />}
+                onClick={async () => {
+                  try {
+                    const res = await axios.get('/api/proxy/detect');
+                    const proxies = res.data;
+                    if (!proxies || proxies.length === 0) {
+                      message.info('未检测到本地代理');
+                      return;
+                    }
+                    const first = proxies[0];
+                    const url = first.http_url || first.socks_url || '';
+                    if (url) {
+                      form.setFieldsValue({ proxy_url: url });
+                      message.success(`已检测到 ${first.name} (${url})`);
+                    }
+                  } catch {
+                    message.warning('代理检测失败');
+                  }
+                }}
+              >
+                自动检测
+              </Button>
+            </Space.Compact>
+          </Form.Item>
+
           <Divider />
 
           <Title level={5}>模型映射</Title>
           <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-            配置 Claude 模型到 OpenAI 模型的映射关系
+            配置 Claude 模型到 OpenAI 模型的映射关系，可为每个模型单独设置思考级别
           </Paragraph>
 
           <Form.Item
@@ -130,7 +166,25 @@ const ConfigCreate: React.FC = () => {
             initialValue="gpt-4o"
             tooltip="大模型映射配置用于将Claude Desktop/CLI请求的claude-opus-4-20250514模型转换为您指定的OpenAI模型。Claude Opus系列是Anthropic最强大的模型，适合复杂推理、长文本分析等高难度任务。您可以映射到OpenAI的高性能模型，如gpt-4o、gpt-4-turbo等。也可以映射到其他服务商的旗舰模型。模型名称必须与您的API服务支持的模型完全一致，否则调用会失败。建议选择性能强、上下文长度大的模型以保证使用体验。"
           >
-            <Input placeholder="gpt-4o" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="big_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Form.Item
@@ -140,7 +194,25 @@ const ConfigCreate: React.FC = () => {
             initialValue="gpt-4o"
             tooltip="中模型映射配置用于将Claude Desktop/CLI请求的claude-sonnet-4-20250514模型转换为您指定的OpenAI模型。Claude Sonnet系列在性能和成本之间取得平衡，适合日常编程辅助、代码生成、文档编写等常规任务。您可以映射到gpt-4o、gpt-4等中高端模型，也可以根据成本考虑映射到gpt-3.5-turbo。模型选择建议：如果预算充足选择gpt-4o以获得最佳体验；如果注重性价比可选择gpt-3.5-turbo-16k等模型。确保模型名称准确无误。"
           >
-            <Input placeholder="gpt-4o" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="middle_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Form.Item
@@ -150,7 +222,25 @@ const ConfigCreate: React.FC = () => {
             initialValue="gpt-4o-mini"
             tooltip="小模型映射配置用于将Claude Desktop/CLI请求的claude-haiku-4-20250514模型转换为您指定的OpenAI模型。Claude Haiku系列是轻量级快速模型，适合简单问答、代码补全、语法检查等低延迟场景。建议映射到gpt-4o-mini、gpt-3.5-turbo等经济型模型以控制成本。这类请求通常频繁但简单，选择响应速度快、价格低廉的模型即可满足需求。如果您的API服务有速率限制，小模型的低成本特性能让您获得更高的调用配额。注意验证模型在目标服务中的可用性。"
           >
-            <Input placeholder="gpt-4o-mini" />
+            <Row gutter={8}>
+              <Col flex="auto">
+                <Input placeholder="gpt-4o-mini" />
+              </Col>
+              <Col flex="160px">
+                <Form.Item
+                  name="small_model_reasoning_effort"
+                  noStyle
+                >
+                  <Select placeholder="思考级别" allowClear style={{ width: '100%' }}>
+                    <Select.Option value="">默认</Select.Option>
+                    <Select.Option value="low">Low</Select.Option>
+                    <Select.Option value="medium">Medium</Select.Option>
+                    <Select.Option value="high">High</Select.Option>
+                    <Select.Option value="xhigh">XHigh</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           </Form.Item>
 
           <Divider />
@@ -201,6 +291,24 @@ const ConfigCreate: React.FC = () => {
             <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="默认为3次" />
           </Form.Item>
 
+          <Form.Item
+            name="retry_backoff_base"
+            label="指数退避基数（秒）"
+            initialValue={1}
+            tooltip="指数退避的基数，用于计算每次重试的等待时间。第一次重试等待时间 = 基数 × 2^0，第二次 = 基数 × 2^1，以此类推。建议值：1秒（默认），对于快速恢复的服务可设置为0.5秒，对于较慢的服务可设置为2-5秒。"
+          >
+            <InputNumber min={0.1} max={60} step={0.5} style={{ width: '100%' }} placeholder="默认为1秒" />
+          </Form.Item>
+
+          <Form.Item
+            name="retry_backoff_max"
+            label="指数退避最大上限（秒）"
+            initialValue={60}
+            tooltip="指数退避的最大等待时间上限。当计算出的退避时间超过此值时，将使用此上限值。用于防止退避时间过长导致用户体验变差。建议值：30-120秒。默认60秒。"
+          >
+            <InputNumber min={1} max={600} style={{ width: '100%' }} placeholder="默认为60秒" />
+          </Form.Item>
+
           <Divider />
 
           <Form.Item>
@@ -214,7 +322,7 @@ const ConfigCreate: React.FC = () => {
               >
                 创建配置
               </Button>
-              <Button onClick={() => navigate('/ui')} size="large">
+              <Button onClick={() => navigate('/ui/configs')} size="large">
                 取消
               </Button>
             </Space>

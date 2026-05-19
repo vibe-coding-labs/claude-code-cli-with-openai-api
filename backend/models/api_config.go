@@ -22,6 +22,7 @@ type APIConfig struct {
 	RetryBackoffBase float64          `json:"retry_backoff_base"`         // 指数退避基数（秒），默认1秒
 	RetryBackoffMax int               `json:"retry_backoff_max"`          // 指数退避最大上限（秒），默认60秒
 	CustomHeaders   map[string]string `json:"custom_headers,omitempty"`
+	ProxyURL        string            `json:"proxy_url,omitempty"` // HTTP proxy for upstream API requests
 	Enabled         bool              `json:"enabled"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
@@ -56,6 +57,7 @@ type APIConfigRequest struct {
 	RetryBackoffBase float64          `json:"retry_backoff_base"` // 指数退避基数（秒），默认1秒
 	RetryBackoffMax int               `json:"retry_backoff_max"`  // 指数退避最大上限（秒），默认60秒
 	CustomHeaders   map[string]string `json:"custom_headers,omitempty"`
+	ProxyURL        string            `json:"proxy_url,omitempty"` // HTTP proxy for upstream API requests
 	Enabled         bool              `json:"enabled"`
 }
 

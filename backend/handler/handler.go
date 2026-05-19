@@ -453,6 +453,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			RetryBackoffMax:  dbConfig.RetryBackoffMax,
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  reasoningEffort, // 使用根据模型选择的思考级别
+			ProxyURL:         dbConfig.ProxyURL,
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
@@ -532,14 +533,70 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", createResult.LastErr.Error(), &req, nil)
 			return fmt.Errorf("stream creation failed after %d attempts: %w", createResult.Attempts, createResult.LastErr)
 		}
-		defer reader.Close()
+		// Pre-stream verification with server-side auto-retry.
+		// If upstream doesn't send any data within stallTimeout, close the stream
+		// and retry transparently (no data has been sent to the client yet).
+		stallTimeout := time.Duration(targetConfig.StreamStallTimeout) * time.Second
+		if stallTimeout <= 0 {
+			stallTimeout = 60 * time.Second
+		}
+		maxStallRetries := 3
 
-		logger.Info("  Stream created successfully, processing response...")
-
-		// Use Go converter directly for streaming
 		var streamResult *converter.StreamingResult
-		logger.Info("  Using Go converter for streaming conversion")
-		streamResult = converter.ConvertOpenAIStreamingToClaudeWithMapping(c, reader, &req, c.Request.Context(), toolNameMapping)
+		for stallRetry := 0; stallRetry <= maxStallRetries; stallRetry++ {
+			// Pre-stream verification: check if upstream sends data within stallTimeout.
+			stallResult := WaitForFirstData(c.Request.Context(), reader, stallTimeout)
+			if stallResult.Err != nil {
+				reader.Close()
+				if stallResult.Err == ErrUpstreamStalled {
+					if stallRetry < maxStallRetries {
+						logger.Warn("  [stall-retry] Attempt %d/%d: upstream stalled, retrying...", stallRetry+1, maxStallRetries)
+						// Re-create stream for retry
+						createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
+							var err error
+							reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+							return err
+						})
+						if !createResult.Succeeded {
+							logger.Error("  [stall-retry] Stream recreation failed: %v", createResult.LastErr)
+							c.JSON(http.StatusServiceUnavailable, gin.H{
+								"type": "error",
+								"error": map[string]interface{}{
+									"type":    "overloaded_error",
+									"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", stallRetry+1),
+								},
+							})
+							h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil)
+							return fmt.Errorf("upstream stalled and recreation failed after %d retries", stallRetry+1)
+						}
+						continue
+					}
+					// Final attempt exhausted
+					logger.Error("  [stall-retry] All %d retries exhausted, returning overloaded_error", maxStallRetries)
+					c.JSON(http.StatusServiceUnavailable, gin.H{
+						"type": "error",
+						"error": map[string]interface{}{
+							"type":    "overloaded_error",
+							"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", maxStallRetries),
+						},
+					})
+					h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil)
+					return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
+				}
+				if c.Request.Context().Err() != nil {
+					return fmt.Errorf("client disconnected during stall check: %w", stallResult.Err)
+				}
+				logger.Error("  [stall-retry] Read error during pre-stream check: %v", stallResult.Err)
+				h.responseHandler.SendErrorResponse(c, stallResult.Err)
+				return stallResult.Err
+			}
+
+			// Upstream is responsive. stallResult.Reader replays first chunk + remaining data.
+			defer reader.Close()
+			logger.Info("  Stream verified, processing response (stall retries: %d)...", stallRetry)
+			streamResult = converter.ConvertOpenAIStreamingToClaudeWithMapping(c, stallResult.Reader, &req, c.Request.Context(), toolNameMapping, stallTimeout)
+			break
+		}
 
 
 		if streamResult != nil {
@@ -744,6 +801,7 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 			RetryBackoffMax:  dbConfig.RetryBackoffMax,
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  dbConfig.ReasoningEffort, // 传递思考级别配置
+			ProxyURL:         dbConfig.ProxyURL,
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
@@ -1043,7 +1101,7 @@ func (h *Handler) handleNonStreamAsStream(
 					"type":  "tool_use",
 					"id":    block.ID,
 					"name":  block.Name,
-					"input": map[string]interface{}{},
+					"input": "",
 				},
 			}
 			h.sendSSEEvent(c, flusher, "content_block_start", startEvt)

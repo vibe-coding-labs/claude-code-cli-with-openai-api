@@ -397,10 +397,10 @@ const LoadBalancerList: React.FC = () => {
                         <Tag className="load-balancer-card__chip" color={lb.health_check_enabled ? 'green' : 'default'}>
                           健康检查{lb.health_check_interval ? ` ${lb.health_check_interval}s` : ''}
                         </Tag>
-                        <Tag className="load-balancer-card__chip" color={lb.circuit_breaker_enabled ? 'geekblue' : 'default'}>
+                        <Tag className="load-balancer-card__chip" color={lb.circuit_breaker_enabled ? 'blue' : 'default'}>
                           熔断{lb.circuit_breaker_timeout ? ` ${lb.circuit_breaker_timeout}s` : ''}
                         </Tag>
-                        <Tag className="load-balancer-card__chip" color={lb.dynamic_weight_enabled ? 'purple' : 'default'}>
+                        <Tag className="load-balancer-card__chip" color={lb.dynamic_weight_enabled ? 'orange' : 'default'}>
                           动态权重{lb.weight_update_interval ? ` ${lb.weight_update_interval}s` : ''}
                         </Tag>
                         <Tag className="load-balancer-card__chip" color={lb.max_retries ? 'gold' : 'default'}>

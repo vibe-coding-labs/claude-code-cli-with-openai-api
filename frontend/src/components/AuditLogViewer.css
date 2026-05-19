@@ -1,0 +1,127 @@
+.audit-log-viewer {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.audit-log-viewer .ant-card-body {
+  padding: 24px;
+}
+
+.audit-log-viewer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.audit-log-viewer__title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audit-log-viewer__title {
+  margin: 0 !important;
+  font-weight: 600 !important;
+  color: var(--color-text-primary);
+}
+
+.audit-log-viewer__subtitle {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.audit-log-viewer__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.audit-log-viewer__table-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.audit-log-viewer__table-card .ant-card-body {
+  padding: 0;
+}
+
+.audit-log-viewer__table-card .ant-table-thead > tr > th {
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.audit-log-viewer__table-card .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.audit-log-viewer__table-card .ant-table-tbody > tr:hover > td {
+  background: var(--color-accent-light);
+}
+
+.audit-log-viewer__detail-modal .ant-modal-content {
+  border-radius: var(--radius-lg);
+}
+
+.audit-log-viewer__detail-row {
+  display: flex;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.audit-log-viewer__detail-row:last-child {
+  border-bottom: none;
+}
+
+.audit-log-viewer__detail-label {
+  width: 120px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.audit-log-viewer__detail-value {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.audit-log-viewer__detail-json {
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-top: 8px;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: var(--color-text-secondary);
+}
+
+.audit-log-viewer__empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 768px) {
+  .audit-log-viewer__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .audit-log-viewer__filters {
+    width: 100%;
+  }
+}

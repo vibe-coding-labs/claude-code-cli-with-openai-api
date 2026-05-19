@@ -1,3 +1,61 @@
 .App {
   min-height: 100vh;
 }
+
+/* Header - Claude dark style */
+.ant-layout-header {
+  background: var(--color-header-bg) !important;
+  border-bottom: none !important;
+  padding: 0 32px !important;
+  height: 56px !important;
+  line-height: 56px !important;
+}
+
+.ant-layout-header .ant-typography {
+  color: var(--color-header-text) !important;
+  font-weight: 500 !important;
+  font-size: 15px !important;
+  letter-spacing: -0.01em;
+}
+
+/* Sidebar - warm light */
+.ant-layout-sider {
+  background: var(--color-sider-bg) !important;
+  border-right: 1px solid var(--color-border) !important;
+}
+
+.ant-layout-sider .ant-menu {
+  background: transparent !important;
+  border-right: none !important;
+  padding: 12px 8px;
+}
+
+.ant-layout-sider .ant-menu-item {
+  border-radius: var(--radius-sm) !important;
+  margin: 3px 4px !important;
+  height: 40px !important;
+  line-height: 40px !important;
+  color: var(--color-text-secondary) !important;
+  font-size: 14px !important;
+}
+
+.ant-layout-sider .ant-menu-item-selected {
+  background: var(--color-accent-light) !important;
+  color: var(--color-accent) !important;
+  font-weight: 500 !important;
+}
+
+.ant-layout-sider .ant-menu-item-selected .anticon {
+  color: var(--color-accent) !important;
+}
+
+.ant-layout-sider .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--color-border-light) !important;
+}
+
+/* Content area */
+.ant-layout-content {
+  background: var(--color-surface) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
