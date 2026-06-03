@@ -475,6 +475,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 
 	// Retry logic with exponential backoff
 	var lastErr error
+	var currentCancel context.CancelFunc // track the latest context cancel for cleanup
 		rateLimit429Count := 0 // Track 429-specific retries separately
 	for attempt := 0; attempt <= c.RetryCount; attempt++ {
 		// Check if we've exceeded the timeout
@@ -499,6 +500,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		// Create context with timeout for this attempt
 		// Use 2x the configured timeout to allow for response body reading
 		ctx, cancel := context.WithTimeout(context.Background(), c.Timeout*2)
+		currentCancel = cancel
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
 		if err != nil {
@@ -538,8 +540,6 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			c.logProxyError(openAIReq.Model, "", 0, err, err.Error(), "", database.StageRequest, attempt, time.Since(startTime).Milliseconds(), "")
 			continue
 		}
-		defer resp.Body.Close()
-		defer cancel()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -564,12 +564,14 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
 					}
 					lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
+					cancel()
 					continue
 				}
 				// Retry on transient upstream routing errors (e.g., "unknown aliased model")
 				if isRetryableModelRoutingError(errorMsg) && attempt < c.RetryCount {
 					logger.Warn("  Transient upstream routing error (attempt %d/%d): %s", attempt+1, c.RetryCount+1, errorMsg)
 					lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
+					cancel()
 					continue
 				}
 			}
@@ -619,6 +621,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 				lastErr = fmt.Errorf("OpenAI API error (status 429): %s", classifiedError)
 				// Don't advance attempt counter — 429 has its own budget.
 				attempt--
+				cancel()
 				continue
 			}
 			if !isRetryable || attempt >= c.RetryCount {
@@ -634,6 +637,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 
 			lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, classifiedError)
 			logger.Warn("← [OpenAIClient] Retryable error (attempt %d/%d, status %d): %s", attempt+1, c.RetryCount+1, resp.StatusCode, classifiedError)
+			cancel()
 			continue
 		}
 
@@ -654,6 +658,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			if attempt < c.RetryCount {
 				lastErr = fmt.Errorf("failed to decode response: %w", err)
 				logger.Info("  Retrying due to decode error...")
+				cancel()
 				continue
 			}
 
@@ -683,6 +688,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			if attempt < c.RetryCount {
 				lastErr = fmt.Errorf("API returned empty choices")
 				logger.Info("  Retrying due to empty response...")
+				cancel()
 				continue
 			}
 
@@ -703,10 +709,14 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		logger.Info("← [OpenAIClient] Chat completion successful (took %v)", time.Since(startTime))
 		logger.Debug("  Response tokens: %+v", openAIResp.Usage)
 
+		cancel()
 		return &openAIResp, nil
 	}
 
-	// All retries failed
+	// All retries failed — clean up any outstanding context
+	if currentCancel != nil {
+		currentCancel()
+	}
 	if lastErr != nil {
 		return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
 	}
