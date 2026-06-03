@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/gin-gonic/gin"
@@ -398,15 +399,27 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Print startup information with colors
 	printStartupInfo(cfg, actualPort)
 
-	// Start server
+	// Start server with proper timeouts to prevent stale connections.
+	// router.Run() uses http.Server with zero timeouts, causing
+	// InvalidHTTPResponse errors when the client reuses a keepalive
+	// connection that the server has silently closed.
 	addr := fmt.Sprintf("%s:%d", cfg.Host, actualPort)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           router,
+		ReadTimeout:       30 * time.Second,    // Time limit for reading the entire request (including body)
+		ReadHeaderTimeout: 10 * time.Second,    // Time limit for reading request headers
+		WriteTimeout:      0,                    // No write timeout — streaming responses can take minutes
+		IdleTimeout:       120 * time.Second,   // Keepalive connection idle timeout
+		MaxHeaderBytes:    1 << 20,              // 1MB max header size
+	}
+
 	color.New(color.FgCyan, color.Bold).Println("\n🚀 Server starting...")
-	if err := router.Run(addr); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		color.New(color.FgRed, color.Bold).Print("❌ Failed to start server: ")
 		color.New(color.FgRed).Println(err)
 		return err
 	}
-
 	return nil
 }
 
