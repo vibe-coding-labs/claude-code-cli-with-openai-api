@@ -133,6 +133,10 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 
+	// Log request entry for connection error correlation
+	logger.Debug("→ [CreateMessage] Request received: method=%s path=%s remote=%s content-length=%s",
+		c.Request.Method, c.Request.URL.String(), c.ClientIP(), c.Request.Header.Get("Content-Length"))
+
 	// 提取 beta headers
 	betaHeaders := extractBetaHeaders(c)
 	// 检测是否为 Claude Code 客户端

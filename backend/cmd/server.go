@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -412,6 +413,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 		WriteTimeout:      0,                    // No write timeout — streaming responses can take minutes
 		IdleTimeout:       120 * time.Second,   // Keepalive connection idle timeout
 		MaxHeaderBytes:    1 << 20,              // 1MB max header size
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			if state == http.StateClosed || state == http.StateHijacked {
+				logger := utils.GetLogger()
+				if logger != nil {
+					logger.Debug("[ConnState] remote=%s state=%s", conn.RemoteAddr(), state)
+				}
+			}
+		},
 	}
 
 	color.New(color.FgCyan, color.Bold).Println("\n🚀 Server starting...")
