@@ -624,6 +624,14 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 				}
 				h.responseHandler.SaveMessagesToSession(h.sessionHandler, sessionID, &req, assistantContent, streamResult.InputTokens, streamResult.OutputTokens)
 			}
+		} else {
+			// ConvertOpenAIStreamingToClaudeWithMapping returned nil: the
+			// client disconnected mid-stream OR a terminal SSE error was
+			// already sent to the client inside the converter. Do not write
+			// anything else (the connection may already be closed). Logged so
+			// the rate of disconnects is observable when verifying the
+			// InvalidHTTPResponse fix.
+			logger.Warn("  Stream ended without result for config %s (client disconnected or terminal error already sent)", configID)
 		}
 	} else {
 		// 非流式响应

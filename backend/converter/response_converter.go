@@ -250,6 +250,15 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			default:
 			}
 
+			// If a prior SSE write failed (client gone), stop consuming
+			// upstream data — the connection is dead, so there is no point
+			// spending more upstream tokens. The closed flag is set by the
+			// serialized writer in sse_utils.go.
+			if sseWriteClosed(c) {
+				errChan <- fmt.Errorf("client disconnected")
+				return
+			}
+
 			line := scanner.Text()
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" {
