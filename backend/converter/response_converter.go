@@ -213,9 +213,11 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	emitMessageStart(c, state)
 	emitPing(c)
 
-	// Start heartbeat to keep connection alive
-	heartbeatStop := StartHeartbeat(c, ctx, 5*time.Second)
-	defer StopHeartbeat(heartbeatStop)
+	// Start heartbeat to keep connection alive. Stop() is synchronous (it
+	// waits for the goroutine to exit), so a deferred Stop on the error
+	// paths guarantees no ping write outlives this function.
+	heartbeat := StartHeartbeat(c, ctx, 5*time.Second)
+	defer heartbeat.Stop()
 
 	// Process streaming chunks with 1MB buffer for large tool call arguments
 	scanner := bufio.NewScanner(reader)
@@ -439,6 +441,15 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		sendSSEError(c, "api_error", "Streaming timeout")
 		return nil
 	}
+
+	// Only the normal-completion case (<-done) reaches here (every other
+	// case returns above). Stop the heartbeat SYNCHRONOUSLY before emitting
+	// the terminal events, so no ping can be written after message_stop —
+	// orphan pings after the chunked terminator corrupt the next
+	// keep-alive response (InvalidHTTPResponse). The scanner goroutine has
+	// already exited (it closed `done`), so after this only the main
+	// goroutine writes.
+	heartbeat.Stop()
 
 	// If content_block_finish was never sent (stream ended without finish_reason),
 	// close the current block
