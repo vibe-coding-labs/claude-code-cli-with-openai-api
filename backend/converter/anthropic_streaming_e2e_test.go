@@ -192,7 +192,7 @@ func buildOpenAIStream(id, model, content string, finishReason string) string {
 // runStreamingTest sets up gin context and runs the streaming converter
 func runStreamingTest(t *testing.T, openaiSSE string, model string) ([]claudeSSEEvent, *StreamingResult) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
+	ensureGinTestMode()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
