@@ -216,7 +216,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	// Start heartbeat to keep connection alive. Stop() is synchronous (it
 	// waits for the goroutine to exit), so a deferred Stop on the error
 	// paths guarantees no ping write outlives this function.
-	heartbeat := StartHeartbeat(c, ctx, 5*time.Second)
+	heartbeat := StartHeartbeat(c, ctx, heartbeatInterval)
 	defer heartbeat.Stop()
 
 	// Process streaming chunks with 1MB buffer for large tool call arguments

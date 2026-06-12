@@ -8,6 +8,12 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
 
+// heartbeatInterval is the gap between keep-alive ping events during a stream.
+// It defaults to 5s; tests lower it (then restore via t.Cleanup) to exercise
+// the heartbeat goroutine without long waits — see sse_writer_race_test.go and
+// sse_concurrency_test.go.
+var heartbeatInterval = 5 * time.Second
+
 // Heartbeat coordinates periodic ping events. The goroutine stops on ctx
 // cancel, an explicit Stop, or the first ping write failure (client gone).
 type Heartbeat struct {
