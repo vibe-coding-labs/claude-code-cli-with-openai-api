@@ -203,6 +203,12 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	c.Header("Access-Control-Allow-Headers", "*")
 	c.Header("X-Accel-Buffering", "no")
 
+	// Bind a serialized, error-aware SSE writer BEFORE any concurrent
+	// writer (the heartbeat below) starts. This serializes all SSE writes
+	// so the scanner goroutine and the heartbeat cannot interleave bytes
+	// and corrupt the chunked stream (root cause of InvalidHTTPResponse).
+	bindSSEWriter(c)
+
 	// Emit initial events (litellm: sent_first_chunk + sent_content_block_start)
 	emitMessageStart(c, state)
 	emitPing(c)
