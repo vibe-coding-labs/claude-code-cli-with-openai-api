@@ -473,10 +473,31 @@ func (c *OpenAIClient) logProxyError(model, upstreamModel string, statusCode int
 	}
 }
 
+// retryDeadline returns the latest wall-clock time a retry may begin. It is at
+// least startTime + c.Timeout, but floored at startTime + 2× the upstream
+// response-header timeout.
+//
+// Why the floor: a single attempt can run up to upstreamResponseHeaderTimeout
+// (120s) before failing on a slow/dead upstream. If the configured RequestTimeout
+// is shorter than that (observed in production: deadline exceeded at exactly
+// startTime+120s after ONE attempt), a single slow first-byte exhausts the whole
+// budget and we return 503 with ZERO retries — even though a fresh connection
+// usually recovers from a transient upstream stall. The floor guarantees at
+// least one retry whenever the configured budget is too tight to fit two
+// attempts. When c.Timeout is already generous (e.g. 300s), the floor is a
+// no-op.
+func (c *OpenAIClient) retryDeadline(startTime time.Time) time.Time {
+	deadline := startTime.Add(c.Timeout)
+	if floor := startTime.Add(upstreamResponseHeaderTimeout * 2); deadline.Before(floor) {
+		return floor
+	}
+	return deadline
+}
+
 func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*models.OpenAIResponse, error) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
-	deadline := startTime.Add(c.Timeout)
+	deadline := c.retryDeadline(startTime)
 
 	logger.Info("→ [OpenAIClient] Creating chat completion (non-streaming)")
 	logger.Debug("  Model: %s", openAIReq.Model)
@@ -758,9 +779,10 @@ func min(a, b int) int {
 func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
-	deadline := startTime.Add(c.Timeout)
+	deadline := c.retryDeadline(startTime)
 
 	logger.Info("→ [OpenAIClient] Creating chat completion (streaming)")
+	logger.Info("  [timeout] configured=%s effective-deadline=%s retryCount=%d", c.Timeout, deadline.Sub(startTime), c.RetryCount)
 	logger.Debug("  Model: %s", openAIReq.Model)
 	logger.Debug("  Messages: %d", len(openAIReq.Messages))
 	logger.Debug("  Retry count: %d", c.RetryCount)
