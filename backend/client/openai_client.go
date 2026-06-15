@@ -309,8 +309,15 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 			DisableKeepAlives:     false,
 			DisableCompression:    false,
 			ForceAttemptHTTP2:     true,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+			// Bound the header wait by the same per-request budget (RequestTimeout,
+			// default 300s) instead of a hard 30s. Large-context requests (e.g. a
+			// 1000+ message tool-use turn) legitimately need >30s for the upstream to
+			// process and emit its first byte; the old 30s cap aborted them with
+			// "timeout awaiting response headers" → retry loop → 503. The overall
+			// request is still bounded by the per-request context deadline and the
+			// stream stall detector (StreamStallTimeout).
+			ResponseHeaderTimeout: time.Duration(cfg.RequestTimeout) * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
 
