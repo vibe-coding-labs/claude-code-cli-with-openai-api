@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +17,27 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
+
+// streamMaxDuration is the absolute cap on a single streaming response: if a
+// stream runs this long without the upstream finishing, the converter emits a
+// "Streaming timeout" error event and returns.
+//
+// It defaults to 20 minutes, which comfortably covers long agentic generations
+// (large multi-turn tool-use turns, max_tokens responses) that legitimately
+// exceed the old hard-coded 5m limit and were being cut off mid-generation.
+// Genuine mid-stream *hangs* are caught far sooner by the idle/stall timer
+// (StreamStallTimeout, default 60s — no data for 60s → overloaded_error), so a
+// generous absolute cap does not let stuck connections linger.
+//
+// Override with the PROXY_STREAM_MAX_DURATION_MIN env var (whole minutes).
+var streamMaxDuration = func() time.Duration {
+	if v := os.Getenv("PROXY_STREAM_MAX_DURATION_MIN"); v != "" {
+		if mins, err := strconv.Atoi(v); err == nil && mins > 0 {
+			return time.Duration(mins) * time.Minute
+		}
+	}
+	return 20 * time.Minute
+}()
 
 // ConvertOpenAIToClaudeResponse converts OpenAI response to Claude format
 // DEPRECATED: Use GlobalFactory.ConvertOpenAIToClaude instead
@@ -446,8 +469,8 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	case <-idleTimer.C:
 		sendSSEError(c, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
 		return nil
-	case <-time.After(5 * time.Minute):
-		sendSSEError(c, "api_error", "Streaming timeout")
+	case <-time.After(streamMaxDuration):
+		sendSSEError(c, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v); set PROXY_STREAM_MAX_DURATION_MIN to extend if your workload needs longer generations", streamMaxDuration))
 		return nil
 	}
 
