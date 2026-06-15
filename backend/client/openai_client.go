@@ -6,21 +6,46 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
-	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/ratelimit"
-	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/ratelimit"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
+
+// upstreamResponseHeaderTimeout caps how long the upstream HTTP client waits
+// for the upstream to send response headers (i.e. ACK the request). It must
+// comfortably exceed the upstream's legitimate first-byte latency on large
+// contexts (observed up to ~45s on SenseNova for a 1000+ message turn) but stay
+// WELL under the client's own timeout — otherwise a dead/slow upstream hangs the
+// whole request until the client (undici) gives up and surfaces "socket
+// connection was closed unexpectedly". 120s covers the observed worst case with
+// ~2.5x margin while still failing fast on genuinely-dead upstreams.
+//
+// History: the original hard-coded 30s aborted legitimate large requests (503);
+// bumping it to RequestTimeout (300s) let them through but made dead-upstream
+// failures hang ~300s — right at the client's timeout, causing disconnects.
+// 120s is the middle ground. Override with PROXY_RESPONSE_HEADER_TIMEOUT_SEC
+// (whole seconds). The overall request is separately bounded by the per-request
+// deadline (RequestTimeout) and the stream stall detector (StreamStallTimeout).
+var upstreamResponseHeaderTimeout = func() time.Duration {
+	if v := os.Getenv("PROXY_RESPONSE_HEADER_TIMEOUT_SEC"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 120 * time.Second
+}()
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues
 func ClassifyOpenAIError(errorDetail string) string {
@@ -64,7 +89,6 @@ func ClassifyOpenAIError(errorDetail string) string {
 	return errorDetail
 }
 
-
 // IsModelRoutingError checks if an error message indicates a transient upstream
 // model routing failure (e.g., "unknown aliased model", "no available channel").
 // These errors should be returned as overloaded_error so Claude Code auto-retries.
@@ -75,6 +99,7 @@ func IsModelRoutingError(errorDetail string) bool {
 		(strings.Contains(errorStr, "model") &&
 			(strings.Contains(errorStr, "not found") || strings.Contains(errorStr, "does not exist")))
 }
+
 // IsRetryableError delegates to the retry package for consistent error classification.
 func IsRetryableError(err error) bool {
 	return retry.IsRetryable(err)
@@ -224,7 +249,8 @@ func canonicalToolCallID(id string) string {
 
 func isRetryableHTTPStatus(statusCode int, errorBody string) bool {
 	if statusCode == 429 {
-		cat := retry.ClassifyError(fmt.Errorf("status 429: %s", errorBody)); return cat == retry.CategoryRateLimit
+		cat := retry.ClassifyError(fmt.Errorf("status 429: %s", errorBody))
+		return cat == retry.CategoryRateLimit
 	}
 
 	switch statusCode {
@@ -287,39 +313,33 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		retryBackoffMax = 60
 	}
 
-		// Configure proxy: per-config proxy_url takes priority
-		var proxyFunc func(*http.Request) (*url.URL, error)
-		if cfg.ProxyURL != "" {
-			parsed, err := url.Parse(cfg.ProxyURL)
-			if err != nil {
-				proxyFunc = http.ProxyFromEnvironment
-			} else {
-				proxyFunc = http.ProxyURL(parsed)
-			}
-		} else {
+	// Configure proxy: per-config proxy_url takes priority
+	var proxyFunc func(*http.Request) (*url.URL, error)
+	if cfg.ProxyURL != "" {
+		parsed, err := url.Parse(cfg.ProxyURL)
+		if err != nil {
 			proxyFunc = http.ProxyFromEnvironment
+		} else {
+			proxyFunc = http.ProxyURL(parsed)
 		}
+	} else {
+		proxyFunc = http.ProxyFromEnvironment
+	}
 
-		transport := &http.Transport{
-			Proxy:                 proxyFunc,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   100,
-			MaxConnsPerHost:       0,
-			IdleConnTimeout:       90 * time.Second,
-			DisableKeepAlives:     false,
-			DisableCompression:    false,
-			ForceAttemptHTTP2:     true,
-			TLSHandshakeTimeout: 10 * time.Second,
-			// Bound the header wait by the same per-request budget (RequestTimeout,
-			// default 300s) instead of a hard 30s. Large-context requests (e.g. a
-			// 1000+ message tool-use turn) legitimately need >30s for the upstream to
-			// process and emit its first byte; the old 30s cap aborted them with
-			// "timeout awaiting response headers" → retry loop → 503. The overall
-			// request is still bounded by the per-request context deadline and the
-			// stream stall detector (StreamStallTimeout).
-			ResponseHeaderTimeout: time.Duration(cfg.RequestTimeout) * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
+	transport := &http.Transport{
+		Proxy:               proxyFunc,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		MaxConnsPerHost:     0,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+		DisableCompression:  false,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// See upstreamResponseHeaderTimeout for rationale.
+		ResponseHeaderTimeout: upstreamResponseHeaderTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 
 	return &OpenAIClient{
 		ConfigID:         cfg.ConfigID,
@@ -341,7 +361,6 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 	}
 }
 
-
 // saveDebugRequest saves the failed request body to a file for offline analysis
 func saveDebugRequest(model string, reqBody []byte, upstreamError string) {
 	debugDir := filepath.Join(".", "data", "debug")
@@ -351,10 +370,10 @@ func saveDebugRequest(model string, reqBody []byte, upstreamError string) {
 
 	// Build a debug envelope with context
 	envelope := map[string]interface{}{
-		"timestamp":     time.Now().Format(time.RFC3339),
-		"model":         model,
+		"timestamp":      time.Now().Format(time.RFC3339),
+		"model":          model,
 		"upstream_error": upstreamError,
-		"request_body":  json.RawMessage(reqBody),
+		"request_body":   json.RawMessage(reqBody),
 	}
 	data, err := json.MarshalIndent(envelope, "", "  ")
 	if err != nil {
@@ -371,8 +390,8 @@ func saveDebugRequest(model string, reqBody []byte, upstreamError string) {
 	msgRoles := make([]string, 0)
 	var parsed struct {
 		Messages []struct {
-			Role      string `json:"role"`
-			ToolCallID string `json:"tool_call_id"`
+			Role       string     `json:"role"`
+			ToolCallID string     `json:"tool_call_id"`
 			ToolCalls  []struct{} `json:"tool_calls"`
 		} `json:"messages"`
 	}
@@ -390,7 +409,6 @@ func saveDebugRequest(model string, reqBody []byte, upstreamError string) {
 	}
 	utils.GetLogger().Error("[debug] Failed request message sequence: %v", msgRoles)
 }
-
 
 // classifyError determines the error category based on the error context
 func classifyError(statusCode int, err error) string {
@@ -483,7 +501,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 	// Retry logic with exponential backoff
 	var lastErr error
 	var currentCancel context.CancelFunc // track the latest context cancel for cleanup
-		rateLimit429Count := 0 // Track 429-specific retries separately
+	rateLimit429Count := 0               // Track 429-specific retries separately
 	for attempt := 0; attempt <= c.RetryCount; attempt++ {
 		// Check if we've exceeded the timeout
 		if time.Now().After(deadline) {
@@ -501,7 +519,7 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 				break
 			}
 			logger.Info("  ⏱️  Retry attempt %d/%d after %v backoff", attempt, c.RetryCount, backoffDuration)
-				time.Sleep(backoffDuration)
+			time.Sleep(backoffDuration)
 		}
 
 		// Create context with timeout for this attempt
@@ -670,10 +688,10 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 			}
 
 			logger.Error("← [OpenAIClient] Failed to decode response after %d attempts", c.RetryCount+1)
-				c.logProxyError(openAIReq.Model, "", 0, err,
-					fmt.Sprintf("decode error after %d attempts: %v", c.RetryCount+1, err),
-					"", database.StageResponse, attempt, time.Since(startTime).Milliseconds(),
-					string(reqBody[:min(500, len(reqBody))]))
+			c.logProxyError(openAIReq.Model, "", 0, err,
+				fmt.Sprintf("decode error after %d attempts: %v", c.RetryCount+1, err),
+				"", database.StageResponse, attempt, time.Since(startTime).Milliseconds(),
+				string(reqBody[:min(500, len(reqBody))]))
 			return nil, fmt.Errorf("failed to decode response after %d attempts: %w", c.RetryCount+1, err)
 		}
 
@@ -701,10 +719,10 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 
 			// Last attempt, return error with more context
 			logger.Error("← [OpenAIClient] API consistently returns empty choices after %d attempts", c.RetryCount+1)
-				c.logProxyError(openAIReq.Model, openAIResp.Model, 0, nil,
-					fmt.Sprintf("empty choices after %d attempts. Response ID: %s", c.RetryCount+1, openAIResp.ID),
-					"", database.StageResponse, attempt, time.Since(startTime).Milliseconds(),
-					string(reqBody[:min(500, len(reqBody))]))
+			c.logProxyError(openAIReq.Model, openAIResp.Model, 0, nil,
+				fmt.Sprintf("empty choices after %d attempts. Response ID: %s", c.RetryCount+1, openAIResp.ID),
+				"", database.StageResponse, attempt, time.Since(startTime).Milliseconds(),
+				string(reqBody[:min(500, len(reqBody))]))
 			errorMsg := fmt.Sprintf("API returned empty choices after %d attempts. Response ID: %s, Model: %s",
 				c.RetryCount+1, openAIResp.ID, openAIResp.Model)
 			if openAIResp.Error != nil {
@@ -773,7 +791,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 
 	// Retry logic for streaming requests
 	var lastErr error
-		rateLimit429Count := 0 // Track 429-specific retries separately
+	rateLimit429Count := 0 // Track 429-specific retries separately
 	for attempt := 0; attempt <= c.RetryCount; attempt++ {
 		// Check if we've exceeded the timeout
 		if time.Now().After(deadline) {
@@ -791,7 +809,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 				break
 			}
 			logger.Info("  ⏱️  Retry attempt %d/%d after %v backoff", attempt, c.RetryCount, backoffDuration)
-				time.Sleep(backoffDuration)
+			time.Sleep(backoffDuration)
 		}
 
 		// For streaming, don't set timeout on context as response body will be read over time
@@ -842,28 +860,28 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 			errorMsg := string(body)
 
 			// Provide more context when body is empty
-				if strings.TrimSpace(errorMsg) == "" {
-					errorMsg = fmt.Sprintf("HTTP %d error with no response body", resp.StatusCode)
+			if strings.TrimSpace(errorMsg) == "" {
+				errorMsg = fmt.Sprintf("HTTP %d error with no response body", resp.StatusCode)
+			}
+
+			// Log upstream error with full context for debugging
+			logger.LogUpstreamError("openai-stream", url, openAIReq.Model, resp.StatusCode, errorMsg)
+
+			// Handle 400 Bad Request with potential retryable routing errors
+			if resp.StatusCode == http.StatusBadRequest {
+				// Retry on transient upstream routing errors (e.g., "unknown aliased model")
+				if isRetryableModelRoutingError(errorMsg) && attempt < c.RetryCount {
+					logger.Warn("  Transient upstream routing error in streaming (attempt %d/%d): %s", attempt+1, c.RetryCount+1, errorMsg)
+					lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
+					continue
 				}
+			}
 
-				// Log upstream error with full context for debugging
-				logger.LogUpstreamError("openai-stream", url, openAIReq.Model, resp.StatusCode, errorMsg)
+			classifiedError := ClassifyOpenAIError(errorMsg)
 
-				// Handle 400 Bad Request with potential retryable routing errors
-				if resp.StatusCode == http.StatusBadRequest {
-					// Retry on transient upstream routing errors (e.g., "unknown aliased model")
-					if isRetryableModelRoutingError(errorMsg) && attempt < c.RetryCount {
-						logger.Warn("  Transient upstream routing error in streaming (attempt %d/%d): %s", attempt+1, c.RetryCount+1, errorMsg)
-						lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
-						continue
-					}
-				}
-
-				classifiedError := ClassifyOpenAIError(errorMsg)
-
-				// Check if error is retryable.
-				// 429 is conditionally retryable: transient rate limits yes, quota/billing hard limits no.
-				isRetryable := isRetryableHTTPStatus(resp.StatusCode, errorMsg)
+			// Check if error is retryable.
+			// 429 is conditionally retryable: transient rate limits yes, quota/billing hard limits no.
+			isRetryable := isRetryableHTTPStatus(resp.StatusCode, errorMsg)
 
 			// For 429: smart multi-attempt exponential backoff
 			// Same strategy as non-streaming: 429s don't consume main retry budget.

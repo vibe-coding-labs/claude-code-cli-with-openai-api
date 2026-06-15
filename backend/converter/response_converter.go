@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // streamMaxDuration is the absolute cap on a single streaming response: if a
@@ -80,23 +80,23 @@ func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalRe
 func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
 	if openAIResp == nil {
 		return &models.ClaudeResponse{
-			ID:      "msg_empty",
-			Type:    "message",
-			Role:    models.RoleAssistant,
-			Model:   originalReq.Model,
-			Content: []models.ClaudeContentBlock{{Type: "text", Text: ""}},
+			ID:         "msg_empty",
+			Type:       "message",
+			Role:       models.RoleAssistant,
+			Model:      originalReq.Model,
+			Content:    []models.ClaudeContentBlock{{Type: "text", Text: ""}},
 			StopReason: "end_turn",
-			Usage:   models.ClaudeUsage{},
+			Usage:      models.ClaudeUsage{},
 		}
 	}
 
 	if len(openAIResp.Choices) == 0 {
 		return &models.ClaudeResponse{
-			ID:      openAIResp.ID,
-			Type:    "message",
-			Role:    models.RoleAssistant,
-			Model:   originalReq.Model,
-			Content: []models.ClaudeContentBlock{{Type: "text", Text: ""}},
+			ID:         openAIResp.ID,
+			Type:       "message",
+			Role:       models.RoleAssistant,
+			Model:      originalReq.Model,
+			Content:    []models.ClaudeContentBlock{{Type: "text", Text: ""}},
 			StopReason: "end_turn",
 			Usage: models.ClaudeUsage{
 				InputTokens:  openAIResp.Usage.PromptTokens,
@@ -211,6 +211,8 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 // an overloaded_error is sent to trigger client-side retry. Pass 0 to use the default (120 seconds).
 func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string, stallTimeout time.Duration) *StreamingResult {
 	state := newStreamingState(originalReq.Model, toolNameMapping)
+	streamStart := time.Now()
+	logger := utils.GetLogger()
 	var collectedContent strings.Builder
 
 	// Default mid-stream idle timeout
@@ -258,7 +260,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[converter] panic recovered in streaming: %v", r)
+				logger.Warn("[converter] panic recovered in streaming: %v", r)
 				errChan <- fmt.Errorf("streaming panic: %v", r)
 			}
 		}()
@@ -308,10 +310,10 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
 				state.chunkErrors++
 				if state.chunkErrors <= 5 {
-					log.Printf("[converter] chunk parse error #%d: %v (data: %.100s)", state.chunkErrors, err, chunkData)
+					logger.Warn("[converter] chunk parse error #%d: %v (data: %.100s)", state.chunkErrors, err, chunkData)
 				}
 				if state.chunkErrors > 50 {
-					log.Printf("[converter] too many chunk errors (%d), aborting stream", state.chunkErrors)
+					logger.Warn("[converter] too many chunk errors (%d), aborting stream", state.chunkErrors)
 					return
 				}
 				continue
@@ -332,62 +334,62 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			hasContent := delta.Content != nil || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0
 
 			if hasContent {
-					emittedToolArgsInTransition := false
+				emittedToolArgsInTransition := false
 
-					if !state.sentContentBlockStart {
-						// Lazy start: start first content block only when content arrives
-						initType, initBlockData := state.detectBlockType(delta)
-						state.currentBlockType = initType
-						if initBlockData != nil {
-							state.currentBlockStart = initBlockData
+				if !state.sentContentBlockStart {
+					// Lazy start: start first content block only when content arrives
+					initType, initBlockData := state.detectBlockType(delta)
+					state.currentBlockType = initType
+					if initBlockData != nil {
+						state.currentBlockStart = initBlockData
+					}
+					emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
+					state.sentContentBlockStart = true
+				} else {
+					// Block transitions only when a block was already established on a previous chunk
+					shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
+					if shouldStart {
+						// Emit empty args for current tool_use block before closing
+						emitEmptyToolArgsForBlock(c, state)
+						emitContentBlockStop(c, state.currentBlockIndex)
+						state.currentBlockIndex++
+						state.currentBlockType = newType
+						if blockStartData != nil {
+							state.currentBlockStart = blockStartData
 						}
 						emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
-						state.sentContentBlockStart = true
-					} else {
-						// Block transitions only when a block was already established on a previous chunk
-						shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
-						if shouldStart {
-							// Emit empty args for current tool_use block before closing
-							emitEmptyToolArgsForBlock(c, state)
-							emitContentBlockStop(c, state.currentBlockIndex)
-							state.currentBlockIndex++
-							state.currentBlockType = newType
-							if blockStartData != nil {
-								state.currentBlockStart = blockStartData
-							}
-							emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
 
-							// litellm pattern: if trigger chunk has tool arguments, emit them
-							// after content_block_start (some providers send args with name/ID)
-							if state.currentBlockType == BlockToolUse && len(delta.ToolCalls) > 0 {
-								for _, tc := range delta.ToolCalls {
-									idx := tc.Index
-									if state.toolCalls[idx] == nil {
-										state.toolCalls[idx] = &toolCallInfo{}
+						// litellm pattern: if trigger chunk has tool arguments, emit them
+						// after content_block_start (some providers send args with name/ID)
+						if state.currentBlockType == BlockToolUse && len(delta.ToolCalls) > 0 {
+							for _, tc := range delta.ToolCalls {
+								idx := tc.Index
+								if state.toolCalls[idx] == nil {
+									state.toolCalls[idx] = &toolCallInfo{}
+								}
+								if tc.ID != "" {
+									state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
+								} else if state.toolCalls[idx].id == "" {
+									if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
+										state.toolCalls[idx].id = id
 									}
-									if tc.ID != "" {
-										state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
-									} else if state.toolCalls[idx].id == "" {
-										if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
-											state.toolCalls[idx].id = id
-										}
-									}
-									toolName := state.restoreToolName(tc.Function.Name)
-									if toolName != "" {
-										state.toolCalls[idx].name = toolName
-									}
-									if tc.Function.Arguments != "" {
-										state.toolCalls[idx].argsBuffer += tc.Function.Arguments
-										emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
-										emittedToolArgsInTransition = true
-									}
+								}
+								toolName := state.restoreToolName(tc.Function.Name)
+								if toolName != "" {
+									state.toolCalls[idx].name = toolName
+								}
+								if tc.Function.Arguments != "" {
+									state.toolCalls[idx].argsBuffer += tc.Function.Arguments
+									emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
+									emittedToolArgsInTransition = true
 								}
 							}
 						}
 					}
+				}
 
-					switch state.currentBlockType {
-					case BlockText:
+				switch state.currentBlockType {
+				case BlockText:
 					if delta.Content != nil {
 						if textContent, ok := delta.Content.(string); ok && textContent != "" {
 							collectedContent.WriteString(textContent)
@@ -445,31 +447,40 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		}
 	}()
 
-	// Wait for completion or cancellation
+	// Wait for completion or cancellation. Each non-normal exit logs its
+	// specific reason + elapsed time, so a client-side "socket connection was
+	// closed unexpectedly" can be correlated to a server-side cause.
 	select {
 	case <-done:
-		// Normal completion
+		// Normal completion — falls through to emit terminal events below.
+		logger.Info("[stream] upstream completed normally after %v", time.Since(streamStart))
 	case err := <-errChan:
 		if strings.Contains(err.Error(), "client disconnected") {
+			logger.Info("[stream] ended: client disconnected after %v", time.Since(streamStart))
 			sendSSEError(c, "cancelled", "Request was cancelled by client")
 			return nil
 		}
 		errorMsg := err.Error()
-			// Model routing errors → overloaded_error so Claude Code auto-retries
-			if client.IsModelRoutingError(errorMsg) {
-				sendSSEError(c, "overloaded_error", "API is temporarily overloaded. Please retry.")
-				return nil
-			}
-			classifiedError := client.ClassifyOpenAIError(errorMsg)
-			sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
+		// Model routing errors → overloaded_error so Claude Code auto-retries
+		if client.IsModelRoutingError(errorMsg) {
+			logger.Warn("[stream] ended: model routing error after %v: %s", time.Since(streamStart), errorMsg)
+			sendSSEError(c, "overloaded_error", "API is temporarily overloaded. Please retry.")
+			return nil
+		}
+		classifiedError := client.ClassifyOpenAIError(errorMsg)
+		logger.Warn("[stream] ended: upstream/scanner error after %v: %s", time.Since(streamStart), classifiedError)
+		sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
 		return nil
 	case <-ctx.Done():
+		logger.Info("[stream] ended: client cancelled (request context done) after %v", time.Since(streamStart))
 		sendSSEError(c, "cancelled", "Request was cancelled by client")
 		return nil
 	case <-idleTimer.C:
+		logger.Warn("[stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
 		sendSSEError(c, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
 		return nil
 	case <-time.After(streamMaxDuration):
+		logger.Warn("[stream] ended: exceeded max stream duration %v", streamMaxDuration)
 		sendSSEError(c, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v); set PROXY_STREAM_MAX_DURATION_MIN to extend if your workload needs longer generations", streamMaxDuration))
 		return nil
 	}
@@ -530,31 +541,31 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		"type": models.EventMessageStop,
 	})
 
-		// Collect tool calls for session saving (sorted by OpenAI index for deterministic order)
-		resultToolCalls := []map[string]interface{}{}
-		toolIndices := make([]int, 0, len(toolCalls))
-		for idx := range toolCalls {
-			toolIndices = append(toolIndices, idx)
-		}
-		sort.Ints(toolIndices)
-		for _, idx := range toolIndices {
-			toolData := toolCalls[idx]
-			if toolData.id != "" {
-				var input map[string]interface{}
-				if toolData.argsBuffer != "" {
-					_ = json.Unmarshal([]byte(toolData.argsBuffer), &input)
-				}
-				if input == nil {
-					input = map[string]interface{}{}
-				}
-				resultToolCalls = append(resultToolCalls, map[string]interface{}{
-					"type":  "tool_use",
-					"id":    toolData.id,
-					"name":  toolData.name,
-					"input": input,
-				})
+	// Collect tool calls for session saving (sorted by OpenAI index for deterministic order)
+	resultToolCalls := []map[string]interface{}{}
+	toolIndices := make([]int, 0, len(toolCalls))
+	for idx := range toolCalls {
+		toolIndices = append(toolIndices, idx)
+	}
+	sort.Ints(toolIndices)
+	for _, idx := range toolIndices {
+		toolData := toolCalls[idx]
+		if toolData.id != "" {
+			var input map[string]interface{}
+			if toolData.argsBuffer != "" {
+				_ = json.Unmarshal([]byte(toolData.argsBuffer), &input)
 			}
+			if input == nil {
+				input = map[string]interface{}{}
+			}
+			resultToolCalls = append(resultToolCalls, map[string]interface{}{
+				"type":  "tool_use",
+				"id":    toolData.id,
+				"name":  toolData.name,
+				"input": input,
+			})
 		}
+	}
 
 	c.Writer.Flush()
 
@@ -581,8 +592,8 @@ func emitMessageStart(c *gin.Context, state *StreamingState) {
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage": map[string]int{
-				"input_tokens":              0,
-				"output_tokens":             0,
+				"input_tokens":                0,
+				"output_tokens":               0,
 				"cache_creation_input_tokens": 0,
 				"cache_read_input_tokens":     0,
 			},
@@ -654,7 +665,6 @@ func emitMessageDelta(c *gin.Context, state *StreamingState) {
 		"usage": usageData,
 	})
 }
-
 
 // emitEmptyToolArgsIfNeeded emits a partial_json delta with "{}" for the current
 // tool_use block if it never received any argument deltas (one-api pattern).

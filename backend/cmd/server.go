@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -284,10 +288,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.GET("/proxy-errors/stats", h.GetProxyErrorStats)
 		configAPI.DELETE("/proxy-errors", h.CleanupProxyErrors)
 
-			// System settings
-			configAPI.GET("/settings", h.GetSystemSettings)
-			configAPI.PUT("/settings", h.UpdateSystemSettings)
-			configAPI.GET("/log-stats", h.GetLogStats)
+		// System settings
+		configAPI.GET("/settings", h.GetSystemSettings)
+		configAPI.PUT("/settings", h.UpdateSystemSettings)
+		configAPI.GET("/log-stats", h.GetLogStats)
 
 		// Test endpoint
 		configAPI.POST("/configs/:id/renew-key", h.RenewConfigAPIKey)
@@ -303,8 +307,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.GET("/users/:id/stats", h.GetUserTokenStats)
 		configAPI.GET("/users/:id/logs", h.GetUserLogs)
 
-			// Proxy detection
-			configAPI.GET("/proxy/detect", h.DetectProxy)
+		// Proxy detection
+		configAPI.GET("/proxy/detect", h.DetectProxy)
 
 		// Load Balancer CRUD
 		configAPI.GET("/load-balancers", handler.GetAllLoadBalancers)
@@ -405,29 +409,81 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// InvalidHTTPResponse errors when the client reuses a keepalive
 	// connection that the server has silently closed.
 	addr := fmt.Sprintf("%s:%d", cfg.Host, actualPort)
+	idleTimeout := 120 * time.Second
+
+	// idleSince records when each keep-alive connection last became idle, so
+	// ConnState can distinguish a close-while-idle (server IdleTimeout, or the
+	// client retiring a pool entry — the keep-alive race that surfaces to
+	// clients as "socket connection was closed unexpectedly") from a
+	// close-while-active (client disconnect / normal request end). Without this,
+	// server-side connection closes were invisible, leaving the client-side
+	// "socket closed" error undiagnosable.
+	var idleSince sync.Map
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           router,
-		ReadTimeout:       30 * time.Second,    // Time limit for reading the entire request (including body)
-		ReadHeaderTimeout: 10 * time.Second,    // Time limit for reading request headers
-		WriteTimeout:      0,                    // No write timeout — streaming responses can take minutes
-		IdleTimeout:       120 * time.Second,   // Keepalive connection idle timeout
-		MaxHeaderBytes:    1 << 20,              // 1MB max header size
+		ReadTimeout:       30 * time.Second, // Time limit for reading the entire request (including body)
+		ReadHeaderTimeout: 10 * time.Second, // Time limit for reading request headers
+		WriteTimeout:      0,                // No write timeout — streaming responses can take minutes
+		IdleTimeout:       idleTimeout,      // Keepalive connection idle timeout
+		MaxHeaderBytes:    1 << 20,          // 1MB max header size
 		ConnState: func(conn net.Conn, state http.ConnState) {
-			if state == http.StateClosed || state == http.StateHijacked {
-				logger := utils.GetLogger()
-				if logger != nil {
-					logger.Debug("[ConnState] remote=%s state=%s", conn.RemoteAddr(), state)
+			logger := utils.GetLogger()
+			if logger == nil {
+				return
+			}
+			remote := conn.RemoteAddr().String()
+			switch state {
+			case http.StateIdle:
+				idleSince.Store(remote, time.Now())
+			case http.StateClosed, http.StateHijacked:
+				if v, ok := idleSince.LoadAndDelete(remote); ok {
+					// Was idle when closed. If idle_for ≈ idleTimeout, the *server*
+					// retired it (IdleTimeout) — a potential keep-alive race if the
+					// client tried to reuse it at the same instant.
+					logger.Info("[conn] idle connection closed: remote=%s idle_for=%s (server IdleTimeout=%s, or client retired its pool entry)", remote, time.Since(v.(time.Time)), idleTimeout)
+				} else {
+					logger.Info("[conn] active connection closed: remote=%s (client disconnect, request end, or mid-stream close)", remote)
 				}
 			}
 		},
 	}
 
 	color.New(color.FgCyan, color.Bold).Println("\n🚀 Server starting...")
+
+	// Graceful shutdown: drain in-flight requests on SIGTERM/SIGINT instead of
+	// killing them mid-response. A hard kill (the previous behavior under
+	// `systemctl restart`) drops every active streaming connection, which undici
+	// reports to Claude Code as "The socket connection was closed unexpectedly".
+	// systemd sends SIGTERM (KillSignal=SIGTERM) and respects our drain within
+	// TimeoutStopSec=30s.
+	shutdownDone := make(chan error, 1)
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+		sig := <-sigChan
+		if logger := utils.GetLogger(); logger != nil {
+			logger.Info("[server] received %s — draining in-flight connections (up to 30s) before exit", sig)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		shutdownDone <- srv.Shutdown(ctx)
+	}()
+
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		color.New(color.FgRed, color.Bold).Print("❌ Failed to start server: ")
 		color.New(color.FgRed).Println(err)
 		return err
+	}
+	// ListenAndServe returned ErrServerClosed (Shutdown was called). Wait for
+	// the drain to finish so in-flight requests complete before the process exits.
+	if err := <-shutdownDone; err != nil {
+		if logger := utils.GetLogger(); logger != nil {
+			logger.Warn("[server] shutdown finished with error: %v", err)
+		}
+	} else if logger := utils.GetLogger(); logger != nil {
+		logger.Info("[server] shutdown complete — all in-flight connections drained")
 	}
 	return nil
 }
