@@ -165,6 +165,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Enable CORS - 自定义中间件
 	router.Use(func(c *gin.Context) {
+		// Ask keep-alive clients (undici / Claude Code) to retire an idle pooled
+		// connection at 60s — comfortably before this server's IdleTimeout
+		// (120s, set below). That way the *client* always closes first, so the
+		// server never force-closes an idle connection the client is about to
+		// reuse. That server-initiated close is the keep-alive race that surfaces
+		// to the client as "The socket connection was closed unexpectedly". It's
+		// a standards-based hint; a client that ignores it is still safe-netted
+		// by the server's own IdleTimeout (observed in [conn] idle_for≈120s logs).
+		c.Writer.Header().Set("Keep-Alive", "timeout=60")
+
 		origin := c.Request.Header.Get("Origin")
 
 		// 检查是否允许该来源
