@@ -222,6 +222,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 	{
 		v1.POST("/messages", h.CreateMessage)
 		v1.POST("/messages/count_tokens", h.CountTokens)
+		// OpenAI Responses API ingress (Codex CLI). Translates Responses ->
+		// Chat Completions upstream and back.
+		v1.POST("/responses", h.CreateResponse)
 
 		// 兼容端点
 		v1.GET("/me", h.GetMe)
