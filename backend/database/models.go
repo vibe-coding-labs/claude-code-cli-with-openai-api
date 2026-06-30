@@ -60,6 +60,15 @@ func CreateAPIConfig(config *APIConfig) error {
 		}
 	}
 
+	// Serialize model_mappings to JSON (alias -> real upstream model name)
+	var modelMappingsJSON []byte
+	if len(config.ModelMappings) > 0 {
+		modelMappingsJSON, err = json.Marshal(config.ModelMappings)
+		if err != nil {
+			return fmt.Errorf("failed to marshal model mappings: %w", err)
+		}
+	}
+
 	// Set default retry count if not provided
 	if config.RetryCount <= 0 {
 		config.RetryCount = 3
@@ -79,16 +88,16 @@ func CreateAPIConfig(config *APIConfig) error {
 	query := `
 		INSERT INTO api_configs (
 			id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
+			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
 			retry_backoff_base, retry_backoff_max, proxy_url,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
 		config.ID, config.Name, config.Description, config.UserID, encrypted, config.OpenAIBaseURL,
-		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
+		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
 		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL,
@@ -106,7 +115,7 @@ func CreateAPIConfig(config *APIConfig) error {
 func GetAPIConfig(id string) (*APIConfig, error) {
 	query := `
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
+			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
 			retry_backoff_base, retry_backoff_max, proxy_url,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
@@ -115,11 +124,12 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 
 	config := &APIConfig{}
 	var supportedModelsJSON sql.NullString
+	var modelMappingsJSON sql.NullString
 	var expiresAt sql.NullTime
 	err := DB.QueryRow(query, id).Scan(
 		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
+		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
 		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
 		&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
@@ -141,6 +151,13 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 		err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal supported models: %w", err)
+		}
+	}
+
+	// Deserialize model_mappings from JSON (alias -> real upstream model name)
+	if modelMappingsJSON.Valid && modelMappingsJSON.String != "" {
+		if err := json.Unmarshal([]byte(modelMappingsJSON.String), &config.ModelMappings); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal model mappings: %w", err)
 		}
 	}
 
@@ -171,7 +188,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	// Cache miss - query database
 	query := `
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
+			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
 			retry_backoff_base, retry_backoff_max, proxy_url,
 			anthropic_api_key, enabled, created_at, updated_at
@@ -182,10 +199,11 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 
 	config := &APIConfig{}
 	var supportedModelsJSON sql.NullString
+	var modelMappingsJSON sql.NullString
 	err := DB.QueryRow(query, apiKey).Scan(
 		&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-		&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
+		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
 		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
 		&config.AnthropicAPIKey, &config.Enabled, &config.CreatedAt, &config.UpdatedAt,
@@ -203,6 +221,13 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 		err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal supported models: %w", err)
+		}
+	}
+
+	// Deserialize model_mappings from JSON (alias -> real upstream model name)
+	if modelMappingsJSON.Valid && modelMappingsJSON.String != "" {
+		if err := json.Unmarshal([]byte(modelMappingsJSON.String), &config.ModelMappings); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal model mappings: %w", err)
 		}
 	}
 
@@ -273,7 +298,7 @@ func RenewAnthropicAPIKey(configID string, customToken string) (string, error) {
 func GetAllAPIConfigs() ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
+			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
 			retry_backoff_base, retry_backoff_max, proxy_url,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
@@ -290,11 +315,12 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 	for rows.Next() {
 		config := &APIConfig{}
 		var supportedModelsJSON sql.NullString
+		var modelMappingsJSON sql.NullString
 		var expiresAt sql.NullTime
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
+			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
 			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
@@ -312,6 +338,13 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 			if err != nil {
 				// 忽略反序列化错误，继续处理
 				config.SupportedModels = nil
+			}
+		}
+
+		// Deserialize model_mappings from JSON (alias -> real upstream model name)
+		if modelMappingsJSON.Valid && modelMappingsJSON.String != "" {
+			if err := json.Unmarshal([]byte(modelMappingsJSON.String), &config.ModelMappings); err != nil {
+				config.ModelMappings = nil
 			}
 		}
 
@@ -335,7 +368,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 	query := `
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
-			big_model, middle_model, small_model, supported_models, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
+			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
 			retry_backoff_base, retry_backoff_max, proxy_url,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
@@ -354,11 +387,12 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 	for rows.Next() {
 		config := &APIConfig{}
 		var supportedModelsJSON sql.NullString
+		var modelMappingsJSON sql.NullString
 		var expiresAt sql.NullTime
 		err := rows.Scan(
 			&config.ID, &config.Name, &config.Description, &config.UserID, &config.OpenAIAPIKeyEncrypted,
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
-			&supportedModelsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
+			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
 			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
@@ -374,6 +408,13 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 			err = json.Unmarshal([]byte(supportedModelsJSON.String), &config.SupportedModels)
 			if err != nil {
 				config.SupportedModels = nil
+			}
+		}
+
+		// Deserialize model_mappings from JSON (alias -> real upstream model name)
+		if modelMappingsJSON.Valid && modelMappingsJSON.String != "" {
+			if err := json.Unmarshal([]byte(modelMappingsJSON.String), &config.ModelMappings); err != nil {
+				config.ModelMappings = nil
 			}
 		}
 
@@ -430,6 +471,15 @@ func UpdateAPIConfig(config *APIConfig) error {
 		}
 	}
 
+	// Serialize model_mappings to JSON (alias -> real upstream model name)
+	var modelMappingsJSON []byte
+	if len(config.ModelMappings) > 0 {
+		modelMappingsJSON, err = json.Marshal(config.ModelMappings)
+		if err != nil {
+			return fmt.Errorf("failed to marshal model mappings: %w", err)
+		}
+	}
+
 	// Validate retry count
 	if config.RetryCount <= 0 {
 		config.RetryCount = 3
@@ -449,7 +499,7 @@ func UpdateAPIConfig(config *APIConfig) error {
 	query := `
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
-			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, max_tokens_limit = ?,
+			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, model_mappings = ?, max_tokens_limit = ?,
 			request_timeout = ?, retry_count = ?, reasoning_effort = ?,
 			big_model_reasoning_effort = ?, middle_model_reasoning_effort = ?, small_model_reasoning_effort = ?,
 			retry_backoff_base = ?, retry_backoff_max = ?, proxy_url = ?,
@@ -459,7 +509,7 @@ func UpdateAPIConfig(config *APIConfig) error {
 
 	_, err = DB.Exec(query,
 		config.Name, config.Description, encrypted, config.OpenAIBaseURL,
-		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), config.MaxTokensLimit,
+		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
 		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL,

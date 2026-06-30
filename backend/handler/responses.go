@@ -129,8 +129,20 @@ func (h *Handler) executeResponsesRequestWithConfig(c *gin.Context, dbConfig *da
 		return fmt.Errorf("responses parse error: %w", err)
 	}
 
-	// Build config + client from the DB config (model is passed through as-is;
-	// Responses carries the real model name, no big/middle/small mapping).
+	// Apply per-config model-name alias mapping. The client (e.g. Codex) sends a
+	// "vanity" model name its built-in catalog recognizes (e.g. glm-5.1); we
+	// forward the real upstream model name (e.g. astron-code-latest) that the
+	// provider requires, while keeping the client-facing name to echo back in
+	// the response so the client sees a consistent model identity.
+	clientModel := openAIReq.Model
+	upstreamModel := database.ResolveModelAlias(clientModel, dbConfig.ModelMappings)
+	if upstreamModel != clientModel {
+		logger.Info("  Model alias mapping: %s -> %s (config=%s)", clientModel, upstreamModel, dbConfig.ID)
+		openAIReq.Model = upstreamModel
+	}
+
+	// Build config + client from the DB config (model is forwarded as resolved
+	// above; Responses carries the real model name, no big/middle/small mapping).
 	c.Set("user_id", dbConfig.UserID)
 	targetConfig := &config.Config{
 		ConfigID:           dbConfig.ID,
@@ -155,20 +167,20 @@ func (h *Handler) executeResponsesRequestWithConfig(c *gin.Context, dbConfig *da
 
 	configID := dbConfig.ID
 	logger.Info("  Responses request: model=%s, messages=%d, stream=%v, tools=%v",
-		openAIReq.Model, len(openAIReq.Messages), openAIReq.Stream, len(openAIReq.Tools) > 0)
+		clientModel, len(openAIReq.Messages), openAIReq.Stream, len(openAIReq.Tools) > 0)
 
 	if c.Request.Context().Err() != nil {
 		return fmt.Errorf("client disconnected before request")
 	}
 
 	if openAIReq.Stream {
-		return h.executeResponsesStream(c, targetClient, targetConfig, openAIReq, reqBody, configID, startTime)
+		return h.executeResponsesStream(c, targetClient, targetConfig, openAIReq, reqBody, configID, startTime, clientModel)
 	}
-	return h.executeResponsesNonStream(c, targetClient, openAIReq, reqBody, configID, startTime)
+	return h.executeResponsesNonStream(c, targetClient, openAIReq, reqBody, configID, startTime, clientModel)
 }
 
 // executeResponsesNonStream performs a non-streaming Responses request.
-func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client.OpenAIClient, openAIReq *models.OpenAIRequest, reqBody map[string]interface{}, configID string, startTime time.Time) error {
+func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client.OpenAIClient, openAIReq *models.OpenAIRequest, reqBody map[string]interface{}, configID string, startTime time.Time, clientModel string) error {
 	logger := utils.GetLogger()
 
 	openAIResp, err := targetClient.CreateChatCompletion(openAIReq)
@@ -179,7 +191,9 @@ func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client
 		return fmt.Errorf("request failed: %w", err)
 	}
 
-	responsesObj := converter.ConvertOpenAIResponseToResponses(openAIResp, openAIReq.Model, reqBody)
+	// Echo the client-facing model name (not the resolved upstream name) so the
+	// client sees the model identity it requested.
+	responsesObj := converter.ConvertOpenAIResponseToResponses(openAIResp, clientModel, reqBody)
 	h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model,
 		openAIResp.Usage.PromptTokens, openAIResp.Usage.CompletionTokens,
 		startTime, "success", "", nil, nil)
@@ -192,7 +206,7 @@ func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client
 // executeResponsesStream performs a streaming Responses request with the same
 // pre-stream stall-detection + transparent recreate-on-stall retry as the
 // Claude path (handler.go:524-603).
-func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.OpenAIClient, targetConfig *config.Config, openAIReq *models.OpenAIRequest, reqBody map[string]interface{}, configID string, startTime time.Time) error {
+func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.OpenAIClient, targetConfig *config.Config, openAIReq *models.OpenAIRequest, reqBody map[string]interface{}, configID string, startTime time.Time, clientModel string) error {
 	logger := utils.GetLogger()
 
 	var reader io.ReadCloser
@@ -255,7 +269,9 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 
 		defer reader.Close()
 		logger.Info("  Responses stream verified (stall retries: %d)", stallRetry)
-		streamResult = converter.ConvertOpenAIStreamingToResponses(c, stallResult.Reader, openAIReq.Model, reqBody, stallTimeout)
+		// Echo the client-facing model name (not the resolved upstream name) so
+		// the client sees the model identity it requested.
+		streamResult = converter.ConvertOpenAIStreamingToResponses(c, stallResult.Reader, clientModel, reqBody, stallTimeout)
 		break
 	}
 
