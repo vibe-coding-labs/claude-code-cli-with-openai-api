@@ -248,8 +248,15 @@ func isPermanentQuotaError(errStr string) bool {
 	return false
 }
 
+// isServerErrorStatus 判断错误字符串是否包含可重试的服务端/上游过载状态码。
+// 424 在 HTTP 标准里是 "Failed Dependency"，但许多第三方 OpenAI 兼容网关用它表示
+// "上游过载/暂时不可用"，语义等同于 503，应作为可重试的服务端错误处理。
 func isServerErrorStatus(errStr string) bool {
-	codes := []string{"status 500", "status 502", "status 503", "status 504", "status 506", "status 507", "status 508"}
+	codes := []string{
+		"status 424", // 上游过载（第三方网关非标准码，等同于 503）
+		"status 500", "status 502", "status 503", "status 504",
+		"status 506", "status 507", "status 508",
+	}
 	for _, code := range codes {
 		if strings.Contains(errStr, code) {
 			return true

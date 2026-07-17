@@ -33,7 +33,7 @@ func TestClassifyError_PermanentQuota(t *testing.T) {
 }
 
 func TestClassifyError_ServerError(t *testing.T) {
-	codes := []string{"500", "502", "503", "504"}
+	codes := []string{"424", "500", "502", "503", "504"}
 	for _, code := range codes {
 		err := fmt.Errorf("status %s error", code)
 		if got := ClassifyError(err); got != CategoryServerError {
@@ -224,6 +224,7 @@ func TestIsRetryable(t *testing.T) {
 		err       error
 		retryable bool
 	}{
+		{fmt.Errorf("status 424: service temporarily unavailable"), true},
 		{fmt.Errorf("status 429: rate limit"), true},
 		{fmt.Errorf("status 500: internal error"), true},
 		{fmt.Errorf("connection refused"), true},
