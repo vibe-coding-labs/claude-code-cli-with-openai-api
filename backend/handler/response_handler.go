@@ -350,10 +350,15 @@ func (r *ResponseHandler) SendErrorResponse(c *gin.Context, err error) {
 	statusCode := http.StatusInternalServerError
 
 	// 尝试从错误消息中提取状态码
-	// 错误格式: "OpenAI API error (status 401): ..."
-	if strings.Contains(errorMsg, "status") {
+	// 错误格式: "OpenAI API error (status 401): ..."，但可能被 retry engine
+	// 包装成 "all retry attempts failed, last error: OpenAI API error (status 424): ..."
+	// 用 strings.Index 定位 "OpenAI API error (status" 子串，而非前缀匹配，
+	// 这样无论错误是否被包装都能提取出真实状态码。
+	statusMarker := "OpenAI API error (status "
+	if idx := strings.Index(errorMsg, statusMarker); idx >= 0 {
+		rest := errorMsg[idx+len(statusMarker):]
 		var extractedStatus int
-		if n, _ := fmt.Sscanf(errorMsg, "OpenAI API error (status %d):", &extractedStatus); n == 1 {
+		if n, _ := fmt.Sscanf(rest, "%d", &extractedStatus); n == 1 {
 			if extractedStatus >= 400 && extractedStatus < 600 {
 				statusCode = extractedStatus
 			}
