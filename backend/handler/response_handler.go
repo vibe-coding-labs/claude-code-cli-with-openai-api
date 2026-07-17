@@ -416,6 +416,24 @@ func (r *ResponseHandler) SendErrorResponse(c *gin.Context, err error) {
 		return
 	}
 
+	// Detect upstream overload status codes and return overloaded_error.
+	// 424 "Upstream service temporarily unavailable" is returned by picpi and other
+	// OpenAI-compatible gateways to mean upstream overload; 529 is the canonical
+	// overloaded code. Claude Code auto-retries on overloaded_error with backoff, so
+	// when the proxy's own retries (client layer + retry engine) are exhausted, the
+	// client still retries gracefully instead of surfacing a hard 424 error.
+	if statusCode == 424 || statusCode == 529 {
+		logger.Warn("← [SendErrorResponse] Upstream overload (status %d), returning overloaded_error: %s", statusCode, errorMsg)
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":    "overloaded_error",
+				"message": "Upstream provider temporarily overloaded. Please retry.",
+			},
+		})
+		return
+	}
+
 	// 分类并格式化错误消息
 	classifiedError := client.ClassifyOpenAIError(errorMsg)
 
