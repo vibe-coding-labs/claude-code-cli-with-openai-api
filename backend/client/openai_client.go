@@ -254,7 +254,8 @@ func isRetryableHTTPStatus(statusCode int, errorBody string) bool {
 	}
 
 	switch statusCode {
-	case 408, 406, 502, 503, 504, 506, 507, 508, 509, 510, 511:
+	case 424, // 上游过载（第三方网关非标准码，等同于 503）
+		408, 406, 502, 503, 504, 506, 507, 508, 509, 510, 511:
 		return true
 	}
 
