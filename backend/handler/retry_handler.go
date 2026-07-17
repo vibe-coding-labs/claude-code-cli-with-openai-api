@@ -154,6 +154,7 @@ func NewHTTPStatusCodeError(statusCode int, message string) error {
 func IsRetryableHTTPStatus(statusCode int) bool {
 	switch statusCode {
 	case http.StatusTooManyRequests, // 429
+		424,                            // 上游过载（第三方网关非标准码）
 		http.StatusInternalServerError, // 500
 		http.StatusBadGateway,          // 502
 		http.StatusServiceUnavailable,  // 503
