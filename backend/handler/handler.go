@@ -471,28 +471,45 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 	logger.Debug("  Target config: BigModel=%s, MiddleModel=%s, SmallModel=%s",
 		targetConfig.BigModel, targetConfig.MiddleModel, targetConfig.SmallModel)
 
+	// Log input tools before conversion
+	logger.Info("  Input Claude request: tools=%d", len(req.Tools))
+	for i, t := range req.Tools {
+		logger.Info("    Tool %d: name=%q", i, t.Name)
+	}
+
 	conversionResult := converter.ConvertClaudeToOpenAIWithConfigAndMapping(&req, targetConfig, betaHeaders)
 	openAIReq := conversionResult.Request
 	toolNameMapping := conversionResult.ToolNameMapping
 
 	hasTools := len(req.Tools) > 0
+	openAIToolsCount := len(openAIReq.Tools)
 
 	logger.Info("  Converted to OpenAI model: %s", openAIReq.Model)
-	logger.Info("  OpenAI request: messages=%d, max_tokens=%d, stream=%v, reasoning_effort=%s, tools=%v",
-		len(openAIReq.Messages), openAIReq.MaxTokens, openAIReq.Stream, openAIReq.ReasoningEffort, hasTools)
-		// Log message role sequence for protocol debugging
-		msgRoles := make([]string, 0, len(openAIReq.Messages))
-		for i, m := range openAIReq.Messages {
-			roleInfo := fmt.Sprintf("%d:%s", i, m.Role)
-			if m.ToolCallID != "" {
-				roleInfo += "(tool_call_id)"
-			}
-			if len(m.ToolCalls) > 0 {
-				roleInfo += fmt.Sprintf("(tool_calls=%d)", len(m.ToolCalls))
-			}
-			msgRoles = append(msgRoles, roleInfo)
+	logger.Info("  OpenAI request: messages=%d, max_tokens=%d, stream=%v, reasoning_effort=%s, tools=%v (openai_tools=%d)",
+		len(openAIReq.Messages), openAIReq.MaxTokens, openAIReq.Stream, openAIReq.ReasoningEffort, hasTools, openAIToolsCount)
+
+	// Log tool names for debugging
+	if openAIToolsCount > 0 {
+		toolNames := make([]string, 0, openAIToolsCount)
+		for _, t := range openAIReq.Tools {
+			toolNames = append(toolNames, t.Function.Name)
 		}
-		logger.Debug("  Message sequence: %v", msgRoles)
+		logger.Info("  OpenAI tool names: %v", toolNames)
+	}
+
+	// Log message role sequence for protocol debugging
+	msgRoles := make([]string, 0, len(openAIReq.Messages))
+	for i, m := range openAIReq.Messages {
+		roleInfo := fmt.Sprintf("%d:%s", i, m.Role)
+		if m.ToolCallID != "" {
+			roleInfo += "(tool_call_id)"
+		}
+		if len(m.ToolCalls) > 0 {
+			roleInfo += fmt.Sprintf("(tool_calls=%d)", len(m.ToolCalls))
+		}
+		msgRoles = append(msgRoles, roleInfo)
+	}
+	logger.Debug("  Message sequence: %v", msgRoles)
 
 	// 检查客户端是否断开
 	if c.Request.Context().Err() != nil {
@@ -525,18 +542,38 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		// 流式响应 — stream creation 失败时智能重试（429/5xx）
 		targetClient.BetaHeaders = betaHeaders
 		var reader io.ReadCloser
+
+		// Track retry attempts for better logging
+		var lastCategory retry.ErrorCategory
+		var retryLog strings.Builder
+
 		createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
 			var err error
 			reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+			if err != nil {
+				currentCategory := retry.ClassifyError(err)
+				if currentCategory != lastCategory {
+					if lastCategory != 0 {
+						retryLog.WriteString(fmt.Sprintf("[%s->%s] ", lastCategory, currentCategory))
+					}
+					lastCategory = currentCategory
+				}
+				logger.Warn("  [stream-creation] Attempt failed (category=%s): %.100s", currentCategory, err.Error())
+			}
 			return err
 		})
+
 		if !createResult.Succeeded {
-			logger.Error("← [executeMessageRequestWithConfig] Stream creation failed after %d attempts: %v",
-				createResult.Attempts, createResult.LastErr)
+			logger.Error("← [executeMessageRequestWithConfig] Stream creation failed after %d attempts (category=%s, delay=%v): %s",
+				createResult.Attempts, createResult.Category, createResult.TotalDelay, retryLog.String())
 			h.responseHandler.SendErrorResponse(c, createResult.LastErr)
-			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", createResult.LastErr.Error(), &req, nil)
+			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error",
+				fmt.Sprintf("stream_creation_failed: attempts=%d category=%s", createResult.Attempts, createResult.Category),
+				&req, nil)
 			return fmt.Errorf("stream creation failed after %d attempts: %w", createResult.Attempts, createResult.LastErr)
 		}
+
+		logger.Info("  Stream created after %d attempts (total delay: %v)", createResult.Attempts, createResult.TotalDelay)
 		// Pre-stream verification with server-side auto-retry.
 		// If upstream doesn't send any data within stallTimeout, close the stream
 		// and retry transparently (no data has been sent to the client yet).
