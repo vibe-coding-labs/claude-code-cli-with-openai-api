@@ -229,6 +229,10 @@ func (o *OpenAIConverter) convertOpenAIMessageToInternal(msg *models.OpenAIMessa
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			}
+			// Ensure input is never nil (Claude CLI requirement: must be string or object)
+			if input == nil {
+				input = map[string]interface{}{}
+			}
 			toolID := tc.ID
 			if toolID == "" {
 				toolID = "toolu_" + generateShortID()
@@ -381,28 +385,28 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 	// Validate and fix message sequence for strict providers like Mistral
 	openAIReq.Messages = o.validateAndFixMessageSequence(openAIReq.Messages)
 
-		// 构建 tools with Gemini schema cleaning
-		isGeminiProvider := false
-		if o.cfg != nil {
-			isGeminiProvider = IsGeminiProvider(o.cfg.OpenAIBaseURL)
+	// 构建 tools with Gemini schema cleaning
+	isGeminiProvider := false
+	if o.cfg != nil {
+		isGeminiProvider = IsGeminiProvider(o.cfg.OpenAIBaseURL)
+	}
+	for _, tool := range req.Tools {
+		toolName := truncateToolName(tool.Name)
+		if toolName != tool.Name {
+			utils.GetLogger().Debug("[BuildRequest] Tool name truncated: %q -> %q", tool.Name, toolName)
 		}
-		for _, tool := range req.Tools {
-			toolName := truncateToolName(tool.Name)
-			if toolName != tool.Name {
-				utils.GetLogger().Debug("[BuildRequest] Tool name truncated: %q -> %q", tool.Name, toolName)
-			}
-				parameters := tool.Parameters
-			if isGeminiProvider && parameters != nil {
-				parameters = CleanSchemaForGemini(parameters)
-			}
-			openAIReq.Tools = append(openAIReq.Tools, models.OpenAITool{
-				Type: "function",
-				Function: models.OpenAIFunction{
-					Name:        toolName,
-					Description: tool.Description,
-					Parameters:  parameters,
-				},
-			})
+		parameters := tool.Parameters
+		if isGeminiProvider && parameters != nil {
+			parameters = CleanSchemaForGemini(parameters)
+		}
+		openAIReq.Tools = append(openAIReq.Tools, models.OpenAITool{
+			Type: "function",
+			Function: models.OpenAIFunction{
+				Name:        toolName,
+				Description: tool.Description,
+				Parameters:  parameters,
+			},
+		})
 	}
 
 	// 构建 tool_choice

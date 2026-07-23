@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // ContentBlockType represents the type of content block being streamed.
@@ -97,16 +98,46 @@ func (s *StreamingState) restoreToolName(name string) string {
 // shouldStartNewBlock detects if the current OpenAI streaming chunk indicates
 // a content block type change. Ported from litellm's _should_start_new_content_block.
 func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool, ContentBlockType, map[string]interface{}) {
-	if choice == nil || choice.FinishReason != "" {
-		return false, s.currentBlockType, nil
-	}
 	// No block transitions if we haven't started any block yet (lazy start)
 	if !s.sentContentBlockStart {
 		return false, s.currentBlockType, nil
 	}
 
+	if choice == nil {
+		return false, s.currentBlockType, nil
+	}
+
 	delta := choice.Delta
 	if delta == nil {
+		return false, s.currentBlockType, nil
+	}
+
+	// IMPORTANT: Check for tool_calls BEFORE checking finish_reason
+	// Some providers send tool_calls and finish_reason in the same chunk
+	// We need to detect the tool_use block type before the stream ends
+	if len(delta.ToolCalls) > 0 {
+		tc := delta.ToolCalls[0]
+		toolID := NormalizeToolCallID(tc.ID)
+		if toolID == "" {
+			toolID = "toolu_" + generateShortID()
+		}
+		toolName := s.restoreToolName(tc.Function.Name)
+		if toolName != "" {
+			blockStart := map[string]interface{}{
+				"type":  "tool_use",
+				"id":    toolID,
+				"name":  toolName,
+				"input": map[string]interface{}{}, // Empty object, not empty string (Claude CLI requirement)
+			}
+			// If current block is text, we need to transition to tool_use
+			if s.currentBlockType == BlockText {
+				return true, BlockToolUse, blockStart
+			}
+		}
+	}
+
+	// After processing tool_calls, check finish_reason
+	if choice.FinishReason != "" {
 		return false, s.currentBlockType, nil
 	}
 
@@ -131,7 +162,7 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 					"type":  "tool_use",
 					"id":    toolID,
 					"name":  toolName,
-					"input": "",
+					"input": map[string]interface{}{}, // Empty object, not empty string (Claude CLI requirement)
 				}
 				return true, blockType, blockStart
 			}
@@ -144,6 +175,8 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 // detectBlockType determines what type of content block an OpenAI delta implies.
 // Ported from litellm's _translate_streaming_openai_chunk_to_anthropic_content_block.
 func (s *StreamingState) detectBlockType(delta *models.OpenAIMessage) (ContentBlockType, map[string]interface{}) {
+	// Debug: log incoming delta
+	utils.GetLogger().Info("[detectBlockType] delta: content=%v tool_calls_len=%d reasoning_len=%d", delta.Content, len(delta.ToolCalls), len(delta.ReasoningContent))
 	// Tool calls: detect whenever tool_calls array is non-empty (litellm pattern)
 	// litellm checks: choice.delta.tool_calls is not None and len > 0 and function is not None
 	if len(delta.ToolCalls) > 0 {
@@ -153,17 +186,20 @@ func (s *StreamingState) detectBlockType(delta *models.OpenAIMessage) (ContentBl
 			toolID = "toolu_" + generateShortID()
 		}
 		toolName := s.restoreToolName(tc.Function.Name)
+		// Debug: log tool call detection
+		utils.GetLogger().Info("[detectBlockType] tool_call detected: id=%q name=%q args_len=%d", tc.ID, tc.Function.Name, len(tc.Function.Arguments))
 		// Don't switch to tool_use if name is empty — wait for the name chunk.
 		// Some providers send name on a separate chunk from the initial tool_call detection.
 		// Emitting a tool_use block with empty name causes Claude Code CLI parse failures.
 		if toolName == "" {
+			utils.GetLogger().Warn("[detectBlockType] tool_call name is empty, waiting for name chunk: id=%q", tc.ID)
 			return s.currentBlockType, s.currentBlockStart
 		}
 		return BlockToolUse, map[string]interface{}{
 			"type":  "tool_use",
 			"id":    toolID,
 			"name":  toolName,
-			"input": "",
+			"input": map[string]interface{}{}, // Empty object, not empty string (Claude CLI requirement)
 		}
 	}
 

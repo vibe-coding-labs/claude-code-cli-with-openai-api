@@ -1150,7 +1150,7 @@ func (h *Handler) handleNonStreamAsStream(
 					"type":  "tool_use",
 					"id":    block.ID,
 					"name":  block.Name,
-					"input": "",
+					"input": map[string]interface{}{}, // Empty object, not empty string (Claude CLI requirement)
 				},
 			}
 			h.sendSSEEvent(c, flusher, "content_block_start", startEvt)
