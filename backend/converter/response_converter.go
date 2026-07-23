@@ -318,6 +318,10 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 				}
 				continue
 			}
+			// Debug: log parsed chunk
+			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta != nil {
+				logger.Info("[converter] parsed chunk: delta.tool_calls_len=%d delta.content=%v", len(chunk.Choices[0].Delta.ToolCalls), chunk.Choices[0].Delta.Content)
+			}
 			state.updateUsage(&chunk)
 
 			if len(chunk.Choices) == 0 {
@@ -335,6 +339,8 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 
 			if hasContent {
 				emittedToolArgsInTransition := false
+				// Debug: log chunk content
+				utils.GetLogger().Debug("[response_converter] chunk hasContent: content=%v tool_calls=%d", delta.Content, len(delta.ToolCalls))
 
 				if !state.sentContentBlockStart {
 					// Lazy start: start first content block only when content arrives
@@ -347,7 +353,9 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 					state.sentContentBlockStart = true
 				} else {
 					// Block transitions only when a block was already established on a previous chunk
+					utils.GetLogger().Info("[response_converter] calling shouldStartNewBlock, current type=%v, tool_calls=%d", state.currentBlockType, len(delta.ToolCalls))
 					shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
+					utils.GetLogger().Info("[response_converter] shouldStartNewBlock result: shouldStart=%v newType=%v", shouldStart, newType)
 					if shouldStart {
 						// Emit empty args for current tool_use block before closing
 						emitEmptyToolArgsForBlock(c, state)
@@ -515,6 +523,13 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		toolCalls[k] = v
 	}
 	state.mu.Unlock()
+
+	// Log usage stats for debugging (upstream may not send usage in streaming)
+	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+		logger.Info("[stream] Usage stats: input=%d output=%d", usage.InputTokens, usage.OutputTokens)
+	} else {
+		logger.Warn("[stream] No usage stats from upstream (input=%d output=%d) - provider may not support stream_options.include_usage", usage.InputTokens, usage.OutputTokens)
+	}
 
 	// Emit final message_delta if not already sent (finish_reason path already emits it)
 	if !state.emittedMessageDelta {

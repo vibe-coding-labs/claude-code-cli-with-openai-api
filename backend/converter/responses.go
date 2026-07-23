@@ -658,14 +658,20 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 				// Tool call deltas: a new call carries id+name; subsequent
 				// fragments carry argument shards that accumulate to curTCIdx.
 				for _, tc := range delta.ToolCalls {
+					// Debug: log incoming tool call delta
+					logger.Debug("[responses-stream] tool_call delta: id=%q name=%q args_len=%d", tc.ID, tc.Function.Name, len(tc.Function.Arguments))
 					if tc.ID != "" && tc.Function.Name != "" {
 						toolCalls = append(toolCalls, responsesAccumToolCall{ID: tc.ID, Name: tc.Function.Name})
 						curTCIdx = len(toolCalls) - 1
+						logger.Info("[responses-stream] new tool_call: idx=%d id=%q name=%q", curTCIdx, tc.ID, tc.Function.Name)
 						if tc.Function.Arguments != "" {
 							toolCalls[curTCIdx].Args.WriteString(tc.Function.Arguments)
 						}
 					} else if curTCIdx >= 0 && tc.Function.Arguments != "" {
 						toolCalls[curTCIdx].Args.WriteString(tc.Function.Arguments)
+					} else {
+						// Log when tool call is ignored
+						logger.Warn("[responses-stream] tool_call ignored: id=%q name=%q curTCIdx=%d args_len=%d", tc.ID, tc.Function.Name, curTCIdx, len(tc.Function.Arguments))
 					}
 				}
 			}
