@@ -12,6 +12,7 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -436,6 +437,21 @@ func (r *ResponseHandler) SendErrorResponse(c *gin.Context, err error) {
 				"message": "Upstream provider temporarily overloaded. Please retry.",
 			},
 		})
+		return
+	}
+
+	// Detect upstream 500 errors with overload signals (database error, service unavailable, etc.)
+	// These should be converted to overloaded_error for Claude Code automatic retry.
+	// Key insight: upstream "Database error" is transient, not permanent.
+	if statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504 {
+		if retry.IsUpstreamOverloadError(errorMsg) {
+			logger.Warn("← [SendErrorResponse] Upstream overload signal detected (status %d), returning overloaded_error: %s", statusCode, errorMsg)
+			SendOverloadedError(c, "Upstream service temporarily unavailable. Please retry.")
+			return
+		}
+		// Generic 5xx error — also convert to overloaded_error
+		logger.Warn("← [SendErrorResponse] Upstream server error (status %d), returning overloaded_error: %s", statusCode, errorMsg)
+		SendOverloadedError(c, "Upstream service error. Please retry.")
 		return
 	}
 
