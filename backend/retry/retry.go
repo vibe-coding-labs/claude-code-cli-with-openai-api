@@ -37,7 +37,9 @@ var defaultStrategies = map[ErrorCategory]Strategy{
 		MaxRetries: 20, BaseDelay: 5 * time.Second, MaxDelay: 120 * time.Second, Retryable: true,
 	},
 	CategoryServerError: {
-		MaxRetries: 5, BaseDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Retryable: true,
+		// 增加重试次数：上游数据库故障可能持续几分钟
+		// 10 次重试 + 指数退避 = 最长约 10 分钟的容错窗口
+		MaxRetries: 10, BaseDelay: 3 * time.Second, MaxDelay: 60 * time.Second, Retryable: true,
 	},
 	CategoryNetwork: {
 		MaxRetries: 10, BaseDelay: 1 * time.Second, MaxDelay: 15 * time.Second, Retryable: true,
@@ -239,9 +241,33 @@ var permanentQuotaSignals = []string{
 	"credit_balance_too_low",
 }
 
+// upstreamOverloadSignals 上游过载信号 — 这些错误应该被转换为 overloaded_error
+var upstreamOverloadSignals = []string{
+	"database error",
+	"service temporarily unavailable",
+	"upstream service temporarily unavailable",
+	"internal error",
+	"server error",
+	"bad gateway",
+	"gateway timeout",
+	"service unavailable",
+}
+
 func isPermanentQuotaError(errStr string) bool {
 	for _, signal := range permanentQuotaSignals {
 		if strings.Contains(errStr, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsUpstreamOverloadError 判断是否为上游过载/暂时不可用错误
+// 这类错误应该被转换为 overloaded_error，触发 Claude Code 自动重试
+func IsUpstreamOverloadError(errStr string) bool {
+	errStrLower := strings.ToLower(errStr)
+	for _, signal := range upstreamOverloadSignals {
+		if strings.Contains(errStrLower, signal) {
 			return true
 		}
 	}
