@@ -130,6 +130,23 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 		return
 	}
 
+	// --- Degenerate output detection ---
+	// Check if the response text contains pseudo-tool-call markers
+	// (e.g., </｜｜DSML｜｜invoke>). These indicate invalid model output.
+	if claudeResp != nil && len(claudeResp.Content) > 0 {
+		for _, block := range claudeResp.Content {
+			if block.Type == "text" && block.Text != "" {
+				if isDegenerate, pattern := converter.GetDegenerateDetector().IsDegenerate(block.Text); isDegenerate {
+					utils.GetLogger().Warn("[Non-Streaming] degenerate output detected (pattern=%s), returning overloaded_error. Content preview: %.200s", pattern, block.Text)
+					err := fmt.Errorf("degenerate output detected (pseudo-tool-call markers in text, pattern=%s). Please retry.", pattern)
+					r.sendErrorResponse(c, err)
+					r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+					return
+				}
+			}
+		}
+	}
+
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
 
 	// 记录请求日志（含详细请求和响应）
