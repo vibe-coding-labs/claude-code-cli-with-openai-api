@@ -502,6 +502,28 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	// goroutine writes.
 	heartbeat.Stop()
 
+	// --- Degenerate output detection ---
+	// Check if the collected text content contains pseudo-tool-call markers
+	// (e.g., </｜DSML｜invoke>). These indicate the upstream model tried to
+	// call tools via text output instead of the structured tool_calls field,
+	// producing invalid output that Claude Code CLI cannot parse.
+	// Treat as overloaded_error so the client auto-retries.
+	collectedText := collectedContent.String()
+	state.mu.Lock()
+	degenUsage := state.usage
+	state.mu.Unlock()
+	if isDegenerate, pattern := GetDegenerateDetector().IsDegenerate(collectedText); isDegenerate {
+		logger.Warn("[stream] degenerate output detected (pattern=%s), emitting overloaded_error for auto-retry. Content preview: %.200s", pattern, collectedText)
+		sendSSEError(c, "overloaded_error", "Degenerate output detected (pseudo-tool-call markers in text). Please retry.")
+		return &StreamingResult{
+			Content:      collectedText,
+			InputTokens:  degenUsage.InputTokens,
+			OutputTokens: degenUsage.OutputTokens,
+			StopReason:   "overloaded_error",
+			ToolCalls:    nil,
+		}
+	}
+
 	// If content_block_finish was never sent (stream ended without finish_reason),
 	// close the current block
 	if !state.sentContentBlockFinish {
