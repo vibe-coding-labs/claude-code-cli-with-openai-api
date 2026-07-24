@@ -100,6 +100,11 @@ func ClassifyError(err error) ErrorCategory {
 		return CategoryServerError
 	}
 
+	// Degenerate output — model produced pseudo-tool-call markers instead of valid response
+	if strings.Contains(errStr, "degenerate output") {
+		return CategoryServerError
+	}
+
 	return CategoryUnknown
 }
 
