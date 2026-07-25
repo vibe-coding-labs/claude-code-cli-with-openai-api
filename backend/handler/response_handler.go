@@ -146,6 +146,28 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 			}
 		}
 	}
+		// --- Empty content detection ---
+		// Check if the response has no meaningful content (empty text and no tool calls).
+		// Tool-only responses are NOT considered degenerate.
+		if claudeResp != nil {
+			hasTextContent := false
+			hasToolCalls := false
+			for _, block := range claudeResp.Content {
+				if block.Type == "text" && !converter.GetDegenerateDetector().IsEmptyOrWhitespace(block.Text) {
+					hasTextContent = true
+				}
+				if block.Type == "tool_use" {
+					hasToolCalls = true
+				}
+			}
+			if !hasTextContent && !hasToolCalls {
+				utils.GetLogger().Warn("[Non-Streaming] empty content detected (no text and no tool calls), returning overloaded_error")
+				err := fmt.Errorf("empty response detected (no meaningful content). Please retry.")
+				r.sendErrorResponse(c, err)
+				r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+				return
+			}
+		}
 
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
 
