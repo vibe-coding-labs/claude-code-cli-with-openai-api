@@ -57,6 +57,7 @@ type RequestLog struct {
 	ID              int64     `json:"id"`
 	ConfigID        string    `json:"config_id"`
 	UserID          int64     `json:"user_id"`
+	SessionID       *string   `json:"session_id,omitempty"` // 关联会话ID
 	Model           string    `json:"model"`
 	InputTokens     int       `json:"input_tokens"`
 	OutputTokens    int       `json:"output_tokens"`
