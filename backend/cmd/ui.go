@@ -183,6 +183,9 @@ func runUI(cmd *cobra.Command, args []string) error {
 			configAPI.GET("/settings", h.GetSystemSettings)
 			configAPI.PUT("/settings", h.UpdateSystemSettings)
 			configAPI.GET("/log-stats", h.GetLogStats)
+			configAPI.POST("/cleanup", h.TriggerCleanup)
+			configAPI.POST("/vacuum", h.TriggerVacuum)
+			configAPI.POST("/migrate-bodies", h.MigrateBodies)
 		}
 
 	// Serve static files from frontend build directory

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -202,7 +203,91 @@ func (h *Handler) GetLogStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get log stats"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"total_logs": totalLogs})
+
+	// Get database size info
+	sizeInfo, err := database.GetDatabaseSizeInfo()
+	if err != nil {
+		// Don't fail the whole request, just omit size info
+		c.JSON(http.StatusOK, gin.H{
+			"total_logs": totalLogs,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_logs":       totalLogs,
+		"db_size_bytes":    sizeInfo.DBSizeBytes,
+		"wal_size_bytes":   sizeInfo.WALSizeBytes,
+		"total_size_bytes": sizeInfo.TotalBytes,
+		"free_pages":       sizeInfo.FreePages,
+		"total_pages":      sizeInfo.TotalPages,
+		"page_size":        sizeInfo.PageSize,
+		"body_size_bytes":  sizeInfo.BodySizeBytes,
+		"db_path":          sizeInfo.DBPath,
+	})
+}
+
+// TriggerCleanup manually triggers the cleanup process
+func (h *Handler) TriggerCleanup(c *gin.Context) {
+	_, role := getUserContext(c)
+	if !isAdminRole(role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	go func() {
+		if err := CleanupOldData(); err != nil {
+			log.Printf("Manual cleanup failed: %v", err)
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"message": "Cleanup triggered successfully"})
+}
+
+// TriggerVacuum manually triggers VACUUM INTO
+func (h *Handler) TriggerVacuum(c *gin.Context) {
+	_, role := getUserContext(c)
+	if !isAdminRole(role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	sizeInfo, err := database.GetDatabaseSizeInfo()
+	if err != nil || sizeInfo.DBPath == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get database path"})
+		return
+	}
+
+	newSize, err := database.VacuumInto(sizeInfo.DBPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("VACUUM failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "VACUUM completed successfully",
+		"new_size_bytes": newSize,
+	})
+}
+
+// MigrateBodies manually triggers inline body migration
+func (h *Handler) MigrateBodies(c *gin.Context) {
+	_, role := getUserContext(c)
+	if !isAdminRole(role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	migrated, err := database.MigrateInlineBodiesToFiles(1000)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Migration failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Migration batch completed",
+		"migrated": migrated,
+	})
 }
 
 // GetAvailableModels returns available models for filtering
