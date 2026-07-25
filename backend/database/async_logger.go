@@ -1,7 +1,7 @@
 package database
 
 import (
-	"log"
+	stdlog "log"
 	"sync"
 	"time"
 )
@@ -44,7 +44,7 @@ func (al *AsyncLogger) worker() {
 	for logEntry := range al.logQueue {
 		if err := LogRequestSync(logEntry, logEntry.SessionID); err != nil {
 			// Log errors but don't block
-			log.Printf("Failed to log request: %v", err)
+			stdlog.Printf("Failed to log request: %v", err)
 		}
 	}
 }
@@ -56,9 +56,9 @@ func (al *AsyncLogger) LogAsync(logEntry *RequestLog) {
 		// Successfully queued
 	default:
 		// Queue is full, log synchronously as fallback
-		log.Printf("Warning: Log queue full, logging synchronously")
+		stdlog.Printf("Warning: Log queue full, logging synchronously")
 		if err := LogRequestSync(logEntry, logEntry.SessionID); err != nil {
-			log.Printf("Failed to log request: %v", err)
+			stdlog.Printf("Failed to log request: %v", err)
 		}
 	}
 }
@@ -95,7 +95,15 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 
 	// Get the autoincrement ID and store bodies to files
 	if shouldStoreBodyToFile() && (log.RequestBody != "" || log.ResponseBody != "") {
-		id, _ := result.LastInsertId()
+		id, err := result.LastInsertId()
+		if err != nil {
+			stdlog.Printf("Failed to get LastInsertId, skipping body file storage: %v", err)
+			return updateTokenStats(log)
+		}
+		if id == 0 {
+			stdlog.Printf("LastInsertId returned 0, skipping body file storage to prevent file overwrites")
+			return updateTokenStats(log)
+		}
 		storage := GetLogStorage()
 		createdAt := log.CreatedAt
 		if createdAt.IsZero() {
@@ -104,17 +112,25 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 
 		// Store request body
 		if log.RequestBody != "" {
-			reqPath, err := storage.StoreBody(id, log.RequestBody, "req", createdAt)
-			if err == nil && reqPath != "" {
-				DB.Exec("UPDATE request_logs SET request_body = NULL, request_body_path = ? WHERE id = ?", reqPath, id)
+			reqPath, storeErr := storage.StoreBody(id, log.RequestBody, "req", createdAt)
+			if storeErr != nil {
+				stdlog.Printf("Failed to store request body file (keeping inline): %v", storeErr)
+			} else if reqPath != "" {
+				if _, updateErr := DB.Exec("UPDATE request_logs SET request_body = NULL, request_body_path = ? WHERE id = ?", reqPath, id); updateErr != nil {
+					stdlog.Printf("Failed to update request_body_path in DB: %v", updateErr)
+				}
 			}
 		}
 
 		// Store response body
 		if log.ResponseBody != "" {
-			respPath, err := storage.StoreBody(id, log.ResponseBody, "resp", createdAt)
-			if err == nil && respPath != "" {
-				DB.Exec("UPDATE request_logs SET response_body = NULL, response_body_path = ? WHERE id = ?", respPath, id)
+			respPath, storeErr := storage.StoreBody(id, log.ResponseBody, "resp", createdAt)
+			if storeErr != nil {
+				stdlog.Printf("Failed to store response body file (keeping inline): %v", storeErr)
+			} else if respPath != "" {
+				if _, updateErr := DB.Exec("UPDATE request_logs SET response_body = NULL, response_body_path = ? WHERE id = ?", respPath, id); updateErr != nil {
+					stdlog.Printf("Failed to update response_body_path in DB: %v", updateErr)
+				}
 			}
 		}
 	}

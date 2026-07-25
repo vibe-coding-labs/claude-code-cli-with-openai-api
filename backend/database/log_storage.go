@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,14 @@ type LogStorage struct {
 var (
 	logStorage     *LogStorage
 	logStorageOnce sync.Once
+	logStorageMu   sync.Mutex // protects SetLogStorageDir for concurrent access
 )
 
 // GetLogStorage returns the global LogStorage instance.
 // baseDir defaults to ~/.claude-proxy/logs/bodies/
 func GetLogStorage() *LogStorage {
+	logStorageMu.Lock()
+	defer logStorageMu.Unlock()
 	logStorageOnce.Do(func() {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
@@ -39,7 +43,13 @@ func GetLogStorage() *LogStorage {
 }
 
 // SetLogStorageDir overrides the base directory (for testing).
+// IMPORTANT: This must be called before any GetLogStorage() calls to avoid
+// race conditions with the sync.Once initialization. It is protected by a
+// mutex for concurrent test scenarios, but the caller is responsible for
+// ensuring it is called before the first GetLogStorage().
 func SetLogStorageDir(dir string) {
+	logStorageMu.Lock()
+	defer logStorageMu.Unlock()
 	logStorage = &LogStorage{baseDir: dir}
 }
 
@@ -148,10 +158,22 @@ func (ls *LogStorage) GetBaseDir() string {
 
 // GetStorageSize returns the total size of the body storage directory in bytes.
 func (ls *LogStorage) GetStorageSize() (int64, error) {
+	// First check if the base directory is accessible
+	if _, err := os.Stat(ls.baseDir); err != nil {
+		if os.IsNotExist(err) {
+			// Directory doesn't exist yet — that's fine, it's empty
+			return 0, nil
+		}
+		// Directory exists but can't be accessed — that's a real error
+		return 0, fmt.Errorf("cannot access storage directory %s: %w", ls.baseDir, err)
+	}
+
 	var totalSize int64
 	err := filepath.Walk(ls.baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip errors
+			// Log the error but continue walking if possible
+			log.Printf("Warning: error accessing path %s during size calculation: %v", path, err)
+			return nil
 		}
 		if !info.IsDir() {
 			totalSize += info.Size()
