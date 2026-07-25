@@ -58,12 +58,18 @@ func (r *ResponseHandler) HandleStreamingResponse(
 	logger := utils.GetLogger()
 	logger.Info("[Streaming] Initiating streaming request to upstream API (model=%s)", openAIReq.Model)
 
+	// 准备 sessionID 指针用于日志记录
+	var sessionIDPtr *string
+	if sessionID != "" {
+		sessionIDPtr = &sessionID
+	}
+
 	reader, err := targetClient.CreateChatCompletionStream(openAIReq)
 	if err != nil {
 		fmt.Printf("❌ [Streaming] Failed to create stream: %v\n", err)
 		utils.GetLogger().ErrorWithCause(err, "[Streaming] Failed to create stream: model=%s base_url=%s", openAIReq.Model, targetClient.BaseURL)
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 		return
 	}
 	defer reader.Close()
@@ -79,7 +85,7 @@ func (r *ResponseHandler) HandleStreamingResponse(
 
 	// 记录请求日志（使用收集的流式响应数据）
 	if streamResult != nil {
-		r.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq)
+		r.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", claudeReq, sessionIDPtr)
 
 		// 保存消息到会话
 		if sessionHandler != nil && sessionID != "" {
@@ -87,7 +93,7 @@ func (r *ResponseHandler) HandleStreamingResponse(
 		}
 	} else {
 		// 如果streamResult为nil，说明发生了错误，记录基本信息
-		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "Streaming failed", claudeReq, nil, sessionIDPtr)
 	}
 }
 
@@ -105,12 +111,18 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	fmt.Printf("\n📝 [Non-Streaming Mode]\n")
 	fmt.Printf("   Sending non-streaming request to upstream API\n")
 
+	// 准备 sessionID 指针用于日志记录
+	var sessionIDPtr *string
+	if sessionID != "" {
+		sessionIDPtr = &sessionID
+	}
+
 	openAIResp, err := targetClient.CreateChatCompletion(openAIReq)
 	if err != nil {
 		fmt.Printf("❌ [Non-Streaming] Request failed: %v\n", err)
 		utils.GetLogger().ErrorWithCause(err, "[Non-Streaming] Request failed: model=%s base_url=%s", openAIReq.Model, targetClient.BaseURL)
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 		return
 	}
 
@@ -126,7 +138,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 		utils.GetLogger().Error("[Non-Streaming] Response conversion failed: nil response (model=%s)", openAIReq.Model)
 		err := fmt.Errorf("failed to convert OpenAI response to Claude format: response or choices is empty")
 		r.sendErrorResponse(c, err)
-		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 		return
 	}
 
@@ -140,7 +152,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 					utils.GetLogger().Warn("[Non-Streaming] degenerate output detected (pattern=%s), returning overloaded_error. Content preview: %.200s", pattern, block.Text)
 					err := fmt.Errorf("degenerate output detected (pseudo-tool-call markers in text, pattern=%s). Please retry.", pattern)
 					r.sendErrorResponse(c, err)
-					r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+					r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 					return
 				}
 			}
@@ -164,7 +176,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 				utils.GetLogger().Warn("[Non-Streaming] empty content detected (no text and no tool calls), returning overloaded_error")
 				err := fmt.Errorf("empty response detected (no meaningful content). Please retry.")
 				r.sendErrorResponse(c, err)
-				r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+				r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 				return
 			}
 		}
@@ -175,7 +187,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 	r.logRequestWithDetails(c, configID, openAIReq.Model,
 		claudeResp.Usage.InputTokens,
 		claudeResp.Usage.OutputTokens,
-		startTime, "success", "", claudeReq, claudeResp)
+		startTime, "success", "", claudeReq, claudeResp, sessionIDPtr)
 
 	c.JSON(http.StatusOK, claudeResp)
 	fmt.Printf("✅ [Non-Streaming] Response sent successfully\n")
@@ -204,6 +216,7 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 	status string,
 	errorMsg string,
 	claudeReq *models.ClaudeMessagesRequest,
+	sessionID *string,
 ) {
 	// 如果 configID 为空，使用 "default" 作为标识
 	if configID == "" {
@@ -277,7 +290,7 @@ func (r *ResponseHandler) logRequestWithStreamingDetails(
 		UserAgent:       userAgent,
 	}
 
-	if err := database.LogRequest(log); err != nil {
+	if err := database.LogRequest(log, sessionID); err != nil {
 		logger := utils.GetLogger()
 		logger.Error("Failed to log streaming request: %v", err)
 	}
@@ -295,6 +308,7 @@ func (r *ResponseHandler) logRequestWithDetails(
 	errorMsg string,
 	claudeReq *models.ClaudeMessagesRequest,
 	claudeResp *models.ClaudeResponse,
+	sessionID *string,
 ) {
 	// 如果 configID 为空，使用 "default" 作为标识
 	if configID == "" {
@@ -377,7 +391,7 @@ func (r *ResponseHandler) logRequestWithDetails(
 		ResponsePreview: responsePreview,
 	}
 
-	if err := database.LogRequest(log); err != nil {
+	if err := database.LogRequest(log, sessionID); err != nil {
 		logger := utils.GetLogger()
 		logger.Error("Failed to log request: %v", err)
 	}

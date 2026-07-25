@@ -187,7 +187,7 @@ func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client
 	if err != nil {
 		logger.Error("← [executeResponsesNonStream] request failed: %v", err)
 		h.responseHandler.SendErrorResponse(c, err)
-		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), nil, nil)
+		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), nil, nil, nil)
 		return fmt.Errorf("request failed: %w", err)
 	}
 
@@ -196,7 +196,7 @@ func (h *Handler) executeResponsesNonStream(c *gin.Context, targetClient *client
 	responsesObj := converter.ConvertOpenAIResponseToResponses(openAIResp, clientModel, reqBody)
 	h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model,
 		openAIResp.Usage.PromptTokens, openAIResp.Usage.CompletionTokens,
-		startTime, "success", "", nil, nil)
+		startTime, "success", "", nil, nil, nil)
 
 	c.JSON(http.StatusOK, responsesObj)
 	logger.Info("  Responses (non-stream) sent successfully")
@@ -219,7 +219,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 		logger.Error("← [executeResponsesStream] stream creation failed after %d attempts: %v",
 			createResult.Attempts, createResult.LastErr)
 		h.responseHandler.SendErrorResponse(c, createResult.LastErr)
-		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", createResult.LastErr.Error(), nil, nil)
+		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", createResult.LastErr.Error(), nil, nil, nil)
 		return fmt.Errorf("stream creation failed after %d attempts: %w", createResult.Attempts, createResult.LastErr)
 	}
 
@@ -247,7 +247,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 							"type":    "overloaded_error",
 							"message": fmt.Sprintf("Upstream provider unresponsive after %d retries.", stallRetry+1),
 						}})
-						h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", nil, nil)
+						h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", nil, nil, nil)
 						return fmt.Errorf("upstream stalled and recreation failed after %d retries", stallRetry+1)
 					}
 					continue
@@ -256,7 +256,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 					"type":    "overloaded_error",
 					"message": fmt.Sprintf("Upstream provider unresponsive after %d retries.", maxStallRetries),
 				}})
-				h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", nil, nil)
+				h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", nil, nil, nil)
 				return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
 			}
 			if c.Request.Context().Err() != nil {
@@ -276,7 +276,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 	}
 
 	if streamResult != nil {
-		h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", nil)
+		h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", nil, nil)
 	} else {
 		logger.Warn("  Responses stream ended without result for config %s (client disconnected or terminal error)", configID)
 	}

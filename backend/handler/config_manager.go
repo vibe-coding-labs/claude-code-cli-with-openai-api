@@ -372,7 +372,7 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		logEntry.Status = "error"
 		logEntry.ErrorMessage = err.Error()
 		logEntry.ResponsePreview = "测试失败: " + err.Error()
-		_ = database.LogRequest(logEntry)
+		_ = database.LogRequest(logEntry, nil)
 
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status":       "failed",
@@ -406,7 +406,7 @@ func (h *Handler) TestConfig(c *gin.Context) {
 
 	logEntry.ResponsePreview = responsePreview
 	logEntry.ResponseBody = responseBody
-	_ = database.LogRequest(logEntry)
+	_ = database.LogRequest(logEntry, nil)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "success",

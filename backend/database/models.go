@@ -563,9 +563,9 @@ func GetAPIConfigOwner(id string) (*ConfigOwnerInfo, error) {
 }
 
 // LogRequest logs an API request asynchronously (non-blocking)
-func LogRequest(log *RequestLog) error {
+func LogRequest(log *RequestLog, sessionID *string) error {
 	// Use async logging to avoid blocking the request handling
-	LogRequestAsync(log)
+	LogRequestAsync(log, sessionID)
 	return nil
 }
 

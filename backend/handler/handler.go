@@ -537,6 +537,10 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 	if session != nil {
 		sessionID = session.ID
 	}
+	var sessionIDPtr *string
+	if sessionID != "" {
+		sessionIDPtr = &sessionID
+	}
 
 	if req.Stream {
 		// 流式响应 — stream creation 失败时智能重试（429/5xx）
@@ -569,7 +573,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			h.responseHandler.SendErrorResponse(c, createResult.LastErr)
 			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error",
 				fmt.Sprintf("stream_creation_failed: attempts=%d category=%s", createResult.Attempts, createResult.Category),
-				&req, nil)
+				&req, nil, sessionIDPtr)
 			return fmt.Errorf("stream creation failed after %d attempts: %w", createResult.Attempts, createResult.LastErr)
 		}
 
@@ -607,7 +611,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 									"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", stallRetry+1),
 								},
 							})
-							h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil)
+							h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil, sessionIDPtr)
 							return fmt.Errorf("upstream stalled and recreation failed after %d retries", stallRetry+1)
 						}
 						continue
@@ -621,7 +625,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 							"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", maxStallRetries),
 						},
 					})
-					h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil)
+					h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil, sessionIDPtr)
 					return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
 				}
 				if c.Request.Context().Err() != nil {
@@ -641,7 +645,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 
 
 		if streamResult != nil {
-			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", &req)
+			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", &req, sessionIDPtr)
 			if h.sessionHandler != nil && sessionID != "" {
 				var assistantContent interface{}
 				if len(streamResult.ToolCalls) > 0 {
@@ -678,7 +682,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		if err != nil {
 			logger.Error("← [executeMessageRequestWithConfig] Request failed: %v", err)
 			h.responseHandler.SendErrorResponse(c, err)
-			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), &req, nil)
+			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), &req, nil, sessionIDPtr)
 			return fmt.Errorf("request failed: %w", err)
 		}
 
@@ -687,14 +691,14 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		if claudeResp == nil {
 			err := fmt.Errorf("failed to convert OpenAI response to Claude format: response or choices is empty")
 			h.responseHandler.SendErrorResponse(c, err)
-			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), &req, nil)
+			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), &req, nil, sessionIDPtr)
 			return fmt.Errorf("response conversion error: %w", err)
 		}
 
 		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model,
 			claudeResp.Usage.InputTokens,
 			claudeResp.Usage.OutputTokens,
-			startTime, "success", "", &req, claudeResp)
+			startTime, "success", "", &req, claudeResp, sessionIDPtr)
 
 		c.JSON(http.StatusOK, claudeResp)
 		logger.Info("  Response sent successfully")
@@ -1045,6 +1049,12 @@ func (h *Handler) handleNonStreamAsStream(
 ) {
 	logger := utils.GetLogger()
 
+	// 准备 sessionID 指针用于日志记录
+	var sessionIDPtr *string
+	if sessionID != "" {
+		sessionIDPtr = &sessionID
+	}
+
 	// Set beta headers for upstream request
 	targetClient.BetaHeaders = betaHeaders
 
@@ -1053,7 +1063,7 @@ func (h *Handler) handleNonStreamAsStream(
 	if err != nil {
 		logger.Error("← [handleNonStreamAsStream] Request failed: %v", err)
 		h.responseHandler.SendErrorResponse(c, err)
-		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 		return
 	}
 
@@ -1062,7 +1072,7 @@ func (h *Handler) handleNonStreamAsStream(
 	if claudeResp == nil {
 		err := fmt.Errorf("failed to convert OpenAI response to Claude format")
 		h.responseHandler.SendErrorResponse(c, err)
-		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil)
+		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 		return
 	}
 
@@ -1201,7 +1211,7 @@ func (h *Handler) handleNonStreamAsStream(
 	h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model,
 		claudeResp.Usage.InputTokens,
 		claudeResp.Usage.OutputTokens,
-		startTime, "success", "", claudeReq, claudeResp)
+		startTime, "success", "", claudeReq, claudeResp, sessionIDPtr)
 
 	// 保存消息到会话
 	if h.sessionHandler != nil && sessionID != "" {
