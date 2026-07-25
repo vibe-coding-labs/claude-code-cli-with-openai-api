@@ -271,8 +271,15 @@ func (mm *MonitorManager) StopAll() error {
 	return nil
 }
 
-// CleanupOldData cleans up old logs and stats based on retention settings
+// CleanupOldData cleans up old logs and stats based on retention settings.
+// It performs four phases:
+//  1. Time-based retention cleanup (delete old logs, proxy errors, body files)
+//  2. Size-based quota enforcement (delete oldest logs if DB exceeds max_db_size_gb)
+//  3. VACUUM INTO to reclaim disk space (if free pages > 10% of total)
+//  4. Incremental migration of inline bodies to file storage
 func CleanupOldData() error {
+	// --- 1. Time-based retention cleanup ---
+
 	// Get log retention setting, default 30 days
 	retentionDays := 30
 	if daysStr, err := database.GetSetting("log_retention_days"); err == nil {
@@ -289,19 +296,90 @@ func CleanupOldData() error {
 		fmt.Printf("Auto-cleaned %d request logs older than %d days\n", deleted, retentionDays)
 	}
 
+	// Delete old proxy errors
+	proxyErrorRetentionDays := 30
+	if daysStr, err := database.GetSetting("proxy_error_retention_days"); err == nil {
+		if days, err := strconv.Atoi(daysStr); err == nil && days > 0 {
+			proxyErrorRetentionDays = days
+		}
+	}
+	if _, err := database.CleanupOldProxyErrors(time.Duration(proxyErrorRetentionDays) * 24 * time.Hour); err != nil {
+		fmt.Printf("Warning: failed to cleanup old proxy errors: %v\n", err)
+	}
+
 	// Delete load balancer request logs older than 30 days
 	if err := database.DeleteOldLoadBalancerRequestLogs(30); err != nil {
-		return fmt.Errorf("failed to delete old request logs: %w", err)
+		fmt.Printf("Warning: failed to delete old LB request logs: %v\n", err)
 	}
 
 	// Delete stats older than 90 days
 	if err := database.DeleteOldStats(90); err != nil {
-		return fmt.Errorf("failed to delete old stats: %w", err)
+		fmt.Printf("Warning: failed to delete old stats: %v\n", err)
 	}
 
 	// Delete alerts older than 90 days
 	if err := database.DeleteOldAlerts(90); err != nil {
-		return fmt.Errorf("failed to delete old alerts: %w", err)
+		fmt.Printf("Warning: failed to delete old alerts: %v\n", err)
+	}
+
+	// Clean old body files
+	storage := database.GetLogStorage()
+	if dirsRemoved, err := storage.CleanOldDirectories(retentionDays); err == nil && dirsRemoved > 0 {
+		fmt.Printf("Auto-cleaned %d old body file directories\n", dirsRemoved)
+	}
+
+	// --- 2. Size-based quota enforcement ---
+
+	maxDBSizeGB := 10 // default 10 GB
+	if sizeStr, err := database.GetSetting("max_db_size_gb"); err == nil {
+		if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
+			maxDBSizeGB = size
+		}
+	}
+
+	sizeInfo, err := database.GetDatabaseSizeInfo()
+	if err == nil {
+		maxBytes := int64(maxDBSizeGB) * 1024 * 1024 * 1024
+		if sizeInfo.TotalBytes > maxBytes {
+			// Delete oldest logs in batches until under quota
+			overBy := sizeInfo.TotalBytes - maxBytes
+			// Estimate: each log row averages ~5KB (metadata only, bodies in files)
+			estimatedRows := overBy / 5120
+			if estimatedRows < 100 {
+				estimatedRows = 100
+			}
+			if estimatedRows > 10000 {
+				estimatedRows = 10000 // cap batch size
+			}
+
+			deletedRows, err := database.DeleteOldestRequestLogs(int(estimatedRows))
+			if err != nil {
+				fmt.Printf("Warning: failed to delete oldest logs for quota: %v\n", err)
+			} else if deletedRows > 0 {
+				fmt.Printf("Quota enforcement: deleted %d oldest logs (DB was %.1f GB, limit %d GB)\n",
+					deletedRows, float64(sizeInfo.TotalBytes)/1e9, maxDBSizeGB)
+			}
+		}
+	}
+
+	// --- 3. VACUUM INTO to reclaim disk space ---
+	// Only run if there are significant free pages (>10% of total)
+	if sizeInfo != nil && sizeInfo.TotalPages > 0 {
+		freeRatio := float64(sizeInfo.FreePages) / float64(sizeInfo.TotalPages)
+		if freeRatio > 0.10 {
+			if sizeInfo.DBPath != "" {
+				if newSize, err := database.VacuumInto(sizeInfo.DBPath); err != nil {
+					fmt.Printf("Warning: VACUUM INTO failed: %v\n", err)
+				} else {
+					fmt.Printf("VACUUM INTO completed: new size %.1f MB\n", float64(newSize)/1e6)
+				}
+			}
+		}
+	}
+
+	// --- 4. Migrate inline bodies to files (incremental) ---
+	if migrated, err := database.MigrateInlineBodiesToFiles(100); err == nil && migrated > 0 {
+		fmt.Printf("Migrated %d inline bodies to file storage\n", migrated)
 	}
 
 	return nil
