@@ -3,6 +3,7 @@ package database
 import (
 	"log"
 	"sync"
+	"time"
 )
 
 // AsyncLogger provides non-blocking request logging
@@ -76,18 +77,46 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 		INSERT INTO request_logs (
 			config_id, user_id, session_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
+			request_body_path, response_body_path,
 			request_summary, response_preview, client_ip, user_agent, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
-	_, err := DB.Exec(query,
+	result, err := DB.Exec(query,
 		log.ConfigID, log.UserID, log.SessionID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
 		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
+		log.RequestBodyPath, log.ResponseBodyPath,
 		log.RequestSummary, log.ResponsePreview, log.ClientIP, log.UserAgent,
 	)
 
 	if err != nil {
 		return err
+	}
+
+	// Get the autoincrement ID and store bodies to files
+	if shouldStoreBodyToFile() && (log.RequestBody != "" || log.ResponseBody != "") {
+		id, _ := result.LastInsertId()
+		storage := GetLogStorage()
+		createdAt := log.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+
+		// Store request body
+		if log.RequestBody != "" {
+			reqPath, err := storage.StoreBody(id, log.RequestBody, "req", createdAt)
+			if err == nil && reqPath != "" {
+				DB.Exec("UPDATE request_logs SET request_body = NULL, request_body_path = ? WHERE id = ?", reqPath, id)
+			}
+		}
+
+		// Store response body
+		if log.ResponseBody != "" {
+			respPath, err := storage.StoreBody(id, log.ResponseBody, "resp", createdAt)
+			if err == nil && respPath != "" {
+				DB.Exec("UPDATE request_logs SET response_body = NULL, response_body_path = ? WHERE id = ?", respPath, id)
+			}
+		}
 	}
 
 	// Update aggregated statistics

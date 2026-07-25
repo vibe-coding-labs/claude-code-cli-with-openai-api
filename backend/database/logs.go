@@ -94,7 +94,7 @@ func GetUserLogsWithFilters(params UserLogsQueryParams) (*LogsResult, error) {
 
 	query := fmt.Sprintf(`
 		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, request_body, response_body,
+			duration_ms, status, error_message, request_body_path, response_body_path,
 			request_summary, response_preview, created_at
 		FROM request_logs
 		WHERE %s
@@ -113,21 +113,21 @@ func GetUserLogsWithFilters(params UserLogsQueryParams) (*LogsResult, error) {
 	var logs []*RequestLog
 	for rows.Next() {
 		log := &RequestLog{}
-		var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
+		var requestBodyPath, responseBodyPath, requestSummary, responsePreview, errorMessage sql.NullString
 		err := rows.Scan(
 			&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
 			&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
-			&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
+			&requestBodyPath, &responseBodyPath, &requestSummary, &responsePreview, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
 
-		if requestBody.Valid {
-			log.RequestBody = requestBody.String
+		if requestBodyPath.Valid {
+			log.RequestBodyPath = requestBodyPath.String
 		}
-		if responseBody.Valid {
-			log.ResponseBody = responseBody.String
+		if responseBodyPath.Valid {
+			log.ResponseBodyPath = responseBodyPath.String
 		}
 		if requestSummary.Valid {
 			log.RequestSummary = requestSummary.String
@@ -247,7 +247,7 @@ func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 	// Build final query
 	query := fmt.Sprintf(`
 		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, request_body, response_body,
+			duration_ms, status, error_message, request_body_path, response_body_path,
 			request_summary, response_preview, created_at
 		FROM request_logs
 		WHERE %s
@@ -266,22 +266,22 @@ func GetLogsWithFilters(params LogsQueryParams) (*LogsResult, error) {
 	var logs []*RequestLog
 	for rows.Next() {
 		log := &RequestLog{}
-		var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
+		var requestBodyPath, responseBodyPath, requestSummary, responsePreview, errorMessage sql.NullString
 		err := rows.Scan(
 			&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
 			&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
-			&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
+			&requestBodyPath, &responseBodyPath, &requestSummary, &responsePreview, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
 
 		// Handle nullable fields
-		if requestBody.Valid {
-			log.RequestBody = requestBody.String
+		if requestBodyPath.Valid {
+			log.RequestBodyPath = requestBodyPath.String
 		}
-		if responseBody.Valid {
-			log.ResponseBody = responseBody.String
+		if responseBodyPath.Valid {
+			log.ResponseBodyPath = responseBodyPath.String
 		}
 		if requestSummary.Valid {
 			log.RequestSummary = requestSummary.String
@@ -343,11 +343,13 @@ func GetRequestLogCount() (int64, error) {
 // GetLogByID retrieves a single log by ID
 func GetLogByID(id int64) (*RequestLog, error) {
 	log := &RequestLog{}
-	var requestBody, responseBody, requestSummary, responsePreview, errorMessage sql.NullString
+	var requestBody, responseBody, requestBodyPath, responseBodyPath sql.NullString
+	var requestSummary, responsePreview, errorMessage sql.NullString
 
 	query := `
 		SELECT id, config_id, user_id, model, input_tokens, output_tokens, total_tokens,
-			duration_ms, status, error_message, request_body, response_body,
+			duration_ms, status, error_message,
+			request_body, response_body, request_body_path, response_body_path,
 			request_summary, response_preview, created_at
 		FROM request_logs
 		WHERE id = ?
@@ -356,7 +358,8 @@ func GetLogByID(id int64) (*RequestLog, error) {
 	err := DB.QueryRow(query, id).Scan(
 		&log.ID, &log.ConfigID, &log.UserID, &log.Model, &log.InputTokens, &log.OutputTokens,
 		&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
-		&requestBody, &responseBody, &requestSummary, &responsePreview, &log.CreatedAt,
+		&requestBody, &responseBody, &requestBodyPath, &responseBodyPath,
+		&requestSummary, &responsePreview, &log.CreatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -367,11 +370,8 @@ func GetLogByID(id int64) (*RequestLog, error) {
 	}
 
 	// Handle nullable fields
-	if requestBody.Valid {
-		log.RequestBody = requestBody.String
-	}
-	if responseBody.Valid {
-		log.ResponseBody = responseBody.String
+	if errorMessage.Valid {
+		log.ErrorMessage = errorMessage.String
 	}
 	if requestSummary.Valid {
 		log.RequestSummary = requestSummary.String
@@ -379,8 +379,29 @@ func GetLogByID(id int64) (*RequestLog, error) {
 	if responsePreview.Valid {
 		log.ResponsePreview = responsePreview.String
 	}
-	if errorMessage.Valid {
-		log.ErrorMessage = errorMessage.String
+
+	// Load body: prefer file path, fall back to inline
+	storage := GetLogStorage()
+	if requestBodyPath.Valid && requestBodyPath.String != "" {
+		body, err := storage.LoadBody(requestBodyPath.String)
+		if err == nil {
+			log.RequestBody = body
+		} else if requestBody.Valid {
+			log.RequestBody = requestBody.String // fallback to inline
+		}
+	} else if requestBody.Valid {
+		log.RequestBody = requestBody.String
+	}
+
+	if responseBodyPath.Valid && responseBodyPath.String != "" {
+		body, err := storage.LoadBody(responseBodyPath.String)
+		if err == nil {
+			log.ResponseBody = body
+		} else if responseBody.Valid {
+			log.ResponseBody = responseBody.String // fallback to inline
+		}
+	} else if responseBody.Valid {
+		log.ResponseBody = responseBody.String
 	}
 
 	return log, nil
