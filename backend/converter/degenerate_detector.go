@@ -101,6 +101,41 @@ func (d *DegenerateOutputDetector) IsDegenerate(text string) (bool, string) {
 	return false, ""
 }
 
+// IsEmptyOrWhitespace checks whether the given text is empty or contains only
+// whitespace characters. This detects another form of degenerate output where
+// the model produces no meaningful content.
+//
+// This is separate from IsDegenerate because:
+// 1. Empty content might be normal when there are tool calls (tool-only response)
+// 2. The caller needs to check context (e.g., presence of tool calls) before deciding
+//
+// Returns true if text is empty or contains only whitespace (spaces, tabs, newlines).
+func (d *DegenerateOutputDetector) IsEmptyOrWhitespace(text string) bool {
+	return strings.TrimSpace(text) == ""
+}
+
+// IsEmptyContent checks if a response has no meaningful content.
+// This is the comprehensive check that considers both text content and tool calls.
+//
+// Parameters:
+//   - textContent: the collected text content (may be empty)
+//   - hasToolCalls: whether the response contains any tool calls
+//
+// Returns true if:
+//   - textContent is empty or whitespace AND there are no tool calls
+//
+// This distinguishes between:
+//   - Empty response (no content at all) → degenerate, should retry
+//   - Tool-only response (no text but has tool calls) → normal, should not retry
+func (d *DegenerateOutputDetector) IsEmptyContent(textContent string, hasToolCalls bool) bool {
+	// Tool-only responses are valid — user may just want to execute a tool
+	if hasToolCalls {
+		return false
+	}
+	// Empty or whitespace-only text with no tool calls is degenerate
+	return d.IsEmptyOrWhitespace(textContent)
+}
+
 // AddPattern adds a new detection pattern at runtime (for testing).
 func (d *DegenerateOutputDetector) AddPattern(pattern string) error {
 	re, err := regexp.Compile(pattern)

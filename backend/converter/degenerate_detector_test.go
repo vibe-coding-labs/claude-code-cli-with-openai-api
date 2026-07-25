@@ -119,3 +119,126 @@ func TestDegenerateDetector_InvalidPattern(t *testing.T) {
 		t.Error("AddPattern should return error for invalid regex")
 	}
 }
+
+func TestDegenerateDetector_IsEmptyOrWhitespace(t *testing.T) {
+	d := GetDegenerateDetector()
+
+	tests := []struct {
+		name     string
+		text     string
+		expected bool
+	}{
+		{
+			name:     "empty string",
+			text:     "",
+			expected: true,
+		},
+		{
+			name:     "only spaces",
+			text:     "   ",
+			expected: true,
+		},
+		{
+			name:     "only tabs",
+			text:     "\t\t\t",
+			expected: true,
+		},
+		{
+			name:     "only newlines",
+			text:     "\n\n\n",
+			expected: true,
+		},
+		{
+			name:     "mixed whitespace",
+			text:     " \t\n \r\n  ",
+			expected: true,
+		},
+		{
+			name:     "normal text with leading/trailing whitespace",
+			text:     "  hello world  ",
+			expected: false,
+		},
+		{
+			name:     "normal text",
+			text:     "This is a normal response.",
+			expected: false,
+		},
+		{
+			name:     "single character",
+			text:     "a",
+			expected: false,
+		},
+		{
+			name:     "chinese characters",
+			text:     "你好世界",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := d.IsEmptyOrWhitespace(tt.text)
+			if got != tt.expected {
+				t.Errorf("IsEmptyOrWhitespace(%q) = %v, want %v", tt.text, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDegenerateDetector_IsEmptyContent(t *testing.T) {
+	d := GetDegenerateDetector()
+
+	tests := []struct {
+		name         string
+		textContent  string
+		hasToolCalls bool
+		expected     bool
+	}{
+		{
+			name:         "empty text with no tool calls",
+			textContent:  "",
+			hasToolCalls: false,
+			expected:     true,
+		},
+		{
+			name:         "whitespace-only text with no tool calls",
+			textContent:  "   \n\t  ",
+			hasToolCalls: false,
+			expected:     true,
+		},
+		{
+			name:         "empty text with tool calls — normal tool-only response",
+			textContent:  "",
+			hasToolCalls: true,
+			expected:     false,
+		},
+		{
+			name:         "whitespace text with tool calls — normal tool-only response",
+			textContent:  "  ",
+			hasToolCalls: true,
+			expected:     false,
+		},
+		{
+			name:         "normal text with no tool calls",
+			textContent:  "Hello, world!",
+			hasToolCalls: false,
+			expected:     false,
+		},
+		{
+			name:         "normal text with tool calls",
+			textContent:  "I'll help you with that.",
+			hasToolCalls: true,
+			expected:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := d.IsEmptyContent(tt.textContent, tt.hasToolCalls)
+			if got != tt.expected {
+				t.Errorf("IsEmptyContent(%q, %v) = %v, want %v",
+					tt.textContent, tt.hasToolCalls, got, tt.expected)
+			}
+		})
+	}
+}
