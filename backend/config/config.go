@@ -33,7 +33,7 @@ type Config struct {
 	MinTokensLimit       int
 	CustomHeaders        map[string]string
 	EnableRequestLogging bool
-	StreamStallTimeout   int // 流式预验证超时（秒），默认60秒
+	StreamStallTimeout   int // 流式预验证超时（秒），默认300秒（可靠性优先）
 }
 
 var GlobalConfig *Config
@@ -56,8 +56,8 @@ func LoadConfig() (*Config, error) {
 		LogLevel:             getEnvOrDefault("LOG_LEVEL", "INFO"),
 		MaxTokensLimit:       getEnvAsInt("MAX_TOKENS_LIMIT", 4096),
 		MinTokensLimit:       getEnvAsInt("MIN_TOKENS_LIMIT", 100),
-		RequestTimeout:       getEnvAsInt("REQUEST_TIMEOUT", 300),
-		RetryCount:           getEnvAsInt("RETRY_COUNT", 10),
+		RequestTimeout:       getEnvAsInt("REQUEST_TIMEOUT", 600),
+		RetryCount:           getEnvAsInt("RETRY_COUNT", 20),
 		BigModel:             getEnvOrDefault("BIG_MODEL", "gpt-4o"),
 		SmallModel:           getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
 		CustomHeaders:        make(map[string]string),

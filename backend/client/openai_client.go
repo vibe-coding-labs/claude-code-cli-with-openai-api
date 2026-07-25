@@ -24,19 +24,15 @@ import (
 )
 
 // upstreamResponseHeaderTimeout caps how long the upstream HTTP client waits
-// for the upstream to send response headers (i.e. ACK the request). It must
-// comfortably exceed the upstream's legitimate first-byte latency on large
-// contexts (observed up to ~45s on SenseNova for a 1000+ message turn) but stay
-// WELL under the client's own timeout — otherwise a dead/slow upstream hangs the
-// whole request until the client (undici) gives up and surfaces "socket
-// connection was closed unexpectedly". 120s covers the observed worst case with
-// ~2.5x margin while still failing fast on genuinely-dead upstreams.
+// for the upstream to send response headers (i.e. ACK the request).
 //
-// History: the original hard-coded 30s aborted legitimate large requests (503);
-// bumping it to RequestTimeout (300s) let them through but made dead-upstream
-// failures hang ~300s — right at the client's timeout, causing disconnects.
-// 120s is the middle ground. Override with PROXY_RESPONSE_HEADER_TIMEOUT_SEC
-// (whole seconds). The overall request is separately bounded by the per-request
+// Reliability over speed: the user explicitly stated that response time is not
+// sensitive — "你可以跑得慢，没关系，它挂一晚上" — so we set this high to
+// avoid premature timeouts that kill legitimate slow upstream responses.
+// 300s (5 minutes) covers the observed worst-case first-byte latency with
+// generous margin while still failing fast on genuinely-dead upstreams.
+// Override with PROXY_RESPONSE_HEADER_TIMEOUT_SEC (whole seconds).
+// The overall request is separately bounded by the per-request
 // deadline (RequestTimeout) and the stream stall detector (StreamStallTimeout).
 var upstreamResponseHeaderTimeout = func() time.Duration {
 	if v := os.Getenv("PROXY_RESPONSE_HEADER_TIMEOUT_SEC"); v != "" {
@@ -44,7 +40,7 @@ var upstreamResponseHeaderTimeout = func() time.Duration {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	return 120 * time.Second
+	return 300 * time.Second
 }()
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues

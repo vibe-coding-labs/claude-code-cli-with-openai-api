@@ -110,13 +110,13 @@ func (h *Handler) CreateConfig(c *gin.Context) {
 		config.MaxTokensLimit = 16384
 	}
 	if config.RequestTimeout == 0 {
-		config.RequestTimeout = 300
+		config.RequestTimeout = 600 // 10 minutes - prioritize reliability over speed
 	}
 	if config.StreamStallTimeout == 0 {
-		config.StreamStallTimeout = 60
+		config.StreamStallTimeout = 300 // 5 minutes - allow slow upstream
 	}
 	if config.RetryCount == 0 {
-		config.RetryCount = 10
+		config.RetryCount = 20 // More retries for unreliable upstream
 	}
 	if config.BigModel == "" {
 		config.BigModel = "gpt-4o"
