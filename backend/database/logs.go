@@ -389,9 +389,9 @@ func GetLogByID(id int64) (*RequestLog, error) {
 // GetAvailableModels returns list of unique models used in logs for a config
 func GetAvailableModels(configID string) ([]string, error) {
 	query := `
-		SELECT DISTINCT model 
-		FROM request_logs 
-		WHERE config_id = ? 
+		SELECT DISTINCT model
+		FROM request_logs
+		WHERE config_id = ?
 		ORDER BY model
 	`
 
@@ -411,4 +411,102 @@ func GetAvailableModels(configID string) ([]string, error) {
 	}
 
 	return models, nil
+}
+
+// GetRequestLogsBySession retrieves all request logs for a given session.
+// This is useful for analyzing the request history of a conversation.
+func GetRequestLogsBySession(db *sql.DB, sessionID string, limit int) ([]RequestLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `SELECT id, config_id, user_id, session_id, model,
+		input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+		total_tokens, duration_ms, status, error_message,
+		request_body, response_body, request_summary, response_preview,
+		client_ip, user_agent, created_at
+		FROM request_logs
+		WHERE session_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?`
+
+	rows, err := db.Query(query, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []RequestLog
+	for rows.Next() {
+		var log RequestLog
+		var sessionIDNull, errorMessage, requestBody, responseBody, requestSummary, responsePreview, clientIP, userAgent sql.NullString
+		err := rows.Scan(
+			&log.ID, &log.ConfigID, &log.UserID, &sessionIDNull, &log.Model,
+			&log.InputTokens, &log.OutputTokens, &log.CacheReadTokens, &log.CacheWriteTokens,
+			&log.TotalTokens, &log.DurationMs, &log.Status, &errorMessage,
+			&requestBody, &responseBody, &requestSummary, &responsePreview,
+			&clientIP, &userAgent, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if sessionIDNull.Valid {
+			log.SessionID = &sessionIDNull.String
+		}
+		if errorMessage.Valid {
+			log.ErrorMessage = errorMessage.String
+		}
+		if requestBody.Valid {
+			log.RequestBody = requestBody.String
+		}
+		if responseBody.Valid {
+			log.ResponseBody = responseBody.String
+		}
+		if requestSummary.Valid {
+			log.RequestSummary = requestSummary.String
+		}
+		if responsePreview.Valid {
+			log.ResponsePreview = responsePreview.String
+		}
+		if clientIP.Valid {
+			log.ClientIP = clientIP.String
+		}
+		if userAgent.Valid {
+			log.UserAgent = userAgent.String
+		}
+		logs = append(logs, log)
+	}
+	return logs, nil
+}
+
+// GetSessionsWithErrors retrieves sessions that have error requests.
+// This is useful for identifying problematic conversations.
+func GetSessionsWithErrors(db *sql.DB, since time.Time, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `SELECT DISTINCT session_id
+		FROM request_logs
+		WHERE session_id IS NOT NULL
+		  AND status = 'error'
+		  AND created_at >= ?
+		ORDER BY created_at DESC
+		LIMIT ?`
+
+	rows, err := db.Query(query, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessionIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		sessionIDs = append(sessionIDs, id)
+	}
+	return sessionIDs, nil
 }
