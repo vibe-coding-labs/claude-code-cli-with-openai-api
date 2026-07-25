@@ -41,7 +41,7 @@ func (al *AsyncLogger) Start() {
 func (al *AsyncLogger) worker() {
 	defer al.wg.Done()
 	for logEntry := range al.logQueue {
-		if err := LogRequestSync(logEntry); err != nil {
+		if err := LogRequestSync(logEntry, logEntry.SessionID); err != nil {
 			// Log errors but don't block
 			log.Printf("Failed to log request: %v", err)
 		}
@@ -56,7 +56,7 @@ func (al *AsyncLogger) LogAsync(logEntry *RequestLog) {
 	default:
 		// Queue is full, log synchronously as fallback
 		log.Printf("Warning: Log queue full, logging synchronously")
-		if err := LogRequestSync(logEntry); err != nil {
+		if err := LogRequestSync(logEntry, logEntry.SessionID); err != nil {
 			log.Printf("Failed to log request: %v", err)
 		}
 	}
@@ -69,17 +69,19 @@ func (al *AsyncLogger) Shutdown() {
 }
 
 // LogRequestSync is the original synchronous logging function
-func LogRequestSync(log *RequestLog) error {
+func LogRequestSync(log *RequestLog, sessionID *string) error {
+	log.SessionID = sessionID
+
 	query := `
 		INSERT INTO request_logs (
-			config_id, user_id, model, input_tokens, output_tokens, total_tokens,
+			config_id, user_id, session_id, model, input_tokens, output_tokens, total_tokens,
 			duration_ms, status, error_message, request_body, response_body,
 			request_summary, response_preview, client_ip, user_agent, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
 	_, err := DB.Exec(query,
-		log.ConfigID, log.UserID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
+		log.ConfigID, log.UserID, log.SessionID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
 		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
 		log.RequestSummary, log.ResponsePreview, log.ClientIP, log.UserAgent,
 	)
@@ -93,6 +95,7 @@ func LogRequestSync(log *RequestLog) error {
 }
 
 // LogRequestAsync queues a request log for async processing (non-blocking)
-func LogRequestAsync(log *RequestLog) {
+func LogRequestAsync(log *RequestLog, sessionID *string) {
+	log.SessionID = sessionID
 	GetAsyncLogger().LogAsync(log)
 }
