@@ -105,6 +105,11 @@ func ClassifyError(err error) ErrorCategory {
 		return CategoryServerError
 	}
 
+	// Empty content — model produced no meaningful output (no text and no tool calls)
+	if strings.Contains(errStr, "empty content") || strings.Contains(errStr, "empty response") {
+		return CategoryServerError
+	}
+
 	return CategoryUnknown
 }
 
