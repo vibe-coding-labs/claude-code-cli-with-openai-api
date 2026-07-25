@@ -524,6 +524,26 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		}
 	}
 
+	// --- Empty content detection ---
+	// Check if the response has no meaningful content (empty text and no tool calls).
+	// This indicates the model produced a degenerate response, possibly due to
+	// service issues, and should be retried.
+	//
+	// Note: Tool-only responses (has tool calls but no text) are NOT considered
+	// degenerate — the user may have requested just tool execution.
+	hasToolCalls := len(state.toolCalls) > 0
+	if GetDegenerateDetector().IsEmptyContent(collectedText, hasToolCalls) {
+		logger.Warn("[stream] empty content detected (no text and no tool calls), emitting overloaded_error for auto-retry")
+		sendSSEError(c, "overloaded_error", "Empty response detected (no meaningful content). Please retry.")
+		return &StreamingResult{
+			Content:      collectedText,
+			InputTokens:  degenUsage.InputTokens,
+			OutputTokens: degenUsage.OutputTokens,
+			StopReason:   "overloaded_error",
+			ToolCalls:    nil,
+		}
+	}
+
 	// If content_block_finish was never sent (stream ended without finish_reason),
 	// close the current block
 	if !state.sentContentBlockFinish {
