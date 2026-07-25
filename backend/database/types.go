@@ -67,11 +67,11 @@ type RequestLog struct {
 	DurationMs      int       `json:"duration_ms"`
 	Status          string    `json:"status"`
 	ErrorMessage    string    `json:"error_message,omitempty"`
-	RequestBody     string    `json:"request_body,omitempty"`     // 原始请求体（JSON）
-	ResponseBody    string    `json:"response_body,omitempty"`    // 原始响应体（JSON）
-	RequestBodyPath  string    `json:"request_body_path,omitempty"`  // 文件存储路径（优先于 RequestBody）
+	RequestBody      string    `json:"request_body,omitempty"`      // 原始请求体（JSON）
+	ResponseBody     string    `json:"response_body,omitempty"`     // 原始响应体（JSON）
+	RequestBodyPath  string    `json:"request_body_path,omitempty"` // 文件存储路径（优先于 RequestBody）
 	ResponseBodyPath string    `json:"response_body_path,omitempty"` // 文件存储路径（优先于 ResponseBody）
-	RequestSummary  string    `json:"request_summary,omitempty"`  // 请求摘要（便于快速查看）
+	RequestSummary   string    `json:"request_summary,omitempty"`   // 请求摘要（便于快速查看）
 	ResponsePreview string    `json:"response_preview,omitempty"` // 响应预览（前500字符）
 	ClientIP        string    `json:"client_ip,omitempty"`        // 客户端IP地址
 	UserAgent       string    `json:"user_agent,omitempty"`       // 客户端User-Agent
