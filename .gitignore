@@ -1,5 +1,9 @@
 # Temporary data directory
 data/tmp/
+data/debug/
+
+# Database backup files
+*.bak-*
 
 # Reference projects
 data/claude-code-openai-wrapper/
