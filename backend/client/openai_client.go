@@ -29,7 +29,7 @@ import (
 // Reliability over speed: the user explicitly stated that response time is not
 // sensitive — "你可以跑得慢，没关系，它挂一晚上" — so we set this high to
 // avoid premature timeouts that kill legitimate slow upstream responses.
-// 300s (5 minutes) covers the observed worst-case first-byte latency with
+// 600s (10 minutes) covers the observed worst-case first-byte latency with
 // generous margin while still failing fast on genuinely-dead upstreams.
 // Override with PROXY_RESPONSE_HEADER_TIMEOUT_SEC (whole seconds).
 // The overall request is separately bounded by the per-request
@@ -40,7 +40,7 @@ var upstreamResponseHeaderTimeout = func() time.Duration {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	return 300 * time.Second
+	return 600 * time.Second
 }()
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues
@@ -325,8 +325,9 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 
 	// tlsHandshakeTimeout caps how long the HTTP transport waits for the TLS
 	// handshake to complete.  Slow or congested upstreams (e.g. overseas relays)
-	// can take well over 10 s to complete the handshake; 60 s covers observed
-	// worst-case while still failing fast on genuinely-dead connections.
+	// can take well over 10 s to complete the handshake; 300 s (5 minutes)
+	// covers observed worst-case while still failing fast on genuinely-dead
+	// connections.  User preference: reliability over speed.
 	// Override with PROXY_TLS_HANDSHAKE_TIMEOUT_SEC (whole seconds).
 	var tlsHandshakeTimeout = func() time.Duration {
 		if v := os.Getenv("PROXY_TLS_HANDSHAKE_TIMEOUT_SEC"); v != "" {
@@ -334,7 +335,7 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 				return time.Duration(secs) * time.Second
 			}
 		}
-		return 60 * time.Second
+		return 300 * time.Second
 	}()
 
 	transport := &http.Transport{
@@ -342,7 +343,7 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		MaxConnsPerHost:     0,
-		IdleConnTimeout:     90 * time.Second,
+		IdleConnTimeout:     300 * time.Second,
 		DisableKeepAlives:   false,
 		DisableCompression:  false,
 		ForceAttemptHTTP2:   true,

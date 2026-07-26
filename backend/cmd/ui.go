@@ -79,7 +79,7 @@ func runUI(cmd *cobra.Command, args []string) error {
 		SmallModel:      getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
 		MaxTokensLimit:  getEnvAsInt("MAX_TOKENS_LIMIT", 16384),
 		MinTokensLimit:  getEnvAsInt("MIN_TOKENS_LIMIT", 100),
-		RequestTimeout:  getEnvAsInt("REQUEST_TIMEOUT", 600),
+		RequestTimeout:  getEnvAsInt("REQUEST_TIMEOUT", 1800),
 		CustomHeaders:   make(map[string]string),
 	}
 

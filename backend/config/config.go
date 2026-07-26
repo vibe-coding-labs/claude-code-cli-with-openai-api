@@ -56,7 +56,7 @@ func LoadConfig() (*Config, error) {
 		LogLevel:             getEnvOrDefault("LOG_LEVEL", "INFO"),
 		MaxTokensLimit:       getEnvAsInt("MAX_TOKENS_LIMIT", 4096),
 		MinTokensLimit:       getEnvAsInt("MIN_TOKENS_LIMIT", 100),
-		RequestTimeout:       getEnvAsInt("REQUEST_TIMEOUT", 600),
+		RequestTimeout:       getEnvAsInt("REQUEST_TIMEOUT", 1800),
 		RetryCount:           getEnvAsInt("RETRY_COUNT", 20),
 		BigModel:             getEnvOrDefault("BIG_MODEL", "gpt-4o"),
 		SmallModel:           getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),

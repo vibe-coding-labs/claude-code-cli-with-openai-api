@@ -105,7 +105,7 @@ func importCCRConfig() (int, error) {
 			SmallModel:      primaryModel,
 			SupportedModels: provider.Models,
 			MaxTokensLimit:  4096,
-			RequestTimeout:  600,
+			RequestTimeout:  1800,
 			RetryCount:      20,
 			Enabled:         true,
 		}
