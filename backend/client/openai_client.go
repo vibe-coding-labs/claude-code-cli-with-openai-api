@@ -323,6 +323,20 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		proxyFunc = http.ProxyFromEnvironment
 	}
 
+	// tlsHandshakeTimeout caps how long the HTTP transport waits for the TLS
+	// handshake to complete.  Slow or congested upstreams (e.g. overseas relays)
+	// can take well over 10 s to complete the handshake; 60 s covers observed
+	// worst-case while still failing fast on genuinely-dead connections.
+	// Override with PROXY_TLS_HANDSHAKE_TIMEOUT_SEC (whole seconds).
+	var tlsHandshakeTimeout = func() time.Duration {
+		if v := os.Getenv("PROXY_TLS_HANDSHAKE_TIMEOUT_SEC"); v != "" {
+			if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+				return time.Duration(secs) * time.Second
+			}
+		}
+		return 60 * time.Second
+	}()
+
 	transport := &http.Transport{
 		Proxy:               proxyFunc,
 		MaxIdleConns:        100,
@@ -332,7 +346,7 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		DisableKeepAlives:   false,
 		DisableCompression:  false,
 		ForceAttemptHTTP2:   true,
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSHandshakeTimeout: tlsHandshakeTimeout,
 		// See upstreamResponseHeaderTimeout for rationale.
 		ResponseHeaderTimeout: upstreamResponseHeaderTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
