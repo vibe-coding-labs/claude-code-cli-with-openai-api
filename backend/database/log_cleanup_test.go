@@ -1,8 +1,21 @@
 package database
 
 import (
+	"os"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	testDB, err := InitTestDB()
+	if err != nil {
+		// If we can't init the test DB, just run tests (they'll skip if DB is nil)
+		os.Exit(m.Run())
+	}
+	defer testDB.Close()
+
+	code := m.Run()
+	os.Exit(code)
+}
 
 // TestGetDatabaseSizeInfo requires a database connection to be initialized.
 // This test is skipped when DB is nil (running in isolation without test DB setup).
