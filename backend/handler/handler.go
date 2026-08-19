@@ -695,6 +695,13 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			return fmt.Errorf("response conversion error: %w", err)
 		}
 
+		// 拒绝空/退化输出——否则空文本块会被序列化为 {"type":"text"}，
+		// Claude Code CLI 解析时对 undefined 调用 .trim() 崩溃
+		// (API Error: undefined is not an object (evaluating 'o.text.trim'))。
+		if h.responseHandler.ValidateResponseContent(c, configID, openAIReq.Model, startTime, claudeResp, &req, sessionIDPtr) {
+			return nil
+		}
+
 		h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model,
 			claudeResp.Usage.InputTokens,
 			claudeResp.Usage.OutputTokens,

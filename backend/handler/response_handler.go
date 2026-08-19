@@ -142,44 +142,10 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 		return
 	}
 
-	// --- Degenerate output detection ---
-	// Check if the response text contains pseudo-tool-call markers
-	// (e.g., </｜｜DSML｜｜invoke>). These indicate invalid model output.
-	if claudeResp != nil && len(claudeResp.Content) > 0 {
-		for _, block := range claudeResp.Content {
-			if block.Type == "text" && block.Text != "" {
-				if isDegenerate, pattern := converter.GetDegenerateDetector().IsDegenerate(block.Text); isDegenerate {
-					utils.GetLogger().Warn("[Non-Streaming] degenerate output detected (pattern=%s), returning overloaded_error. Content preview: %.200s", pattern, block.Text)
-					err := fmt.Errorf("degenerate output detected (pseudo-tool-call markers in text, pattern=%s). Please retry.", pattern)
-					r.sendErrorResponse(c, err)
-					r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
-					return
-				}
-			}
-		}
+	// 拒绝空/退化输出——防止空文本块序列化为 {"type":"text"} 崩溃客户端
+	if r.ValidateResponseContent(c, configID, openAIReq.Model, startTime, claudeResp, claudeReq, sessionIDPtr) {
+		return
 	}
-		// --- Empty content detection ---
-		// Check if the response has no meaningful content (empty text and no tool calls).
-		// Tool-only responses are NOT considered degenerate.
-		if claudeResp != nil {
-			hasTextContent := false
-			hasToolCalls := false
-			for _, block := range claudeResp.Content {
-				if block.Type == "text" && !converter.GetDegenerateDetector().IsEmptyOrWhitespace(block.Text) {
-					hasTextContent = true
-				}
-				if block.Type == "tool_use" {
-					hasToolCalls = true
-				}
-			}
-			if !hasTextContent && !hasToolCalls {
-				utils.GetLogger().Warn("[Non-Streaming] empty content detected (no text and no tool calls), returning overloaded_error")
-				err := fmt.Errorf("empty response detected (no meaningful content). Please retry.")
-				r.sendErrorResponse(c, err)
-				r.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
-				return
-			}
-		}
 
 	fmt.Printf("✅ [Non-Streaming] Converted to Claude format, returning response\n")
 
@@ -204,6 +170,60 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 		r.SaveMessagesToSession(sessionHandler, sessionID, claudeReq, assistantContent,
 			claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens)
 	}
+}
+
+// ValidateResponseContent rejects degenerate or empty upstream responses before
+// they are serialized and sent to the client. Returns true when the response
+// has been rejected (error already sent to the client) and the caller must
+// return immediately. Every non-streaming send path must call this — without
+// it, an empty text block serializes as {"type":"text"} (the omitempty tag
+// drops the empty text field), which crashes Claude Code CLI at
+// o.text.trim() ("undefined is not an object").
+func (r *ResponseHandler) ValidateResponseContent(
+	c *gin.Context,
+	configID string,
+	model string,
+	startTime time.Time,
+	claudeResp *models.ClaudeResponse,
+	claudeReq *models.ClaudeMessagesRequest,
+	sessionIDPtr *string,
+) bool {
+	// Degenerate output detection: pseudo-tool-call markers in text.
+	if claudeResp != nil && len(claudeResp.Content) > 0 {
+		for _, block := range claudeResp.Content {
+			if block.Type == "text" && block.Text != "" {
+				if isDegenerate, pattern := converter.GetDegenerateDetector().IsDegenerate(block.Text); isDegenerate {
+					utils.GetLogger().Warn("[Non-Streaming] degenerate output detected (pattern=%s), returning overloaded_error. Content preview: %.200s", pattern, block.Text)
+					err := fmt.Errorf("degenerate output detected (pseudo-tool-call markers in text, pattern=%s). Please retry.", pattern)
+					r.sendErrorResponse(c, err)
+					r.logRequestWithDetails(c, configID, model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
+					return true
+				}
+			}
+		}
+	}
+
+	// Empty content detection: no meaningful text and no tool calls.
+	if claudeResp != nil {
+		hasTextContent := false
+		hasToolCalls := false
+		for _, block := range claudeResp.Content {
+			if block.Type == "text" && !converter.GetDegenerateDetector().IsEmptyOrWhitespace(block.Text) {
+				hasTextContent = true
+			}
+			if block.Type == "tool_use" {
+				hasToolCalls = true
+			}
+		}
+		if !hasTextContent && !hasToolCalls {
+			utils.GetLogger().Warn("[Non-Streaming] empty content detected (no text and no tool calls), returning overloaded_error")
+			err := fmt.Errorf("empty response detected (no meaningful content). Please retry.")
+			r.sendErrorResponse(c, err)
+			r.logRequestWithDetails(c, configID, model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
+			return true
+		}
+	}
+	return false
 }
 
 // logRequestWithStreamingDetails 记录流式请求日志到数据库
