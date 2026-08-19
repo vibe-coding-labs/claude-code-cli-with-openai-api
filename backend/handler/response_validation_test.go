@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	code := m.Run()
+	// 等待异步日志 worker 退出并关闭 DB，避免与清理目录的 in-flight 写竞争、
+	// 泄漏 worker goroutine 与打开的 sqlite 连接。
+	database.GetAsyncLogger().Shutdown()
+	database.CloseDB()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -40,7 +45,7 @@ func newValidationContext() (*ResponseHandler, *gin.Context, *httptest.ResponseR
 // TestValidateResponseContent_EmptyText_Rejected 空文本块必须被拦截为 overloaded_error，
 // 否则会被序列化成 {"type":"text"} 导致 Claude Code o.text.trim 崩溃。
 func TestValidateResponseContent_EmptyText_Rejected(t *testing.T) {
-	rh, c, _ := newValidationContext()
+	rh, c, w := newValidationContext()
 	resp := &models.ClaudeResponse{
 		Content: []models.ClaudeContentBlock{{Type: "text", Text: ""}},
 	}
@@ -48,8 +53,15 @@ func TestValidateResponseContent_EmptyText_Rejected(t *testing.T) {
 	if !rejected {
 		t.Errorf("empty text content should be rejected")
 	}
-	if c.Writer.Status() != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", c.Writer.Status())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
+	}
+	var body overloadedBody
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v (body=%s)", err, w.Body.String())
+	}
+	if body.Error.Type != "overloaded_error" {
+		t.Errorf("error.type = %q, want overloaded_error (Claude Code auto-retries only on overloaded_error)", body.Error.Type)
 	}
 }
 
@@ -84,12 +96,22 @@ func TestValidateResponseContent_ToolOnly_Allowed(t *testing.T) {
 
 // TestValidateResponseContent_Degenerate_Rejected 伪工具调用标记的文本必须被拦截。
 func TestValidateResponseContent_Degenerate_Rejected(t *testing.T) {
-	rh, c, _ := newValidationContext()
+	rh, c, w := newValidationContext()
 	resp := &models.ClaudeResponse{
 		Content: []models.ClaudeContentBlock{{Type: "text", Text: "</｜DSML｜invoke>"}},
 	}
 	rejected := rh.ValidateResponseContent(c, "cfg", "deepseek-v4-pro", time.Now(), resp, nil, nil)
 	if !rejected {
 		t.Errorf("degenerate DSML pseudo-tool-call text should be rejected")
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
+	}
+	var body overloadedBody
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v (body=%s)", err, w.Body.String())
+	}
+	if body.Error.Type != "overloaded_error" {
+		t.Errorf("error.type = %q, want overloaded_error (Claude Code auto-retries only on overloaded_error)", body.Error.Type)
 	}
 }

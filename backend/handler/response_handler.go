@@ -175,7 +175,7 @@ func (r *ResponseHandler) HandleNonStreamingResponse(
 // ValidateResponseContent rejects degenerate or empty upstream responses before
 // they are serialized and sent to the client. Returns true when the response
 // has been rejected (error already sent to the client) and the caller must
-// return immediately. Every non-streaming send path must call this — without
+// return immediately. The live non-streaming send paths call this — without
 // it, an empty text block serializes as {"type":"text"} (the omitempty tag
 // drops the empty text field), which crashes Claude Code CLI at
 // o.text.trim() ("undefined is not an object").
@@ -195,7 +195,7 @@ func (r *ResponseHandler) ValidateResponseContent(
 				if isDegenerate, pattern := converter.GetDegenerateDetector().IsDegenerate(block.Text); isDegenerate {
 					utils.GetLogger().Warn("[Non-Streaming] degenerate output detected (pattern=%s), returning overloaded_error. Content preview: %.200s", pattern, block.Text)
 					err := fmt.Errorf("degenerate output detected (pseudo-tool-call markers in text, pattern=%s). Please retry.", pattern)
-					r.sendErrorResponse(c, err)
+					SendOverloadedError(c, err.Error())
 					r.logRequestWithDetails(c, configID, model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 					return true
 				}
@@ -203,6 +203,10 @@ func (r *ResponseHandler) ValidateResponseContent(
 		}
 	}
 
+	// Rejections below must be overloaded_error explicitly (not via
+	// SendErrorResponse's fall-through): Claude Code auto-retries only on
+	// overloaded_error. Empty/degenerate upstream output is transient, so
+	// degrading it to a non-retryable api_error would stop the session.
 	// Empty content detection: no meaningful text and no tool calls.
 	if claudeResp != nil {
 		hasTextContent := false
@@ -218,7 +222,7 @@ func (r *ResponseHandler) ValidateResponseContent(
 		if !hasTextContent && !hasToolCalls {
 			utils.GetLogger().Warn("[Non-Streaming] empty content detected (no text and no tool calls), returning overloaded_error")
 			err := fmt.Errorf("empty response detected (no meaningful content). Please retry.")
-			r.sendErrorResponse(c, err)
+			SendOverloadedError(c, err.Error())
 			r.logRequestWithDetails(c, configID, model, 0, 0, startTime, "error", err.Error(), claudeReq, nil, sessionIDPtr)
 			return true
 		}
