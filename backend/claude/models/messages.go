@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 // Messages API 相关模型
 
 // MessagesRequest 消息请求模型
@@ -72,6 +74,28 @@ type ContentBlock struct {
 	Content   interface{}            `json:"content,omitempty"`
 	IsError   bool                   `json:"is_error,omitempty"`
 	Thinking  string                 `json:"thinking,omitempty"` // for thinking blocks
+}
+
+// MarshalJSON guarantees the `text` and `thinking` fields are always emitted on
+// their respective block types (the Anthropic protocol requires them). The
+// default omitempty tags drop empty values, producing {"type":"text"} which
+// crashes strict clients such as Claude Code CLI.
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	type alias ContentBlock
+	switch b.Type {
+	case "text":
+		return json.Marshal(&struct {
+			alias
+			Text string `json:"text"`
+		}{alias: alias(b), Text: b.Text})
+	case "thinking":
+		return json.Marshal(&struct {
+			alias
+			Thinking string `json:"thinking"`
+		}{alias: alias(b), Thinking: b.Thinking})
+	default:
+		return json.Marshal(alias(b))
+	}
 }
 
 // MessagesResponse 消息响应模型

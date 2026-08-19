@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 // Claude API Models
 
 type ClaudeMessagesRequest struct {
@@ -51,6 +53,29 @@ type ClaudeContentBlock struct {
 	IsError      bool                   `json:"is_error,omitempty"`
 	CacheControl interface{}            `json:"cache_control,omitempty"` // litellm pattern: prompt caching
 	Citations    interface{}            `json:"citations,omitempty"`     // Anthropic citation support
+}
+
+// MarshalJSON guarantees the Anthropic protocol's required fields are always
+// emitted. The Messages API requires `text` on text blocks and `thinking` on
+// thinking blocks; the omitempty tags drop empty values, producing
+// {"type":"text"} — a block that crashes strict clients such as Claude Code
+// CLI with "undefined is not an object (evaluating 'o.text.trim')".
+func (b ClaudeContentBlock) MarshalJSON() ([]byte, error) {
+	type alias ClaudeContentBlock
+	switch b.Type {
+	case "text":
+		return json.Marshal(&struct {
+			alias
+			Text string `json:"text"`
+		}{alias: alias(b), Text: b.Text})
+	case "thinking":
+		return json.Marshal(&struct {
+			alias
+			Thinking string `json:"thinking"`
+		}{alias: alias(b), Thinking: b.Thinking})
+	default:
+		return json.Marshal(alias(b))
+	}
 }
 
 type ClaudeTool struct {
