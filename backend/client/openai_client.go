@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -289,6 +290,7 @@ type OpenAIClient struct {
 	RetryBackoffBase time.Duration // 指数退避基数
 	RetryBackoffMax  time.Duration // 指数退避最大上限
 	httpClient       *http.Client
+	UpstreamEndpoint string // "chat/completions" (默认) 或 "responses"
 }
 
 func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
@@ -364,6 +366,7 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		RetryCount:       retryCount,
 		RetryBackoffBase: time.Duration(retryBackoffBase * float64(time.Second)),
 		RetryBackoffMax:  time.Duration(retryBackoffMax) * time.Second,
+		UpstreamEndpoint: cfg.UpstreamEndpoint,
 		httpClient: &http.Client{
 			// Don't set a global timeout - we'll handle timeouts per-request
 			// to avoid timing out during long response body reads
@@ -506,7 +509,208 @@ func (c *OpenAIClient) retryDeadline(startTime time.Time) time.Time {
 	return deadline
 }
 
+// buildUpstreamURL constructs the upstream API URL based on the configured endpoint.
+func (c *OpenAIClient) buildUpstreamURL() string {
+	base := strings.TrimSuffix(c.BaseURL, "/")
+	logger := utils.GetLogger()
+	logger.Info("  [buildUpstreamURL] UpstreamEndpoint=%q BaseURL=%q", c.UpstreamEndpoint, c.BaseURL)
+	if c.UpstreamEndpoint == "responses" {
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/responses"
+		}
+		if strings.Contains(base, "/v1/") {
+			return base
+		}
+		return base + "/responses"
+	}
+	// Default: Chat Completions (also used for "flat-tools")
+	if !strings.HasSuffix(base, "/chat/completions") {
+		return base + "/chat/completions"
+	}
+	return base
+}
+
+// prepareRequestBody transforms the request body if needed based on UpstreamEndpoint.
+// For "responses" endpoint, it converts Chat Completions format to Responses format.
+func (c *OpenAIClient) prepareRequestBody(openAIReq *models.OpenAIRequest, reqBody []byte) ([]byte, error) {
+	if c.UpstreamEndpoint == "responses" {
+		converted, err := convertChatToResponsesRequest(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("chat-to-responses conversion: %w", err)
+		}
+		return converted, nil
+	}
+	// For upstreams that require flat tools format (name at top level, not inside function),
+	// transform the tools array if present.
+	if c.UpstreamEndpoint == "flat-tools" && len(openAIReq.Tools) > 0 {
+		return flattenToolsRequest(reqBody)
+	}
+	return reqBody, nil
+}
+
 func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*models.OpenAIResponse, error) {
+	logger := utils.GetLogger()
+
+	// muse-spark-1.2-contributor on opencode.ai returns EMPTY text for
+	// non-streaming requests but works fine with streaming. Since Claude Code
+	// relies on non-streaming responses for some flows, we force streaming
+	// upstream and assemble the final non-streaming response here.
+	if c.UpstreamEndpoint == "responses" && !openAIReq.Stream {
+		logger.Info("→ [OpenAIClient] Forcing streaming mode for responses endpoint (non-stream fallback is broken upstream)")
+		openAIReq.Stream = true
+		reader, err := c.CreateChatCompletionStream(openAIReq)
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+
+		// Assemble the SSE stream into a single response
+		return c.assembleStreamToResponse(reader, openAIReq)
+	}
+
+	return c.CreateChatCompletionNonStream(openAIReq)
+}
+
+// assembleStreamToResponse reads an SSE stream and assembles it into a single
+// non-streaming OpenAIResponse. Handles both Chat Completions chunks and
+// Responses-style chunk passthrough.
+func (c *OpenAIClient) assembleStreamToResponse(reader io.Reader, openAIReq *models.OpenAIRequest) (*models.OpenAIResponse, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	resp := &models.OpenAIResponse{
+		ID:      "chatcmpl-assembled",
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   openAIReq.Model,
+	}
+
+	var textBuilder strings.Builder
+	var toolCalls []models.OpenAIToolCall
+	toolCallIdx := map[int]int{}
+	finishReason := ""
+	usage := models.OpenAIUsage{}
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
+			continue
+		}
+		var chunkData string
+		switch {
+		case strings.HasPrefix(line, "data: "):
+			chunkData = strings.TrimPrefix(line, "data: ")
+		case strings.HasPrefix(line, "data:"):
+			chunkData = strings.TrimPrefix(line, "data:")
+		default:
+			continue
+		}
+		if strings.TrimSpace(chunkData) == "[DONE]" {
+			break
+		}
+
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(chunkData), &raw); err != nil {
+			continue
+		}
+
+		// Usage accounting (capture even on empty choices chunks)
+		if u, ok := raw["usage"].(map[string]interface{}); ok {
+			usage.PromptTokens = toInt(u["prompt_tokens"])
+			usage.CompletionTokens = toInt(u["completion_tokens"])
+			usage.TotalTokens = toInt(u["total_tokens"])
+		}
+
+		// Check for responses-style events (response.output_text.delta)
+		if raw["type"] == "response.output_text.delta" {
+			if d, ok := raw["delta"].(string); ok {
+				textBuilder.WriteString(d)
+			}
+			continue
+		}
+		if raw["type"] == "response.completed" {
+			if r, ok := raw["response"].(map[string]interface{}); ok {
+				if st, ok := r["status"].(string); ok {
+					finishReason = mapStatusToFinishReason(st)
+				}
+				if u, ok := r["usage"].(map[string]interface{}); ok {
+					usage.PromptTokens = toInt(u["input_tokens"])
+					usage.CompletionTokens = toInt(u["output_tokens"])
+					usage.TotalTokens = toInt(u["total_tokens"])
+				}
+			}
+			break
+		}
+
+		choices, _ := raw["choices"].([]interface{})
+		if len(choices) == 0 {
+			continue
+		}
+		choice0, _ := choices[0].(map[string]interface{})
+
+		// Finish reason
+		if fr, ok := choice0["finish_reason"].(string); ok && fr != "" {
+			finishReason = fr
+		}
+
+		delta, _ := choice0["delta"].(map[string]interface{})
+		if delta == nil {
+			continue
+		}
+		if content, ok := delta["content"].(string); ok {
+			textBuilder.WriteString(content)
+		}
+		if tcs, ok := delta["tool_calls"].([]interface{}); ok {
+			for _, tcRaw := range tcs {
+				tc, _ := tcRaw.(map[string]interface{})
+				idx := toInt(tc["index"])
+				id, _ := tc["id"].(string)
+				fn, _ := tc["function"].(map[string]interface{})
+				name, _ := fn["name"].(string)
+				args, _ := fn["arguments"].(string)
+
+				if pos, exists := toolCallIdx[idx]; exists {
+					toolCalls[pos].Function.Arguments += args
+				} else {
+					tcObj := models.OpenAIToolCall{
+						ID:   id,
+						Type: "function",
+						Function: models.OpenAIFunctionCall{
+							Name:      name,
+							Arguments: args,
+						},
+					}
+					toolCallIdx[idx] = len(toolCalls)
+					toolCalls = append(toolCalls, tcObj)
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
+	message := models.OpenAIMessage{
+		Role:      "assistant",
+		Content:   textBuilder.String(),
+		ToolCalls: toolCalls,
+	}
+	resp.Choices = []models.OpenAIChoice{{
+		Index:        0,
+		Message:      message,
+		FinishReason: finishReason,
+	}}
+	resp.Usage = usage
+	if resp.Choices[0].FinishReason == "" {
+		resp.Choices[0].FinishReason = "stop"
+	}
+	return resp, nil
+}
+
+func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIRequest) (*models.OpenAIResponse, error) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 	deadline := c.retryDeadline(startTime)
@@ -525,10 +729,14 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 	logger.Debug("  Request body size: %d bytes", len(reqBody))
 	logger.Debug("  Request body: %s", string(reqBody))
 
-	url := c.BaseURL
-	if !strings.HasSuffix(url, "/chat/completions") {
-		url = strings.TrimSuffix(url, "/") + "/chat/completions"
+	// Transform body if upstream expects Responses API format
+	reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to prepare request body: %v", err)
+		return nil, fmt.Errorf("failed to prepare request body: %w", err)
 	}
+
+	url := c.buildUpstreamURL()
 	logger.Debug("  Target URL: %s", url)
 
 	// Retry logic with exponential backoff
@@ -703,6 +911,26 @@ func (c *OpenAIClient) CreateChatCompletion(openAIReq *models.OpenAIRequest) (*m
 		// Read raw response body for debugging
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+
+		// If upstream is Responses API, convert response body to Chat Completions format
+		if c.UpstreamEndpoint == "responses" {
+			converted, convErr := convertResponsesToChatResponse(bodyBytes, openAIReq.Model)
+			if convErr != nil {
+				logger.Warn("← [OpenAIClient] Failed to convert Responses to Chat response: %v", convErr)
+				bodyBytes, _ = json.Marshal(map[string]interface{}{
+					"id":      "chatcmpl-" + openAIReq.Model,
+					"object":  "chat.completion",
+					"created": time.Now().Unix(),
+					"model":   openAIReq.Model,
+					"choices": []map[string]interface{}{
+						{"index": 0, "message": map[string]interface{}{"role": "assistant", "content": ""}, "finish_reason": "stop"},
+					},
+				})
+			} else {
+				bodyBytes = converted
+			}
+		}
+
 		logger.Info("  Raw response (first 500 chars): %s", string(bodyBytes[:min(500, len(bodyBytes))]))
 		// Restore body for JSON decoder
 		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -788,6 +1016,39 @@ func min(a, b int) int {
 	return b
 }
 
+// toInt coerces a JSON-decoded numeric (float64/int) to int.
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case json.Number:
+		if iv, err := n.Int64(); err == nil {
+			return int(iv)
+		}
+	}
+	return 0
+}
+
+// readCloserFromReader wraps a io.Reader and a io.Closer into an io.ReadCloser.
+// Used when we need to inject peeked bytes into the stream while keeping the
+// original closer for cleanup.
+type readCloserFromReader struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *readCloserFromReader) Close() error {
+	return r.closer.Close()
+}
+
+func newReadCloserFromReader(reader io.Reader, closer io.Closer) io.ReadCloser {
+	return &readCloserFromReader{Reader: reader, closer: closer}
+}
+
 func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
@@ -817,11 +1078,14 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 	}
 	logger.Debug("  Request body size: %d bytes", len(reqBody))
 
-	url := c.BaseURL
-	if !strings.HasSuffix(url, "/chat/completions") {
-		url = strings.TrimSuffix(url, "/") + "/chat/completions"
+	// Transform body if upstream expects Responses API format
+	reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+	if err != nil {
+		logger.Error("← [OpenAIClient] Failed to prepare streaming request body: %v", err)
+		return nil, fmt.Errorf("failed to prepare request body: %w", err)
 	}
-	logger.Debug("  Target URL: %s", url)
+
+	url := c.buildUpstreamURL()
 
 	// Retry logic for streaming requests
 	var lastErr error
@@ -976,6 +1240,36 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 
 		// Success!
 		logger.Info("← [OpenAIClient] Streaming response started (took %v)", time.Since(startTime))
+
+		// If upstream is Responses API, wrap the stream reader to convert SSE format
+		if c.UpstreamEndpoint == "responses" {
+			// Check if upstream actually returned Responses API format or Chat Completions.
+			// Read the first few bytes to detect the format.
+			peekBuf := make([]byte, 64)
+			n, _ := resp.Body.Read(peekBuf)
+			firstBytes := strings.TrimSpace(string(peekBuf[:n]))
+			isResponsesFormat := strings.Contains(firstBytes, `"type":"response`) || strings.Contains(firstBytes, "response.")
+
+			// Create a combined reader that includes the peeked bytes
+			combinedReader := io.MultiReader(bytes.NewReader(peekBuf[:n]), resp.Body)
+
+			if isResponsesFormat {
+				pr, pw := io.Pipe()
+				go func() {
+					err := convertResponsesStreamingToChat(combinedReader, pw, openAIReq.Model)
+					resp.Body.Close()
+					if err != nil {
+						pw.CloseWithError(err)
+					} else {
+						pw.Close()
+					}
+				}()
+				return pr, nil
+			}
+			// Chat Completions format: pass through as-is
+			resp.Body = newReadCloserFromReader(combinedReader, resp.Body)
+		}
+
 		return resp.Body, nil
 	}
 

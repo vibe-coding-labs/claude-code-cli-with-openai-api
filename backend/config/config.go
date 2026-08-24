@@ -33,7 +33,8 @@ type Config struct {
 	MinTokensLimit       int
 	CustomHeaders        map[string]string
 	EnableRequestLogging bool
-	StreamStallTimeout   int // 流式预验证超时（秒），默认300秒（可靠性优先）
+	StreamStallTimeout   int    // 流式预验证超时（秒），默认300秒（可靠性优先）
+	UpstreamEndpoint     string // 上游端点路径: "chat/completions" (默认) 或 "responses"
 }
 
 var GlobalConfig *Config
@@ -44,6 +45,8 @@ func LoadConfig() (*Config, error) {
 
 	// OPENAI_API_KEY is optional since configs are managed through UI
 	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+
+	upstreamEndpoint := getEnvOrDefault("UPSTREAM_ENDPOINT", "chat/completions")
 
 	config := &Config{
 		OpenAIAPIKey:         openAIAPIKey,
@@ -62,6 +65,7 @@ func LoadConfig() (*Config, error) {
 		SmallModel:           getEnvOrDefault("SMALL_MODEL", "gpt-4o-mini"),
 		CustomHeaders:        make(map[string]string),
 		EnableRequestLogging: getEnvAsBool("ENABLE_REQUEST_LOGGING", false),
+		UpstreamEndpoint:     upstreamEndpoint,
 	}
 
 	// Set middle model to big model if not specified

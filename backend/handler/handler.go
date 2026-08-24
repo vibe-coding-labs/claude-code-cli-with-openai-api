@@ -2,9 +2,9 @@ package handler
 
 import (
 	"database/sql"
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -13,9 +13,9 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/converter"
-	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -373,10 +373,10 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		return nil
 	}
 
-		// one-api pattern: set MaxTokens default to 4096 if not specified
-		if req.MaxTokens <= 0 {
-			req.MaxTokens = 4096
-		}
+	// one-api pattern: set MaxTokens default to 4096 if not specified
+	if req.MaxTokens <= 0 {
+		req.MaxTokens = 4096
+	}
 
 	// 验证请求参数
 	logger.Debug("  Validating request...")
@@ -458,6 +458,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  reasoningEffort, // 使用根据模型选择的思考级别
 			ProxyURL:         dbConfig.ProxyURL,
+			UpstreamEndpoint: h.config.UpstreamEndpoint,
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
@@ -643,7 +644,6 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			break
 		}
 
-
 		if streamResult != nil {
 			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", &req, sessionIDPtr)
 			if h.sessionHandler != nil && sessionID != "" {
@@ -778,10 +778,10 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 		return
 	}
 
-		// one-api pattern: set MaxTokens default to 4096 if not specified
-		if req.MaxTokens <= 0 {
-			req.MaxTokens = 4096
-		}
+	// one-api pattern: set MaxTokens default to 4096 if not specified
+	if req.MaxTokens <= 0 {
+		req.MaxTokens = 4096
+	}
 
 	// 验证请求参数
 	logger.Debug("  Validating request...")
@@ -862,6 +862,7 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  dbConfig.ReasoningEffort, // 传递思考级别配置
 			ProxyURL:         dbConfig.ProxyURL,
+			UpstreamEndpoint: h.config.UpstreamEndpoint,
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {

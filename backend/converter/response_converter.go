@@ -105,8 +105,33 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		}
 	}
 
-	choice := openAIResp.Choices[0]
-	message := choice.Message
+	choice := &openAIResp.Choices[0]
+	message := &choice.Message
+
+	// Some upstreams (e.g. opencode.ai Responses API emulation) return the text
+	// and tool_calls as separate choices with the same index. Merge all choices
+	// into one message: collect tool_calls from all choices, prefer the first
+	// non-empty text content, and use the "tool_calls" finish_reason if present.
+	finishReason := choice.FinishReason
+	for i := range openAIResp.Choices[1:] {
+		c := &openAIResp.Choices[1+i]
+		// Merge tool_calls from all choices, prefer the first non-empty text content.
+		if contentStr, ok := message.Content.(string); !ok || contentStr == "" {
+			if c.Message.Content != nil {
+				message.Content = c.Message.Content
+			}
+		}
+		if len(c.Message.ToolCalls) > 0 {
+			message.ToolCalls = append(message.ToolCalls, c.Message.ToolCalls...)
+		}
+		if message.ReasoningContent == "" && c.Message.ReasoningContent != "" {
+			message.ReasoningContent = c.Message.ReasoningContent
+		}
+		// Prefer "tool_calls" finish_reason over "stop"
+		if c.FinishReason == "tool_calls" || c.FinishReason == "function_call" {
+			finishReason = c.FinishReason
+		}
+	}
 
 	contentBlocks := []models.ClaudeContentBlock{}
 
@@ -153,7 +178,7 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 	}
 
 	stopReason := models.StopEndTurn
-	switch choice.FinishReason {
+	switch finishReason {
 	case "length":
 		stopReason = models.StopMaxTokens
 	case "tool_calls", "function_call":
