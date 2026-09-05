@@ -56,10 +56,12 @@ type ClaudeContentBlock struct {
 }
 
 // MarshalJSON guarantees the Anthropic protocol's required fields are always
-// emitted. The Messages API requires `text` on text blocks and `thinking` on
-// thinking blocks; the omitempty tags drop empty values, producing
-// {"type":"text"} — a block that crashes strict clients such as Claude Code
-// CLI with "undefined is not an object (evaluating 'o.text.trim')".
+// emitted. The Messages API requires `text` on text blocks, `thinking` on
+// thinking blocks, and `input` on tool_use blocks; the omitempty tags drop
+// empty values, producing {"type":"text"} — a block that crashes strict
+// clients such as Claude Code CLI with "undefined is not an object
+// (evaluating 'o.text.trim')", or {"type":"tool_use",...} without input —
+// which the CLI rejects with "Tool use input must be a string or object".
 func (b ClaudeContentBlock) MarshalJSON() ([]byte, error) {
 	type alias ClaudeContentBlock
 	switch b.Type {
@@ -73,6 +75,15 @@ func (b ClaudeContentBlock) MarshalJSON() ([]byte, error) {
 			alias
 			Thinking string `json:"thinking"`
 		}{alias: alias(b), Thinking: b.Thinking})
+	case "tool_use":
+		input := b.Input
+		if input == nil {
+			input = map[string]interface{}{}
+		}
+		return json.Marshal(&struct {
+			alias
+			Input map[string]interface{} `json:"input"`
+		}{alias: alias(b), Input: input})
 	default:
 		return json.Marshal(alias(b))
 	}

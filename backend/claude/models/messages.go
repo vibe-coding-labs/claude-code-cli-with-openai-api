@@ -76,10 +76,12 @@ type ContentBlock struct {
 	Thinking  string                 `json:"thinking,omitempty"` // for thinking blocks
 }
 
-// MarshalJSON guarantees the `text` and `thinking` fields are always emitted on
-// their respective block types (the Anthropic protocol requires them). The
-// default omitempty tags drop empty values, producing {"type":"text"} which
-// crashes strict clients such as Claude Code CLI.
+// MarshalJSON guarantees the `text`, `thinking` and tool_use `input` fields
+// are always emitted on their respective block types (the Anthropic protocol
+// requires them). The default omitempty tags drop empty values, producing
+// {"type":"text"} which crashes strict clients such as Claude Code CLI, or a
+// tool_use block without `input` which the CLI rejects with
+// "Tool use input must be a string or object".
 func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	type alias ContentBlock
 	switch b.Type {
@@ -93,6 +95,15 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			alias
 			Thinking string `json:"thinking"`
 		}{alias: alias(b), Thinking: b.Thinking})
+	case "tool_use":
+		input := b.Input
+		if input == nil {
+			input = map[string]interface{}{}
+		}
+		return json.Marshal(&struct {
+			alias
+			Input map[string]interface{} `json:"input"`
+		}{alias: alias(b), Input: input})
 	default:
 		return json.Marshal(alias(b))
 	}
