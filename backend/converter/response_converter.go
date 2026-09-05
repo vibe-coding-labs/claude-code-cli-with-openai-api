@@ -463,7 +463,10 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 				state.mu.Lock()
 				state.finalStopReason = translateFinishReason(choice.FinishReason)
 				state.mu.Unlock()
-				if !state.sentContentBlockFinish {
+				// Only close a block that was actually opened: emitting a
+				// content_block_stop without a matching content_block_start
+				// violates the Anthropic SSE pairing rules.
+				if state.sentContentBlockStart && !state.sentContentBlockFinish {
 					// one-api pattern: emit {} for tool_use blocks that never received arguments
 					emitEmptyToolArgsIfNeeded(c, state)
 					state.sentContentBlockFinish = true

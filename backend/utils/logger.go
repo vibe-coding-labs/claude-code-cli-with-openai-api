@@ -216,7 +216,7 @@ func (l *Logger) ErrorWithCause(err error, format string, args ...interface{}) {
 	if err != nil {
 		l.log(ERROR, "%s | error: %v", message, err)
 	} else {
-		l.log(ERROR, message)
+		l.log(ERROR, "%s", message)
 	}
 }
 
