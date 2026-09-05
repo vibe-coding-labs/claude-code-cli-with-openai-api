@@ -314,6 +314,12 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 
 	if req.ReasoningEffort != nil && *req.ReasoningEffort != "" {
 		openAIReq.ReasoningEffort = *req.ReasoningEffort
+	} else if o.cfg != nil && o.cfg.ReasoningEffort != "" {
+		// Claude requests carry no reasoning effort, so req.ReasoningEffort is
+		// always nil on the /v1/messages path — without this fallback the
+		// per-config reasoning_effort column never reached the upstream and
+		// every request went out with the provider default.
+		openAIReq.ReasoningEffort = o.cfg.ReasoningEffort
 	}
 
 	// Add stream_options for usage in streaming
