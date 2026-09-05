@@ -78,7 +78,13 @@ func TestNormalizeToolParameters(t *testing.T) {
 }
 
 func TestNormalizeToolParameters_NilInput(t *testing.T) {
-	if result := NormalizeToolParameters("Bash", nil); result != nil {
-		t.Error("nil input should return nil")
+	// 8399052: Claude CLI validates that tool_use input must be a string or
+	// object, so nil params must map to an initialized empty object, not nil.
+	result := NormalizeToolParameters("Bash", nil)
+	if result == nil {
+		t.Fatal("nil input should return an initialized empty object, not nil")
+	}
+	if len(result) != 0 {
+		t.Errorf("nil input should map to an empty object, got %v", result)
 	}
 }

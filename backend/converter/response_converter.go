@@ -497,12 +497,12 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		// Model routing errors → overloaded_error so Claude Code auto-retries
 		if client.IsModelRoutingError(errorMsg) {
 			logger.Warn("[stream] ended: model routing error after %v: %s", time.Since(streamStart), errorMsg)
-			sendSSEError(c, "overloaded_error", "API is temporarily overloaded. Please retry.")
+			finishAbortedStream(c, state, heartbeat, "overloaded_error", "API is temporarily overloaded. Please retry.")
 			return nil
 		}
 		classifiedError := client.ClassifyOpenAIError(errorMsg)
 		logger.Warn("[stream] ended: upstream/scanner error after %v: %s", time.Since(streamStart), classifiedError)
-		sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
+		finishAbortedStream(c, state, heartbeat, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
 		return nil
 	case <-ctx.Done():
 		logger.Info("[stream] ended: client cancelled (request context done) after %v", time.Since(streamStart))
@@ -510,11 +510,11 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		return nil
 	case <-idleTimer.C:
 		logger.Warn("[stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
-		sendSSEError(c, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
+		finishAbortedStream(c, state, heartbeat, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
 		return nil
 	case <-time.After(streamMaxDuration):
 		logger.Warn("[stream] ended: exceeded max stream duration %v", streamMaxDuration)
-		sendSSEError(c, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v); set PROXY_STREAM_MAX_DURATION_MIN to extend if your workload needs longer generations", streamMaxDuration))
+		finishAbortedStream(c, state, heartbeat, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v); set PROXY_STREAM_MAX_DURATION_MIN to extend if your workload needs longer generations", streamMaxDuration))
 		return nil
 	}
 
@@ -534,19 +534,13 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	// producing invalid output that Claude Code CLI cannot parse.
 	// Treat as overloaded_error so the client auto-retries.
 	collectedText := collectedContent.String()
-	state.mu.Lock()
-	degenUsage := state.usage
-	state.mu.Unlock()
 	if isDegenerate, pattern := GetDegenerateDetector().IsDegenerate(collectedText); isDegenerate {
 		logger.Warn("[stream] degenerate output detected (pattern=%s), emitting overloaded_error for auto-retry. Content preview: %.200s", pattern, collectedText)
 		sendSSEError(c, "overloaded_error", "Degenerate output detected (pseudo-tool-call markers in text). Please retry.")
-		return &StreamingResult{
-			Content:      collectedText,
-			InputTokens:  degenUsage.InputTokens,
-			OutputTokens: degenUsage.OutputTokens,
-			StopReason:   "overloaded_error",
-			ToolCalls:    nil,
-		}
+		// Fall through to the terminal sequence below: the error event triggers
+		// the client's auto-retry, but the stream must still end with
+		// message_delta + message_stop — a truncated SSE stream aborts the
+		// Claude Code session instead of retrying cleanly.
 	}
 
 	// --- Empty content detection ---
@@ -560,18 +554,13 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	if GetDegenerateDetector().IsEmptyContent(collectedText, hasToolCalls) {
 		logger.Warn("[stream] empty content detected (no text and no tool calls), emitting overloaded_error for auto-retry")
 		sendSSEError(c, "overloaded_error", "Empty response detected (no meaningful content). Please retry.")
-		return &StreamingResult{
-			Content:      collectedText,
-			InputTokens:  degenUsage.InputTokens,
-			OutputTokens: degenUsage.OutputTokens,
-			StopReason:   "overloaded_error",
-			ToolCalls:    nil,
-		}
+		// Fall through to the terminal sequence below (same rationale as above).
 	}
 
 	// If content_block_finish was never sent (stream ended without finish_reason),
-	// close the current block
-	if !state.sentContentBlockFinish {
+	// close the current block — but only if a block was actually opened; emitting
+	// a stop for a never-started block is a protocol violation.
+	if state.sentContentBlockStart && !state.sentContentBlockFinish {
 		// one-api pattern: emit {} for tool_use blocks that never received arguments
 		emitEmptyToolArgsIfNeeded(c, state)
 		emitContentBlockStop(c, state.currentBlockIndex)
@@ -778,4 +767,49 @@ func emitEmptyToolArgsForBlock(c *gin.Context, state *StreamingState) {
 	}
 	// No tracked tool call yet for this block — emit {} as default.
 	emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
+}
+
+// finishAbortedStream terminates a stream that already started (message_start
+// has been emitted) with an error, while keeping the SSE protocol complete:
+// content_block_stop (if a block is open) → error → message_delta → message_stop.
+// Historically these paths emitted only the error event and returned, leaving a
+// truncated stream — Claude Code then aborts the session instead of auto-retrying.
+// The heartbeat must be stopped synchronously first so no ping can land after
+// message_stop (orphan pings corrupt the chunked terminator).
+func finishAbortedStream(c *gin.Context, state *StreamingState, heartbeat *Heartbeat, errorType, message string) {
+	heartbeat.Stop()
+
+	if state.sentContentBlockStart && !state.sentContentBlockFinish {
+		emitEmptyToolArgsIfNeeded(c, state)
+		emitContentBlockStop(c, state.currentBlockIndex)
+		state.sentContentBlockFinish = true
+	}
+
+	sendSSEError(c, errorType, message)
+
+	state.mu.Lock()
+	stopReason := state.finalStopReason
+	if stopReason == "" {
+		stopReason = models.StopEndTurn
+	}
+	usage := state.usage
+	state.mu.Unlock()
+
+	sendSSE(c, models.EventMessageDelta, map[string]interface{}{
+		"type": models.EventMessageDelta,
+		"delta": map[string]interface{}{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]interface{}{
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+		},
+	})
+	state.emittedMessageDelta = true
+
+	sendSSE(c, models.EventMessageStop, map[string]interface{}{
+		"type": models.EventMessageStop,
+	})
+	state.sentLastMessage = true
 }
