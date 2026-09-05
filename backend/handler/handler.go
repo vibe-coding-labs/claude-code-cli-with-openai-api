@@ -458,7 +458,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  reasoningEffort, // 使用根据模型选择的思考级别
 			ProxyURL:         dbConfig.ProxyURL,
-			UpstreamEndpoint: h.config.UpstreamEndpoint,
+			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
@@ -862,7 +862,7 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  dbConfig.ReasoningEffort, // 传递思考级别配置
 			ProxyURL:         dbConfig.ProxyURL,
-			UpstreamEndpoint: h.config.UpstreamEndpoint,
+			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
 	} else {
@@ -1323,4 +1323,13 @@ func detectBetaHeadersFromRequest(existing []string, body []byte) []string {
 	}
 
 	return existing
+}
+
+// upstreamEndpointOrDefault 返回按配置覆盖的上游端点（"chat/completions" 或 "responses"），
+// 配置为空时回落到全局默认（UPSTREAM_ENDPOINT 环境变量）。
+func upstreamEndpointOrDefault(perConfig, global string) string {
+	if perConfig != "" {
+		return perConfig
+	}
+	return global
 }

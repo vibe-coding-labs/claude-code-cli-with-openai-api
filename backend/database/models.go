@@ -90,9 +90,9 @@ func CreateAPIConfig(config *APIConfig) error {
 			id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url,
+			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
@@ -100,7 +100,7 @@ func CreateAPIConfig(config *APIConfig) error {
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
-		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL,
+		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.UpstreamEndpoint,
 		config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
 	)
 
@@ -117,7 +117,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url,
+			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
@@ -131,7 +131,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
+		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
 		&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -190,7 +190,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url,
+			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
 			anthropic_api_key, enabled, created_at, updated_at
 		FROM api_configs
 		WHERE anthropic_api_key = ? AND enabled = 1
@@ -205,7 +205,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
+		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
 		&config.AnthropicAPIKey, &config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -300,7 +300,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url,
+			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
@@ -322,7 +322,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
+			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -370,7 +370,7 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url,
+			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
 		FROM api_configs
 		WHERE user_id = ?
@@ -394,7 +394,7 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL,
+			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -502,7 +502,7 @@ func UpdateAPIConfig(config *APIConfig) error {
 			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, model_mappings = ?, max_tokens_limit = ?,
 			request_timeout = ?, retry_count = ?, reasoning_effort = ?,
 			big_model_reasoning_effort = ?, middle_model_reasoning_effort = ?, small_model_reasoning_effort = ?,
-			retry_backoff_base = ?, retry_backoff_max = ?, proxy_url = ?,
+			retry_backoff_base = ?, retry_backoff_max = ?, proxy_url = ?, upstream_endpoint = ?,
 			anthropic_api_key = ?, enabled = ?, expires_at = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
@@ -512,7 +512,7 @@ func UpdateAPIConfig(config *APIConfig) error {
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
-		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL,
+		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.UpstreamEndpoint,
 		config.AnthropicAPIKey, config.Enabled, config.ExpiresAt, config.ID,
 	)
 
@@ -839,6 +839,7 @@ func (a *APIConfig) ToConfig() *config.Config {
 		RetryCount:      a.RetryCount,
 		AnthropicAPIKey: a.AnthropicAPIKey,
 			ProxyURL:        a.ProxyURL,
+		UpstreamEndpoint: a.UpstreamEndpoint,
 	}
 }
 

@@ -23,6 +23,7 @@ type APIConfig struct {
 	RetryBackoffBase      float64           `json:"retry_backoff_base,omitempty"` // 指数退避基数（秒），默认1秒
 	RetryBackoffMax       int               `json:"retry_backoff_max,omitempty"` // 指数退避最大上限（秒），默认60秒
 	ProxyURL              string            `json:"proxy_url,omitempty"`         // HTTP proxy for upstream API requests
+	UpstreamEndpoint      string            `json:"upstream_endpoint,omitempty"` // 按配置覆盖上游端点: "chat/completions"(默认) 或 "responses"，空则回落全局 UPSTREAM_ENDPOINT
 	ReasoningEffort       string            `json:"reasoning_effort,omitempty"` // 思考级别: low, medium, high (o1/o3模型) - 全局默认值
 	BigModelReasoningEffort    string     `json:"big_model_reasoning_effort,omitempty"`    // BigModel的思考级别
 	MiddleModelReasoningEffort string     `json:"middle_model_reasoning_effort,omitempty"` // MiddleModel的思考级别
