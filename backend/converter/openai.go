@@ -618,9 +618,17 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 		for _, cb := range msg.Content {
 			switch cb.Type {
 			case "text":
-				if !hasToolUse && !hasMultiModal && simpleText == "" {
-					// 如果还没有遇到 tool_use 或多模态，先保存简单text
-					simpleText = cb.Text
+				if !hasToolUse && !hasMultiModal {
+					// Pure-text message: merge ALL text blocks. Claude Code
+					// sends user messages as multiple text blocks (e.g.
+					// system-reminder + the actual prompt) — dropping
+					// subsequent blocks silently loses the user's real
+					// prompt, and the model answers to a greeting instead.
+					if simpleText == "" {
+						simpleText = cb.Text
+					} else {
+						simpleText += "\n\n" + cb.Text
+					}
 				} else {
 					// 已经有复杂内容，使用parts数组
 					contentParts = append(contentParts, map[string]interface{}{
