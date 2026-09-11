@@ -795,6 +795,15 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 			req.Header.Add("anthropic-beta", betaHeader)
 		}
 
+		// opencode.ai Responses API requires x-opencode-session for routing.
+		if c.SessionID != "" {
+			req.Header.Set("x-opencode-session", c.SessionID)
+		} else if strings.Contains(c.BaseURL, "opencode.ai") {
+			synthetic := "sess_" + c.ConfigID + "_" + openAIReq.Model
+			req.Header.Set("x-opencode-session", synthetic)
+			logger.Info("  [opencode] using synthetic session header: %s", synthetic)
+		}
+
 		if attempt == 0 {
 			logger.Debug("  Sending request to OpenAI...")
 		}
@@ -1138,6 +1147,15 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		// Add beta headers (e.g., anthropic-beta)
 		for _, betaHeader := range c.BetaHeaders {
 			req.Header.Add("anthropic-beta", betaHeader)
+		}
+
+		// opencode.ai Responses API requires x-opencode-session for routing.
+		if c.SessionID != "" {
+			req.Header.Set("x-opencode-session", c.SessionID)
+		} else if strings.Contains(c.BaseURL, "opencode.ai") {
+			synthetic := "sess_" + c.ConfigID + "_" + openAIReq.Model
+			req.Header.Set("x-opencode-session", synthetic)
+			logger.Info("  [opencode] using synthetic session header: %s", synthetic)
 		}
 
 		if attempt == 0 {

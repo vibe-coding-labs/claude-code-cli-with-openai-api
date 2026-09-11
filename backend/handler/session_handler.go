@@ -3,11 +3,38 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 )
+
+func extractSessionIDFromMetadataUserID(rawUserID string) string {
+	trimmed := strings.TrimSpace(rawUserID)
+	if trimmed == "" {
+		return ""
+	}
+	var candidates []string
+	candidates = append(candidates, trimmed)
+	if unescaped, err := strconv.Unquote("\"" + trimmed + "\""); err == nil {
+		candidates = append(candidates, strings.TrimSpace(unescaped))
+	}
+
+	for _, candidate := range candidates {
+		if !strings.HasPrefix(candidate, "{") || !strings.HasSuffix(candidate, "}") {
+			continue
+		}
+		var embedded struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(candidate), &embedded); err == nil && embedded.SessionID != "" {
+			return embedded.SessionID
+		}
+	}
+	return ""
+}
 
 // SessionHandler handles conversation session operations
 type SessionHandler struct{}
@@ -21,6 +48,11 @@ func NewSessionHandler() *SessionHandler {
 func (sh *SessionHandler) ExtractSessionID(req *models.ClaudeMessagesRequest) string {
 	if req.Metadata != nil && req.Metadata.SessionID != "" {
 		return req.Metadata.SessionID
+	}
+	if req.Metadata != nil && req.Metadata.UserID != "" {
+		if embedded := extractSessionIDFromMetadataUserID(req.Metadata.UserID); embedded != "" {
+			return embedded
+		}
 	}
 	return ""
 }

@@ -34,7 +34,8 @@ type Message struct {
 
 // MessageMetadata 消息元数据
 type MessageMetadata struct {
-	UserID string `json:"user_id,omitempty"`
+	UserID   string `json:"user_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // ThinkingConfig 思考配置

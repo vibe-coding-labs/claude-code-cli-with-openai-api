@@ -235,15 +235,21 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 // stallTimeout controls the mid-stream idle timeout — if upstream sends no data for this duration,
 // an overloaded_error is sent to trigger client-side retry. Pass 0 to use the default (120 seconds).
 func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string, stallTimeout time.Duration) *StreamingResult {
-	state := newStreamingState(originalReq.Model, toolNameMapping)
-	streamStart := time.Now()
-	logger := utils.GetLogger()
-	var collectedContent strings.Builder
+	state, heartbeat := PrepareSSEStream(c, ctx, originalReq, toolNameMapping)
+	return ConsumeSSEStream(c, reader, ctx, stallTimeout, state, heartbeat)
+}
 
-	// Default mid-stream idle timeout
-	if stallTimeout <= 0 {
-		stallTimeout = 120 * time.Second
-	}
+// PrepareSSEStream commits the SSE response (headers + message_start + ping)
+// and starts the heartbeat, WITHOUT touching the upstream reader. Callers that
+// need to talk to a slow-to-respond upstream (e.g. retrying stream creation,
+// or a pre-stream stall check) should call this FIRST, before any upstream
+// I/O, so the client sees bytes flowing (via the 5s heartbeat) immediately
+// instead of sitting on a silent connection — a silent connection during
+// upstream setup can exceed the client's own (non-configurable) socket
+// patience and cause it to disconnect before the server's own generous
+// timeouts ever fire.
+func PrepareSSEStream(c *gin.Context, ctx context.Context, originalReq *models.ClaudeMessagesRequest, toolNameMapping map[string]string) (*StreamingState, *Heartbeat) {
+	state := newStreamingState(originalReq.Model, toolNameMapping)
 
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
@@ -264,9 +270,26 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	emitPing(c)
 
 	// Start heartbeat to keep connection alive. Stop() is synchronous (it
-	// waits for the goroutine to exit), so a deferred Stop on the error
-	// paths guarantees no ping write outlives this function.
+	// waits for the goroutine to exit) and idempotent/nil-safe, so callers
+	// may safely defer Stop() here AND also pass the heartbeat into
+	// AbortSSEStream/ConsumeSSEStream on error paths.
 	heartbeat := StartHeartbeat(c, ctx, heartbeatInterval)
+	return state, heartbeat
+}
+
+// ConsumeSSEStream reads the already-verified upstream reader and converts it
+// to Claude-format SSE events. state and heartbeat must come from a prior
+// PrepareSSEStream call on the same c.
+func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, stallTimeout time.Duration, state *StreamingState, heartbeat *Heartbeat) *StreamingResult {
+	streamStart := time.Now()
+	logger := utils.GetLogger()
+	var collectedContent strings.Builder
+
+	// Default mid-stream idle timeout
+	if stallTimeout <= 0 {
+		stallTimeout = 120 * time.Second
+	}
+
 	defer heartbeat.Stop()
 
 	// Process streaming chunks with 1MB buffer for large tool call arguments
@@ -770,6 +793,15 @@ func emitEmptyToolArgsForBlock(c *gin.Context, state *StreamingState) {
 	}
 	// No tracked tool call yet for this block — emit {} as default.
 	emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, "{}")
+}
+
+// AbortSSEStream terminates a stream previously opened via PrepareSSEStream
+// with an error, keeping the SSE protocol well-formed. Callers whose upstream
+// setup (stream creation, pre-stream stall check) fails AFTER PrepareSSEStream
+// already committed SSE headers must use this instead of writing a fresh JSON
+// error body — the response is already text/event-stream at that point.
+func AbortSSEStream(c *gin.Context, state *StreamingState, heartbeat *Heartbeat, errorType, message string) {
+	finishAbortedStream(c, state, heartbeat, errorType, message)
 }
 
 // finishAbortedStream terminates a stream that already started (message_start

@@ -461,6 +461,9 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
+		if session != nil {
+			targetClient.SessionID = session.ID
+		}
 	} else {
 		logger.Debug("  Using default config")
 		targetConfig = h.config
@@ -548,6 +551,23 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		targetClient.BetaHeaders = betaHeaders
 		var reader io.ReadCloser
 
+		stallTimeout := time.Duration(targetConfig.StreamStallTimeout) * time.Second
+		if stallTimeout <= 0 {
+			stallTimeout = 60 * time.Second
+		}
+		maxStallRetries := 3
+
+		// Commit the SSE response (headers + message_start + heartbeat) BEFORE
+		// any upstream I/O. Slow upstreams (e.g. reasoning models that take
+		// 2+ minutes before their first token) can take longer than the
+		// client's own socket patience — if we stay silent while creating/
+		// retrying the upstream stream, the client disconnects first, well
+		// before any of our own generous internal timeouts would ever fire.
+		// The heartbeat (every 5s) keeps the client's connection alive while
+		// we do that work.
+		state, heartbeat := converter.PrepareSSEStream(c, c.Request.Context(), &req, toolNameMapping)
+		defer heartbeat.Stop()
+
 		// Track retry attempts for better logging
 		var lastCategory retry.ErrorCategory
 		var retryLog strings.Builder
@@ -571,7 +591,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		if !createResult.Succeeded {
 			logger.Error("← [executeMessageRequestWithConfig] Stream creation failed after %d attempts (category=%s, delay=%v): %s",
 				createResult.Attempts, createResult.Category, createResult.TotalDelay, retryLog.String())
-			h.responseHandler.SendErrorResponse(c, createResult.LastErr)
+			converter.AbortSSEStream(c, state, heartbeat, "api_error", fmt.Sprintf("Stream creation failed: %s", createResult.LastErr))
 			h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error",
 				fmt.Sprintf("stream_creation_failed: attempts=%d category=%s", createResult.Attempts, createResult.Category),
 				&req, nil, sessionIDPtr)
@@ -581,12 +601,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		logger.Info("  Stream created after %d attempts (total delay: %v)", createResult.Attempts, createResult.TotalDelay)
 		// Pre-stream verification with server-side auto-retry.
 		// If upstream doesn't send any data within stallTimeout, close the stream
-		// and retry transparently (no data has been sent to the client yet).
-		stallTimeout := time.Duration(targetConfig.StreamStallTimeout) * time.Second
-		if stallTimeout <= 0 {
-			stallTimeout = 60 * time.Second
-		}
-		maxStallRetries := 3
+		// and retry transparently (the client has only seen heartbeats so far).
 
 		var streamResult *converter.StreamingResult
 		for stallRetry := 0; stallRetry <= maxStallRetries; stallRetry++ {
@@ -605,13 +620,8 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 						})
 						if !createResult.Succeeded {
 							logger.Error("  [stall-retry] Stream recreation failed: %v", createResult.LastErr)
-							c.JSON(http.StatusServiceUnavailable, gin.H{
-								"type": "error",
-								"error": map[string]interface{}{
-									"type":    "overloaded_error",
-									"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", stallRetry+1),
-								},
-							})
+							converter.AbortSSEStream(c, state, heartbeat, "overloaded_error",
+								fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", stallRetry+1))
 							h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil, sessionIDPtr)
 							return fmt.Errorf("upstream stalled and recreation failed after %d retries", stallRetry+1)
 						}
@@ -619,13 +629,8 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 					}
 					// Final attempt exhausted
 					logger.Error("  [stall-retry] All %d retries exhausted, returning overloaded_error", maxStallRetries)
-					c.JSON(http.StatusServiceUnavailable, gin.H{
-						"type": "error",
-						"error": map[string]interface{}{
-							"type":    "overloaded_error",
-							"message": fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", maxStallRetries),
-						},
-					})
+					converter.AbortSSEStream(c, state, heartbeat, "overloaded_error",
+						fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", maxStallRetries))
 					h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil, sessionIDPtr)
 					return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
 				}
@@ -633,14 +638,14 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 					return fmt.Errorf("client disconnected during stall check: %w", stallResult.Err)
 				}
 				logger.Error("  [stall-retry] Read error during pre-stream check: %v", stallResult.Err)
-				h.responseHandler.SendErrorResponse(c, stallResult.Err)
+				converter.AbortSSEStream(c, state, heartbeat, "api_error", fmt.Sprintf("Streaming error: %s", stallResult.Err))
 				return stallResult.Err
 			}
 
 			// Upstream is responsive. stallResult.Reader replays first chunk + remaining data.
 			defer reader.Close()
 			logger.Info("  Stream verified, processing response (stall retries: %d)...", stallRetry)
-			streamResult = converter.ConvertOpenAIStreamingToClaudeWithMapping(c, stallResult.Reader, &req, c.Request.Context(), toolNameMapping, stallTimeout)
+			streamResult = converter.ConsumeSSEStream(c, stallResult.Reader, c.Request.Context(), stallTimeout, state, heartbeat)
 			break
 		}
 
@@ -865,6 +870,9 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
+		if session != nil {
+			targetClient.SessionID = session.ID
+		}
 	} else {
 		logger.Debug("  Using default config")
 		targetConfig = h.config
