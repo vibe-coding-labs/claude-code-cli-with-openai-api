@@ -60,13 +60,13 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 					if text, ok := m["text"].(string); ok {
 						parts = append(parts, text)
 					}
-						// litellm pattern: track cache_control markers on system messages
-						if cc, ok := m["cache_control"]; ok {
-							if req.Metadata == nil {
-								req.Metadata = make(map[string]interface{})
-							}
-							req.Metadata["system_cache_control"] = cc
+					// litellm pattern: track cache_control markers on system messages
+					if cc, ok := m["cache_control"]; ok {
+						if req.Metadata == nil {
+							req.Metadata = make(map[string]interface{})
 						}
+						req.Metadata["system_cache_control"] = cc
+					}
 				}
 			}
 			req.System = strings.Join(parts, "\n")
@@ -124,6 +124,10 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 						sourceType, _ := source["type"].(string)
 						mediaType, _ := source["media_type"].(string)
 						data, _ := source["data"].(string)
+						// Claude Code sends URL images as source.url, not source.data.
+						if data == "" {
+							data, _ = source["url"].(string)
+						}
 						cb.Source = &ImageSource{
 							Type:      sourceType,
 							MediaType: mediaType,
@@ -136,28 +140,11 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 					if input, ok := blockMap["input"].(map[string]interface{}); ok {
 						cb.Input = input
 					}
-				case "tool_result", "web_search_tool_result", "bash_code_execution_tool_result", "text_editor_tool_result":
+				case "tool_result", "web_search_tool_result", "bash_code_execution_tool_result", "text_editor_tool_result", "text_editor_code_execution_tool_result", "web_fetch_tool_result":
 					cb.ToolUseID, _ = blockMap["tool_use_id"].(string)
 					if c, ok := blockMap["content"]; ok {
-						switch c := c.(type) {
-						case string:
-							cb.Content = c
-						case []interface{}:
-							// Extract text from content block array
-							var parts []string
-							for _, item := range c {
-								if str, ok := item.(string); ok {
-									parts = append(parts, str)
-								} else if m, ok := item.(map[string]interface{}); ok {
-									if t, ok := m["text"].(string); ok {
-										parts = append(parts, t)
-									}
-								}
-							}
-							cb.Content = strings.Join(parts, "")
-						}
+						cb.Content = toolResultText(c)
 					}
-					// If content is nil/missing, cb.Content stays "" which is correct
 				case "thinking":
 					cb.Type = "thinking"
 					cb.Thinking, _ = blockMap["thinking"].(string)
@@ -165,22 +152,22 @@ func (c *ClaudeConverter) ParseRequest(body []byte) (*InternalRequest, error) {
 				case "redacted_thinking":
 					cb.Type = "redacted_thinking"
 					cb.Data, _ = blockMap["data"].(string)
-					case "compaction":
-						cb.Type = "compaction"
-						if c, ok := blockMap["content"]; ok {
-							cb.Content, _ = c.(string)
-						}
+				case "compaction":
+					cb.Type = "compaction"
+					if c, ok := blockMap["content"]; ok {
+						cb.Content, _ = c.(string)
+					}
 				}
 
-					// Preserve cache_control from any content block (litellm pattern)
-					if cc, ok := blockMap["cache_control"]; ok {
-						cb.CacheControl = cc
-					}
+				// Preserve cache_control from any content block (litellm pattern)
+				if cc, ok := blockMap["cache_control"]; ok {
+					cb.CacheControl = cc
+				}
 
-					// Preserve citations from text content blocks (litellm pattern)
-					if cits, ok := blockMap["citations"]; ok {
-						cb.Citations = cits
-					}
+				// Preserve citations from text content blocks (litellm pattern)
+				if cits, ok := blockMap["citations"]; ok {
+					cb.Citations = cits
+				}
 
 				internalMsg.Content = append(internalMsg.Content, cb)
 			}

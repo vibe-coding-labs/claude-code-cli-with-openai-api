@@ -346,45 +346,57 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 
 		toolResults := []ContentBlock{}
 		otherBlocks := []ContentBlock{}
+		hasToolCall := false
 
 		for _, cb := range msg.Content {
-			if cb.Type == "tool_result" {
+			if isToolResultBlock(cb.Type) {
 				toolResults = append(toolResults, cb)
 			} else {
+				if cb.Type == "tool_use" || cb.Type == "server_tool_use" {
+					hasToolCall = true
+				}
 				otherBlocks = append(otherBlocks, cb)
 			}
 		}
 
-		// tool messages must immediately follow assistant(tool_calls)
-		// OpenAI spec: assistant(tool_calls) -> tool -> tool -> user
-		for _, tr := range toolResults {
-			var provider ProviderType
-			if o.cfg != nil {
-				provider = DetectProvider(o.cfg.OpenAIBaseURL)
-			}
-			if !SupportsFunctionCalling(provider) {
-				// Provider doesn't support function calling, fall back to descriptive text
-				fallbackMsg := models.OpenAIMessage{
-					Role:    "user",
-					Content: toolResultToFallbackText(tr),
+		// OpenAI spec: assistant(tool_calls) -> tool -> tool -> user.
+		// A server tool call and its result can share one assistant message.
+		// Emitting the result first makes it an orphan, and the sequence
+		// fixer then replaces it with an empty tool message.
+		emitResults := func() {
+			for _, tr := range toolResults {
+				var provider ProviderType
+				if o.cfg != nil {
+					provider = DetectProvider(o.cfg.OpenAIBaseURL)
 				}
-				openAIReq.Messages = append(openAIReq.Messages, fallbackMsg)
-			} else {
-				toolMsg := models.OpenAIMessage{
+				if !SupportsFunctionCalling(provider) {
+					openAIReq.Messages = append(openAIReq.Messages, models.OpenAIMessage{
+						Role:    "user",
+						Content: toolResultToFallbackText(tr),
+					})
+					continue
+				}
+				openAIReq.Messages = append(openAIReq.Messages, models.OpenAIMessage{
 					Role:       "tool",
 					ToolCallID: tr.ToolUseID,
 					Content:    tr.Content,
-				}
-				openAIReq.Messages = append(openAIReq.Messages, toolMsg)
+				})
 			}
 		}
-
-		// then emit remaining content blocks after tool messages
-		if len(otherBlocks) > 0 {
+		emitOther := func() {
+			if len(otherBlocks) == 0 {
+				return
+			}
 			msgCopy := msg
 			msgCopy.Content = otherBlocks
-			openAIMsg := o.convertInternalMessageToOpenAI(&msgCopy)
-			openAIReq.Messages = append(openAIReq.Messages, openAIMsg)
+			openAIReq.Messages = append(openAIReq.Messages, o.convertInternalMessageToOpenAI(&msgCopy))
+		}
+		if hasToolCall {
+			emitOther()
+			emitResults()
+		} else {
+			emitResults()
+			emitOther()
 		}
 	}
 
@@ -418,6 +430,12 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 	// 构建 tool_choice
 	if req.ToolChoice != nil {
 		openAIReq.ToolChoice = o.convertInternalToolChoiceToOpenAI(req.ToolChoice)
+		if choiceMap, ok := req.ToolChoice.(map[string]interface{}); ok {
+			if disabled, _ := choiceMap["disable_parallel_tool_use"].(bool); disabled {
+				parallel := false
+				openAIReq.ParallelToolCalls = &parallel
+			}
+		}
 	}
 
 	// Downgrade tool_choice when thinking is enabled: many providers (DeepSeek, SenseNova)
@@ -584,7 +602,9 @@ func (o *OpenAIConverter) validateAndFixMessageSequence(messages []models.OpenAI
 		r := m.Role
 		if m.ToolCallID != "" {
 			tid := m.ToolCallID
-			if len(tid) > 8 { tid = tid[:8] }
+			if len(tid) > 8 {
+				tid = tid[:8]
+			}
 			r += "(tid=" + tid + ")"
 		}
 		if len(m.ToolCalls) > 0 {
@@ -616,7 +636,17 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 		var thinkingParts []string
 
 		for _, cb := range msg.Content {
-			switch cb.Type {
+			blockType := cb.Type
+			text := cb.Text
+			if blockType == "compaction" {
+				// Claude Code's compaction summary is prior-turn text.
+				blockType = "text"
+				text = cb.Content
+				if text == "" {
+					text = cb.Text
+				}
+			}
+			switch blockType {
 			case "text":
 				if !hasToolUse && !hasMultiModal {
 					// Pure-text message: merge ALL text blocks. Claude Code
@@ -625,19 +655,24 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 					// subsequent blocks silently loses the user's real
 					// prompt, and the model answers to a greeting instead.
 					if simpleText == "" {
-						simpleText = cb.Text
+						simpleText = text
 					} else {
-						simpleText += "\n\n" + cb.Text
+						simpleText += "\n\n" + text
 					}
 				} else {
 					// 已经有复杂内容，使用parts数组
 					contentParts = append(contentParts, map[string]interface{}{
 						"type": "text",
-						"text": cb.Text,
+						"text": text,
 					})
 				}
 			case "thinking":
-				thinkingParts = append(thinkingParts, cb.Text)
+				if cb.Thinking != "" {
+					text = cb.Thinking
+				}
+				if text != "" {
+					thinkingParts = append(thinkingParts, text)
+				}
 			case "redacted_thinking":
 				// Redacted thinking is private; skip in output
 				continue
@@ -674,7 +709,7 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 						})
 					}
 				}
-			case "tool_use":
+			case "tool_use", "server_tool_use":
 				hasToolUse = true
 				toolID := cb.ID
 				if toolID == "" {
@@ -727,8 +762,98 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 		}
 	}
 
-
 	return openAIMsg
+}
+
+// isToolResultBlock reports Claude Code tool-result blocks that correspond
+// to an OpenAI tool message. Newer CLIs renamed the plain tool_result type.
+func isToolResultBlock(blockType string) bool {
+	switch blockType {
+	case "tool_result",
+		"web_search_tool_result",
+		"web_fetch_tool_result",
+		"bash_code_execution_tool_result",
+		"text_editor_tool_result",
+		"text_editor_code_execution_tool_result":
+		return true
+	default:
+		return false
+	}
+}
+
+// toolResultText flattens a Claude tool-result payload into text the
+// upstream model can read. Current Claude Code sends a string, a list of
+// web_search_result objects (title/url, no text field), or a bash/editor
+// result object (stdout/stderr/return_code or nested content).
+func toolResultText(content interface{}) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case map[string]interface{}:
+		return formatToolResultObject(c)
+	case []interface{}:
+		var parts []string
+		structured := false
+		for _, item := range c {
+			switch v := item.(type) {
+			case string:
+				if v != "" {
+					parts = append(parts, v)
+				}
+			case map[string]interface{}:
+				if text := formatToolResultObject(v); text != "" {
+					parts = append(parts, text)
+				}
+				if typ, _ := v["type"].(string); typ != "" && typ != "text" {
+					structured = true
+				}
+			}
+		}
+		// Plain text fragments stay concatenated. Structured results
+		// (web_search_result and the like) must stay separable, or the
+		// next title glues onto the previous URL.
+		sep := ""
+		if structured {
+			sep = "\n"
+		}
+		return strings.Join(parts, sep)
+	default:
+		return ""
+	}
+}
+
+func formatToolResultObject(m map[string]interface{}) string {
+	if text, ok := m["text"].(string); ok && text != "" {
+		return text
+	}
+	var parts []string
+	if stdout, ok := m["stdout"].(string); ok && stdout != "" {
+		parts = append(parts, stdout)
+	}
+	if stderr, ok := m["stderr"].(string); ok && stderr != "" {
+		parts = append(parts, stderr)
+	}
+	if _, ok := m["return_code"]; ok {
+		parts = append(parts, fmt.Sprintf("return_code=%v", m["return_code"]))
+	}
+	if title, ok := m["title"].(string); ok && title != "" {
+		parts = append(parts, title)
+	}
+	if url, ok := m["url"].(string); ok && url != "" {
+		parts = append(parts, url)
+	}
+	if nested, ok := m["content"]; ok {
+		if text := toolResultText(nested); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	// web_fetch wraps the page as document.source.data when source.type is text.
+	if source, ok := m["source"].(map[string]interface{}); ok {
+		if data, ok := source["data"].(string); ok && data != "" {
+			parts = append(parts, data)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // convertInternalToolChoiceToOpenAI 转换 tool_choice 格式
@@ -822,7 +947,7 @@ func (o *OpenAIConverter) ParseResponse(body []byte) (*InternalResponse, error) 
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			}
-				input = NormalizeToolParameters(tc.Function.Name, input)
+			input = NormalizeToolParameters(tc.Function.Name, input)
 
 			// 保留原始的 tool call ID，不进行转换
 			resp.Content = append(resp.Content, ContentBlock{
@@ -1135,4 +1260,3 @@ func toolResultToFallbackText(tr ContentBlock) string {
 	}
 	return fmt.Sprintf("[Tool Result for %s]: %s", name, content)
 }
-
