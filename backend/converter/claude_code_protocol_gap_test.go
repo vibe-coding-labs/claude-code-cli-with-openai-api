@@ -98,6 +98,7 @@ func TestClaudeCode_LocalSessionShapes(t *testing.T) {
 		if !strings.Contains(content, "I will edit it") {
 			t.Errorf("assistant content = %q", content)
 		}
+		t.Logf("thinking+text+tool reasoning_content=%q content=%q tool_result=%q", rc, content, msgs[i+1]["content"])
 	}
 	if !paired {
 		t.Fatalf("Edit tool_use was not followed by its tool result: %#v", msgs)
@@ -121,6 +122,7 @@ func TestClaudeCode_LocalSessionShapes(t *testing.T) {
 	if thinkingOnly == "" {
 		t.Errorf("thinking-only assistant lost its thinking text; roles=%v", roles)
 	}
+	t.Logf("array tool_result content=%q thinking_only=%q", arrayResult, thinkingOnly)
 }
 
 func TestClaudeCode_ThinkingTextReachesReasoningContent(t *testing.T) {
