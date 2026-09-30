@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 // OpenAI API Models
 
 type OpenAIRequest struct {
@@ -26,7 +28,7 @@ type StreamOptions struct {
 type OpenAIMessage struct {
 	Role             string           `json:"role"`
 	Content          interface{}      `json:"content,omitempty"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"` // DeepSeek/gpt-5.x thinking content
+	ReasoningContent string           `json:"reasoning_content,omitempty"` // DeepSeek/gpt-5.x thinking content
 	ReasoningDetails interface{}      `json:"reasoning_details,omitempty"` // GPT-5.x/o1-pro reasoning array
 	ToolCalls        []OpenAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string           `json:"tool_call_id,omitempty"`
@@ -54,10 +56,25 @@ type OpenAIFunction struct {
 }
 
 type OpenAIToolCall struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type"`
-	Function OpenAIFunctionCall `json:"function"`
-	Index    int                `json:"index,omitempty"`
+	ID           string                      `json:"id"`
+	Type         string                      `json:"type"`
+	Function     OpenAIFunctionCall          `json:"function"`
+	Index        int                         `json:"index,omitempty"`
+	ExtraContent *OpenAIToolCallExtraContent `json:"extra_content,omitempty"`
+}
+
+// OpenAIToolCallExtraContent carries provider-specific extensions riding
+// alongside the standard OpenAI tool_calls wire format. Gemini's
+// OpenAI-compatibility endpoint uses this to transport its thought
+// signature (see https://ai.google.dev/gemini-api/docs/thought-signatures);
+// generic OpenAI clients ignore it, which is why it must be captured and
+// re-attached explicitly rather than relying on pass-through.
+type OpenAIToolCallExtraContent struct {
+	Google *OpenAIGoogleExtraContent `json:"google,omitempty"`
+}
+
+type OpenAIGoogleExtraContent struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 type OpenAIFunctionCall struct {
@@ -76,9 +93,36 @@ type OpenAIResponse struct {
 }
 
 type OpenAIAPIError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Code    string `json:"code,omitempty"`
+	Message string         `json:"message"`
+	Type    string         `json:"type"`
+	Code    FlexibleString `json:"code,omitempty"`
+}
+
+// FlexibleString unmarshals a JSON string OR number into a Go string.
+// Some upstream relays send a numeric error.code (e.g. the raw HTTP status
+// 403) even though the OpenAI error schema specifies a string, which used to
+// make json.Unmarshal fail on the entire chunk with "cannot unmarshal number
+// into Go struct field ...code of type string" — silently discarding the
+// upstream's actual diagnostic message (e.g. an insufficient-balance error)
+// instead of surfacing it to the client.
+type FlexibleString string
+
+func (f *FlexibleString) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*f = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexibleString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err == nil {
+		*f = FlexibleString(n.String())
+		return nil
+	}
+	return json.Unmarshal(data, (*string)(f))
 }
 
 type OpenAIChoice struct {

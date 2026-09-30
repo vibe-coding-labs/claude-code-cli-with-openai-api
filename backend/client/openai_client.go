@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -95,6 +94,32 @@ func IsModelRoutingError(errorDetail string) bool {
 		strings.Contains(errorStr, "no available channel") ||
 		(strings.Contains(errorStr, "model") &&
 			(strings.Contains(errorStr, "not found") || strings.Contains(errorStr, "does not exist")))
+}
+
+// IsTransientNetworkError checks if a mid-stream error is a transport-level
+// hiccup (upstream connection dropped/reset while streaming) rather than a
+// genuine application error. These are just as recoverable as a stall
+// timeout or a model-routing error and must also be returned as
+// overloaded_error so Claude Code auto-retries instead of surfacing a hard
+// failure to the user (observed live: "responses streaming scanner:
+// unexpected EOF" from opencode.ai mid-stream was previously classified as
+// api_error, which Claude Code does not auto-retry on — the session just
+// stopped instead of transparently retrying).
+func IsTransientNetworkError(errorDetail string) bool {
+	errorStr := strings.ToLower(errorDetail)
+	signals := []string{
+		"eof", // bare io.EOF / io.ErrUnexpectedEOF, e.g. "unexpected EOF"
+		"connection reset", "connection refused", "broken pipe",
+		"i/o timeout", "no such host", "network is unreachable",
+		"context deadline exceeded", "tls handshake timeout",
+		"use of closed network connection",
+	}
+	for _, sig := range signals {
+		if strings.Contains(errorStr, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsRetryableError delegates to the retry package for consistent error classification.
@@ -227,6 +252,48 @@ done:
 	return strings.TrimSpace(remainder[:end])
 }
 
+// normalizeToolChoiceForRetry handles upstreams (e.g. apibest.ai) whose chat/completions
+// endpoint rejects the standard nested tool_choice shape ({"type":"function","function":{"name":...}})
+// with "Missing required parameter: 'tool_choice.name'", but actually expects the flat
+// Responses-API shape ({"type":"function","name":...}). Detected reactively from the error
+// body so it self-heals for any provider with this quirk without per-config flags.
+func normalizeToolChoiceForRetry(openAIReq *models.OpenAIRequest, errorBody string) (*models.OpenAIRequest, bool) {
+	if openAIReq == nil || openAIReq.ToolChoice == nil {
+		return openAIReq, false
+	}
+	if !strings.Contains(errorBody, "tool_choice.name") {
+		return openAIReq, false
+	}
+
+	choiceMap, ok := openAIReq.ToolChoice.(map[string]interface{})
+	if !ok {
+		return openAIReq, false
+	}
+	if choiceType, _ := choiceMap["type"].(string); choiceType != "function" {
+		return openAIReq, false
+	}
+
+	var name string
+	switch fn := choiceMap["function"].(type) {
+	case map[string]string:
+		name = fn["name"]
+	case map[string]interface{}:
+		name, _ = fn["name"].(string)
+	default:
+		return openAIReq, false
+	}
+	if name == "" {
+		return openAIReq, false
+	}
+
+	rewritten := *openAIReq
+	rewritten.ToolChoice = map[string]interface{}{
+		"type": "function",
+		"name": name,
+	}
+	return &rewritten, true
+}
+
 func canonicalToolCallID(id string) string {
 	normalized := strings.TrimSpace(id)
 	if normalized == "" {
@@ -312,18 +379,12 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 		retryBackoffMax = 60
 	}
 
-	// Configure proxy: per-config proxy_url takes priority
-	var proxyFunc func(*http.Request) (*url.URL, error)
-	if cfg.ProxyURL != "" {
-		parsed, err := url.Parse(cfg.ProxyURL)
-		if err != nil {
-			proxyFunc = http.ProxyFromEnvironment
-		} else {
-			proxyFunc = http.ProxyURL(parsed)
-		}
-	} else {
-		proxyFunc = http.ProxyFromEnvironment
-	}
+	// Configure proxy: per-config proxy_url takes priority, falling back to
+	// the service-wide system default proxy (and finally the environment).
+	// HTTP/HTTPS proxies route through Go's stdlib (automatic CONNECT for
+	// https targets); socks5/socks5h go through x/net/proxy with the domain
+	// resolved by the proxy server.
+	proxyFunc, dialCtx := BuildTransportProxy(ProxyConfigFromConfig(cfg))
 
 	// tlsHandshakeTimeout caps how long the HTTP transport waits for the TLS
 	// handshake to complete.  Slow or congested upstreams (e.g. overseas relays)
@@ -342,6 +403,7 @@ func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
 
 	transport := &http.Transport{
 		Proxy:               proxyFunc,
+		DialContext:         dialCtx,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		MaxConnsPerHost:     0,
@@ -669,8 +731,24 @@ func (c *OpenAIClient) assembleStreamToResponse(reader io.Reader, openAIReq *mod
 				name, _ := fn["name"].(string)
 				args, _ := fn["arguments"].(string)
 
+				// Gemini's OpenAI-compat endpoint rides its thought_signature
+				// in a non-standard extra_content.google field; preserve it
+				// through this manual raw-JSON parse so ParseResponse can
+				// capture it (see thought_signature_cache.go).
+				var extra *models.OpenAIToolCallExtraContent
+				if ec, ok := tc["extra_content"].(map[string]interface{}); ok {
+					if g, ok := ec["google"].(map[string]interface{}); ok {
+						if sig, ok := g["thought_signature"].(string); ok && sig != "" {
+							extra = &models.OpenAIToolCallExtraContent{Google: &models.OpenAIGoogleExtraContent{ThoughtSignature: sig}}
+						}
+					}
+				}
+
 				if pos, exists := toolCallIdx[idx]; exists {
 					toolCalls[pos].Function.Arguments += args
+					if extra != nil {
+						toolCalls[pos].ExtraContent = extra
+					}
 				} else {
 					tcObj := models.OpenAIToolCall{
 						ID:   id,
@@ -679,6 +757,7 @@ func (c *OpenAIClient) assembleStreamToResponse(reader io.Reader, openAIReq *mod
 							Name:      name,
 							Arguments: args,
 						},
+						ExtraContent: extra,
 					}
 					toolCallIdx[idx] = len(toolCalls)
 					toolCalls = append(toolCalls, tcObj)
@@ -842,6 +921,18 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 					cancel()
 					continue
 				}
+				if rewrittenReq, changed := normalizeToolChoiceForRetry(openAIReq, errorMsg); changed {
+					logger.Warn("  Detected upstream requiring flat tool_choice shape, retrying once with normalized tool_choice")
+					openAIReq = rewrittenReq
+					reqBody, err = json.Marshal(openAIReq)
+					if err != nil {
+						logger.Error("← [OpenAIClient] Failed to marshal normalized request: %v", err)
+						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
+					}
+					lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
+					cancel()
+					continue
+				}
 				// Retry on transient upstream routing errors (e.g., "unknown aliased model")
 				if isRetryableModelRoutingError(errorMsg) && attempt < c.RetryCount {
 					logger.Warn("  Transient upstream routing error (attempt %d/%d): %s", attempt+1, c.RetryCount+1, errorMsg)
@@ -965,9 +1056,18 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 			return nil, fmt.Errorf("failed to decode response after %d attempts: %w", c.RetryCount+1, err)
 		}
 
-		// Check if response has valid choices
-		if len(openAIResp.Choices) == 0 {
-			logger.Warn("← [OpenAIClient] API returned empty choices (attempt %d/%d)", attempt+1, c.RetryCount+1)
+		// Check if response has valid, non-empty choices.
+		// Treat BOTH "no choices at all" (len==0) AND "choices exist but every
+		// choice has empty content and no tool-calls" as retryable. The latter is
+		// the hard-won lesson from goaichat/xinli: upstream returns
+		// {"choices":[{"message":{"content":""}}]} (one choice, empty string) for
+		// certain long requests. Previously only len==0 retried; empty-content
+		// responses were returned as "success", then the handler re-classified
+		// them as overloaded_error and the client blindly re-sent the identical
+		// request → the "every 30s empty response" loop. Retrying here absorbs the
+		// backoff server-side instead of bouncing it to the client.
+		if len(openAIResp.Choices) == 0 || isOpenAIReponseEmptyContent(&openAIResp) {
+			logger.Warn("← [OpenAIClient] API returned empty choices/content (attempt %d/%d)", attempt+1, c.RetryCount+1)
 			logger.Debug("  Response body: ID=%s, Model=%s, Usage=%+v", openAIResp.ID, openAIResp.Model, openAIResp.Usage)
 
 			// Log the full response for debugging
@@ -979,21 +1079,21 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 				logger.Warn("  API Error in response: %+v", openAIResp.Error)
 			}
 
-			// Treat empty choices as retryable error
+			// Treat empty choices/content as retryable error
 			if attempt < c.RetryCount {
-				lastErr = fmt.Errorf("API returned empty choices")
+				lastErr = fmt.Errorf("API returned empty choices/content")
 				logger.Info("  Retrying due to empty response...")
 				cancel()
 				continue
 			}
 
 			// Last attempt, return error with more context
-			logger.Error("← [OpenAIClient] API consistently returns empty choices after %d attempts", c.RetryCount+1)
+			logger.Error("← [OpenAIClient] API consistently returns empty choices/content after %d attempts", c.RetryCount+1)
 			c.logProxyError(openAIReq.Model, openAIResp.Model, 0, nil,
-				fmt.Sprintf("empty choices after %d attempts. Response ID: %s", c.RetryCount+1, openAIResp.ID),
+				fmt.Sprintf("empty choices/content after %d attempts. Response ID: %s", c.RetryCount+1, openAIResp.ID),
 				"", database.StageResponse, attempt, time.Since(startTime).Milliseconds(),
 				string(reqBody[:min(500, len(reqBody))]))
-			errorMsg := fmt.Sprintf("API returned empty choices after %d attempts. Response ID: %s, Model: %s",
+			errorMsg := fmt.Sprintf("API returned empty choices/content after %d attempts. Response ID: %s, Model: %s",
 				c.RetryCount+1, openAIResp.ID, openAIResp.Model)
 			if openAIResp.Error != nil {
 				errorMsg += fmt.Sprintf(", API Error: %v", openAIResp.Error)
@@ -1016,6 +1116,57 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 		return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
 	}
 	return nil, fmt.Errorf("all retry attempts failed")
+}
+
+// isOpenAIReponseEmptyContent reports whether a non-streaming OpenAI response
+// consists of choices that carry no meaningful content (empty/whitespace text
+// and no tool calls). It deliberately returns false for len(Choices)==0 so the
+// caller's existing empty-choices branch handles that case; it also returns
+// false when ANY choice has real content or tool calls (multi-choice responses
+// are only "empty" if every choice is empty). Tool-only responses (tool_calls
+// present, no text) are valid and NOT considered empty — mirrors
+// DegenerateOutputDetector.IsEmptyContent.
+func isOpenAIReponseEmptyContent(resp *models.OpenAIResponse) bool {
+	if resp == nil || len(resp.Choices) == 0 {
+		return false // empty choices handled by the caller's len==0 branch
+	}
+	for _, ch := range resp.Choices {
+		if !isEmptyOpenAIMessageContent(ch.Message) {
+			return false
+		}
+	}
+	return true
+}
+
+// isEmptyOpenAIMessageContent reports whether a single message carries no
+// meaningful content: empty/whitespace text and no tool calls. It handles the
+// interface{} Content field as either a plain string or an array of content
+// blocks (see models.OpenAIMessageContent / converter/claude.go for the same
+// dual-shape handling).
+func isEmptyOpenAIMessageContent(msg models.OpenAIMessage) bool {
+	// Tool calls make the message meaningful regardless of text.
+	if len(msg.ToolCalls) > 0 {
+		return false
+	}
+	switch v := msg.Content.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(v) == ""
+	case []interface{}:
+		for _, block := range v {
+			if m, ok := block.(map[string]interface{}); ok {
+				if text, ok := m["text"].(string); ok && strings.TrimSpace(text) != "" {
+					return false
+				}
+			}
+		}
+		return true
+	default:
+		// Unknown content shape (e.g. a non-string scalar): treat as non-empty
+		// to be safe — don't silently drop valid-looking content.
+		return false
+	}
 }
 
 func min(a, b int) int {
@@ -1185,6 +1336,22 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 
 			// Handle 400 Bad Request with potential retryable routing errors
 			if resp.StatusCode == http.StatusBadRequest {
+				if rewrittenReq, changed := normalizeToolChoiceForRetry(openAIReq, errorMsg); changed {
+					logger.Warn("  Detected upstream requiring flat tool_choice shape in streaming, retrying once with normalized tool_choice")
+					openAIReq = rewrittenReq
+					reqBody, err = json.Marshal(openAIReq)
+					if err != nil {
+						logger.Error("← [OpenAIClient] Failed to marshal normalized request: %v", err)
+						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
+					}
+					reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+					if err != nil {
+						logger.Error("← [OpenAIClient] Failed to prepare normalized request: %v", err)
+						return nil, fmt.Errorf("failed to prepare normalized request: %w", err)
+					}
+					lastErr = fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, errorMsg)
+					continue
+				}
 				// Retry on transient upstream routing errors (e.g., "unknown aliased model")
 				if isRetryableModelRoutingError(errorMsg) && attempt < c.RetryCount {
 					logger.Warn("  Transient upstream routing error in streaming (attempt %d/%d): %s", attempt+1, c.RetryCount+1, errorMsg)
@@ -1213,7 +1380,14 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 					string(reqBody[:min(500, len(reqBody))]))
 
 				if rateLimit429Count > ratelimit429Cfg.MaxAttempts {
-					logger.Warn("← [OpenAIClient] Exceeded %d 429 stream retries, giving up", ratelimit429Cfg.MaxAttempts)
+					// Not terminal: this error is classified as CategoryRateLimit
+					// (retryable, MaxRetries=20) by the outer retry.Engine in
+					// handler.go, which will call CreateChatCompletionStream again
+					// from scratch — resetting this inner 429 counter and the
+					// deadline. "giving up" here previously read as terminal and
+					// cost real debugging time chasing a client-visible disconnect
+					// that the outer engine was, in fact, already retrying past.
+					logger.Warn("← [OpenAIClient] Exhausted inner 429 sub-retry budget (%d attempts); propagating to outer retry engine for a fresh attempt", ratelimit429Cfg.MaxAttempts)
 					return nil, fmt.Errorf("429 rate limit: exhausted %d retries", ratelimit429Cfg.MaxAttempts)
 				}
 

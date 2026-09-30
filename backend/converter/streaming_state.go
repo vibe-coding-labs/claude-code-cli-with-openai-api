@@ -42,6 +42,10 @@ type StreamingState struct {
 	currentBlockType  ContentBlockType
 	currentBlockIndex int
 	currentBlockStart map[string]interface{}
+	// OpenAI tool_call index that owns the currently open block, valid only
+	// when currentBlockType == BlockToolUse. Lets flushToolCallArgs target
+	// the right entry in toolCalls without re-deriving it from the delta.
+	currentToolCallIndex int
 
 	// Usage tracking
 	usage           models.ClaudeUsage
@@ -63,6 +67,13 @@ type toolCallInfo struct {
 	id         string
 	name       string
 	argsBuffer string
+	// emittedLen is how many bytes of argsBuffer have already been sent to
+	// the client as content_block_delta events. Needed because argsBuffer
+	// accumulates unconditionally (see accumulateToolCallDelta) — including
+	// fragments that arrived before this tool call's block was even open —
+	// while emission can only happen once the block is open, so the two can
+	// legitimately be out of sync and must be flushed by the difference.
+	emittedLen int
 }
 
 // generateMessageID creates a message ID in the format "msg_<uuid-prefix>".
@@ -95,21 +106,56 @@ func (s *StreamingState) restoreToolName(name string) string {
 	return name
 }
 
+// accumulateToolCallDelta unconditionally folds a single OpenAI tool-call
+// delta fragment into internal state, keyed by its OpenAI tool_call index —
+// regardless of whether the visible content block has transitioned to
+// tool_use yet. detectBlockType/shouldStartNewBlock deliberately withhold
+// that transition until a non-empty name arrives (to avoid emitting a
+// nameless tool_use block), but some providers stream argument fragments in
+// chunks that arrive BEFORE the id/name-revealing chunk (observed for real
+// tool calls, e.g. "TaskUpdate" and "Read"). If argument accumulation waited
+// for the same signal as the visible transition, those fragments would be
+// silently and permanently dropped, and the client would receive a tool_use
+// block whose "input" is truncated or empty instead of an error — which is
+// exactly why this bug went unnoticed as anything other than "the tool call
+// after conversion is wrong".
+func (s *StreamingState) accumulateToolCallDelta(tc models.OpenAIToolCall) {
+	info := s.toolCalls[tc.Index]
+	if info == nil {
+		info = &toolCallInfo{}
+		s.toolCalls[tc.Index] = info
+	}
+	if tc.ID != "" {
+		info.id = NormalizeToolCallID(tc.ID)
+	}
+	// Capture Gemini's thought_signature (extra_content.google), keyed by
+	// the ID Claude Code will echo back later.
+	rememberThoughtSignature(info.id, tc.ExtraContent)
+	if name := s.restoreToolName(tc.Function.Name); name != "" {
+		info.name = name
+	}
+	if tc.Function.Arguments != "" {
+		info.argsBuffer += tc.Function.Arguments
+	}
+}
+
 // shouldStartNewBlock detects if the current OpenAI streaming chunk indicates
 // a content block type change. Ported from litellm's _should_start_new_content_block.
-func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool, ContentBlockType, map[string]interface{}) {
+// The fourth return value is the OpenAI tool_call index that resolved the
+// transition; only meaningful when the returned type is BlockToolUse.
+func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool, ContentBlockType, map[string]interface{}, int) {
 	// No block transitions if we haven't started any block yet (lazy start)
 	if !s.sentContentBlockStart {
-		return false, s.currentBlockType, nil
+		return false, s.currentBlockType, nil, 0
 	}
 
 	if choice == nil {
-		return false, s.currentBlockType, nil
+		return false, s.currentBlockType, nil, 0
 	}
 
 	delta := choice.Delta
 	if delta == nil {
-		return false, s.currentBlockType, nil
+		return false, s.currentBlockType, nil, 0
 	}
 
 	// IMPORTANT: Check for tool_calls BEFORE checking finish_reason
@@ -131,14 +177,14 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 			}
 			// If current block is text, we need to transition to tool_use
 			if s.currentBlockType == BlockText {
-				return true, BlockToolUse, blockStart
+				return true, BlockToolUse, blockStart, tc.Index
 			}
 		}
 	}
 
 	// After processing tool_calls, check finish_reason
 	if choice.FinishReason != "" {
-		return false, s.currentBlockType, nil
+		return false, s.currentBlockType, nil, 0
 	}
 
 	// Detect block type from raw chunk
@@ -146,7 +192,11 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 
 	// Check if type changed
 	if blockType != s.currentBlockType {
-		return true, blockType, blockStart
+		idx := 0
+		if blockType == BlockToolUse && len(delta.ToolCalls) > 0 {
+			idx = delta.ToolCalls[0].Index
+		}
+		return true, blockType, blockStart, idx
 	}
 
 	// For parallel tool calls: a new tool_use with a name means a new block (litellm pattern)
@@ -164,12 +214,12 @@ func (s *StreamingState) shouldStartNewBlock(choice *models.OpenAIChoice) (bool,
 					"name":  toolName,
 					"input": map[string]interface{}{}, // Empty object, not empty string (Claude CLI requirement)
 				}
-				return true, blockType, blockStart
+				return true, blockType, blockStart, tc.Index
 			}
 		}
 	}
 
-	return false, s.currentBlockType, nil
+	return false, s.currentBlockType, nil, 0
 }
 
 // detectBlockType determines what type of content block an OpenAI delta implies.

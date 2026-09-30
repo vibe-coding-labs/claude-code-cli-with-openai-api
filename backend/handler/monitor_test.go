@@ -37,24 +37,35 @@ func TestMonitorRealTimeMetrics(t *testing.T) {
 		t.Fatalf("Failed to create load balancer: %v", err)
 	}
 
-	// Create test configs
+	// Create test configs. OpenAIAPIKeyEncrypted must be real ciphertext:
+	// GetAPIConfig decrypts it on every read, and an invalid value makes
+	// the whole config lookup fail (and thus silently drop the node from
+	// GetRealTimeMetrics's results).
+	encryptedKey1, err := database.EncryptAPIKey("test-key-1")
+	if err != nil {
+		t.Fatalf("Failed to encrypt test key 1: %v", err)
+	}
+	encryptedKey2, err := database.EncryptAPIKey("test-key-2")
+	if err != nil {
+		t.Fatalf("Failed to encrypt test key 2: %v", err)
+	}
 	config1 := &database.APIConfig{
 		ID:                    config1ID,
 		Name:                  "Config 1",
 		OpenAIBaseURL:         "http://localhost:8080",
-		OpenAIAPIKeyEncrypted: "encrypted-key-1", // Use pre-encrypted key
+		OpenAIAPIKeyEncrypted: encryptedKey1,
 		Enabled:               true,
 	}
 	config2 := &database.APIConfig{
 		ID:                    config2ID,
 		Name:                  "Config 2",
 		OpenAIBaseURL:         "http://localhost:8081",
-		OpenAIAPIKeyEncrypted: "encrypted-key-2", // Use pre-encrypted key
+		OpenAIAPIKeyEncrypted: encryptedKey2,
 		Enabled:               true,
 	}
 
 	// Insert directly to bypass encryption
-	_, err := database.DB.Exec(`
+	_, err = database.DB.Exec(`
 		INSERT INTO api_configs (id, name, openai_base_url, openai_api_key_encrypted, big_model, middle_model, small_model, enabled, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`, config1.ID, config1.Name, config1.OpenAIBaseURL, config1.OpenAIAPIKeyEncrypted, "claude-3-opus", "claude-3-sonnet", "claude-3-haiku", config1.Enabled)

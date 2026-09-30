@@ -6,6 +6,11 @@ export interface SystemSettingsData {
   max_db_size_gb?: string;
   log_body_storage?: string;
   proxy_error_retention_days?: string;
+  /** 服务级全局默认代理（config 级 proxy_url 为空时的回落层） */
+  proxy_url?: string;
+  proxy_type?: string;
+  proxy_username?: string;
+  proxy_password?: string;
 }
 
 /** Log storage stats returned by GET /api/log-stats */

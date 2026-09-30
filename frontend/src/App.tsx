@@ -5,6 +5,7 @@ import {
   SettingOutlined,
   LogoutOutlined,
   ClusterOutlined,
+  AlertOutlined,
 } from '@ant-design/icons';
 import ConfigList from './components/ConfigListV2';
 import ConfigDetailV2 from './components/ConfigDetailV2';
@@ -21,6 +22,7 @@ import TenantList from './components/TenantList';
 import TenantCreate from './components/TenantCreate';
 import TenantDetail from './components/TenantDetail';
 import AuditLogViewer from './components/AuditLogViewer';
+import InterruptionsPanel from './components/InterruptionsPanel';
 import SystemSettings from './components/SystemSettings';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
@@ -70,6 +72,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             key: '/ui/audit-logs',
             icon: <SettingOutlined />,
             label: <Link to="/ui/audit-logs">审计日志</Link>,
+          },
+          {
+            key: '/ui/monitoring',
+            icon: <AlertOutlined />,
+            label: <Link to="/ui/monitoring">会话中断监控</Link>,
           },
           {
             key: '/ui/settings',
@@ -159,6 +166,7 @@ const App: React.FC = () => {
               <Route path="tenants/create" element={<ProtectedRoute><TenantCreate /></ProtectedRoute>} />
               <Route path="tenants/:id" element={<ProtectedRoute><TenantDetail /></ProtectedRoute>} />
               <Route path="audit-logs" element={<ProtectedRoute><AuditLogViewer /></ProtectedRoute>} />
+              <Route path="monitoring" element={<ProtectedRoute><InterruptionsPanel /></ProtectedRoute>} />
               <Route path="settings" element={<ProtectedRoute><SystemSettings /></ProtectedRoute>} />
             </Routes>
           </AppLayout>

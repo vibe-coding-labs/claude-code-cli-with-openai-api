@@ -152,8 +152,6 @@ func (cb *DefaultCircuitBreaker) executeInHalfOpen(ctx context.Context, fn func(
 
 // shouldOpen determines if the circuit should open based on error rate
 func (cb *DefaultCircuitBreaker) shouldOpen() bool {
-	const minRequestsToEvaluateErrorRate = 5
-
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 
@@ -162,10 +160,6 @@ func (cb *DefaultCircuitBreaker) shouldOpen() bool {
 	}
 
 	totalRequests := len(cb.requests)
-	if totalRequests < minRequestsToEvaluateErrorRate {
-		return false
-	}
-
 	failedRequests := 0
 	for _, req := range cb.requests {
 		if !req.success {

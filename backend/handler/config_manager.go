@@ -73,12 +73,28 @@ func (h *Handler) GetConfig(c *gin.Context) {
 
 // CreateConfig creates a new API configuration
 func (h *Handler) CreateConfig(c *gin.Context) {
+	// 先读原始 body：ProxyPassword 的 struct tag 是 json:"-"，不会随
+	// ShouldBindJSON 进入 config，需从 raw map 单独提取写时字段。
+	raw, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid request body: %v", err),
+		})
+		return
+	}
+
 	var config database.APIConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
+	if err := json.Unmarshal(raw, &config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Invalid request: %v", err),
 		})
 		return
+	}
+	var bodyRaw map[string]interface{}
+	if err := json.Unmarshal(raw, &bodyRaw); err == nil {
+		if pw, ok := bodyRaw["proxy_password"].(string); ok {
+			config.ProxyPassword = pw
+		}
 	}
 
 	userID, _ := getUserContext(c)
@@ -155,12 +171,29 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 		return
 	}
 
+	// 先读原始 body：ProxyPassword 的 struct tag 是 json:"-"（永不明文回显），
+	// 不会随 ShouldBindJSON 进入 config，需从 raw map 单独提取写时字段；
+	// 单次读取避免第二次 ShouldBindJSON 拿到空 body。
+	raw, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid request body: %v", err),
+		})
+		return
+	}
+
 	var config database.APIConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
+	if err := json.Unmarshal(raw, &config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Invalid request: %v", err),
 		})
 		return
+	}
+	var bodyRaw map[string]interface{}
+	if err := json.Unmarshal(raw, &bodyRaw); err == nil {
+		if pw, ok := bodyRaw["proxy_password"].(string); ok {
+			config.ProxyPassword = pw
+		}
 	}
 
 	userID, role := getUserContext(c)
@@ -315,6 +348,9 @@ func (h *Handler) TestConfig(c *gin.Context) {
 		RetryBackoffMax:  dbConfig.RetryBackoffMax,
 		AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 		ProxyURL:         dbConfig.ProxyURL,
+		ProxyType:        dbConfig.ProxyType,
+		ProxyUsername:    dbConfig.ProxyUsername,
+		ProxyPassword:    dbConfig.ProxyPassword,
 	}
 
 	// Create client

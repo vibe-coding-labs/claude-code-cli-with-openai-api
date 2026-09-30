@@ -805,6 +805,124 @@ func TestStreamingE2E_ThreeToolCallsStreaming(t *testing.T) {
 	}
 }
 
+// TestStreamingE2E_ToolCallArgsBeforeName reproduces a real upstream pattern
+// (observed for tools like "TaskUpdate" and "Read") where argument fragments
+// arrive in delta chunks BEFORE the chunk that reveals the tool_call's
+// id/name. detectBlockType deliberately withholds the tool_use transition
+// until the name is known, but argument accumulation must not wait for the
+// same signal — otherwise those fragments are silently and permanently
+// dropped, and the client ends up with a truncated/empty tool call input.
+func TestStreamingE2E_ToolCallArgsBeforeName(t *testing.T) {
+	id := "chatcmpl-200"
+	model := "gpt-4"
+
+	sse := openAIToolCallChunk(id, model, 0, "", "", `{"path":"/`) +
+		openAIToolCallChunk(id, model, 0, "", "", `tmp/`) +
+		openAIToolCallChunk(id, model, 0, "call_85a65a02", "Read", ``) +
+		openAIToolCallChunk(id, model, 0, "", "", `out.txt"}`) +
+		openAIChunk(id, model, map[string]interface{}{}, "tool_calls")
+
+	events, result := runStreamingTestWithDone(t, sse, "claude-sonnet-4-6")
+
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc["name"] != "Read" {
+		t.Errorf("tool name = %v, want Read", tc["name"])
+	}
+	input, ok := tc["input"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("input type = %T, want map (means the pre-name argument fragments were lost)", tc["input"])
+	}
+	if input["path"] != "/tmp/out.txt" {
+		t.Errorf("path = %v, want /tmp/out.txt (pre-name fragments must survive)", input["path"])
+	}
+
+	// The client must actually receive the pre-name fragments as
+	// input_json_delta events too, not just see them in the final result.
+	cbdEvents := findEventsByType(events, "content_block_delta")
+	var jsonParts strings.Builder
+	for _, e := range cbdEvents {
+		if delta, ok := e.Data["delta"].(map[string]interface{}); ok {
+			if delta["type"] == "input_json_delta" {
+				if pj, ok := delta["partial_json"].(string); ok {
+					jsonParts.WriteString(pj)
+				}
+			}
+		}
+	}
+	var reassembled map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonParts.String()), &reassembled); err != nil {
+		t.Fatalf("reassembled partial_json is not valid JSON: %v (got %q)", err, jsonParts.String())
+	}
+	if reassembled["path"] != "/tmp/out.txt" {
+		t.Errorf("reassembled path = %v, want /tmp/out.txt", reassembled["path"])
+	}
+}
+
+// TestStreamingE2E_ToolCallArgsBeforeName_FirstChunk is the lazy-start variant
+// of the above: the very FIRST chunk of the entire stream is an args-only
+// tool_call fragment with no name yet, exercising the
+// "!state.sentContentBlockStart" branch instead of the block-transition one.
+func TestStreamingE2E_ToolCallArgsBeforeName_FirstChunk(t *testing.T) {
+	id := "chatcmpl-201"
+	model := "gpt-4"
+
+	sse := openAIToolCallChunk(id, model, 0, "", "", `{"query":"TO`) +
+		openAIToolCallChunk(id, model, 0, "call_999", "TaskUpdate", `DO"}`) +
+		openAIChunk(id, model, map[string]interface{}{}, "tool_calls")
+
+	_, result := runStreamingTestWithDone(t, sse, "claude-sonnet-4-6")
+
+	if result == nil || len(result.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %v, want 1", result)
+	}
+	tc := result.ToolCalls[0]
+	if tc["name"] != "TaskUpdate" {
+		t.Errorf("tool name = %v, want TaskUpdate", tc["name"])
+	}
+	input, ok := tc["input"].(map[string]interface{})
+	if !ok || input["query"] != "TODO" {
+		t.Fatalf("input = %v, want {query: TODO} (first-chunk pre-name fragment must survive lazy-start)", tc["input"])
+	}
+}
+
+// TestStreamingE2E_MultipleToolCalls_ArgsBeforeNameSecondCall guards against
+// misattribution: while the first tool_use block is still open, a stray
+// args-only fragment for a SECOND (not-yet-named, not-yet-opened) tool call
+// must not be flushed into the first block's content_block_delta stream —
+// it must stay buffered until its own block opens.
+func TestStreamingE2E_MultipleToolCalls_ArgsBeforeNameSecondCall(t *testing.T) {
+	id := "chatcmpl-202"
+	model := "gpt-4"
+
+	sse := openAIToolCallChunk(id, model, 0, "call_1", "read_file", `{"path":"/a"}`) +
+		// Second tool call's args start arriving before its name/id.
+		openAIToolCallChunk(id, model, 1, "", "", `{"path":"/`) +
+		openAIToolCallChunk(id, model, 1, "call_2", "write_file", ``) +
+		openAIToolCallChunk(id, model, 1, "", "", `b","content":"x"}`) +
+		openAIChunk(id, model, map[string]interface{}{}, "tool_calls")
+
+	_, result := runStreamingTestWithDone(t, sse, "claude-sonnet-4-6")
+
+	if result == nil || len(result.ToolCalls) != 2 {
+		t.Fatalf("tool_calls = %v, want 2", result)
+	}
+	first := result.ToolCalls[0]
+	if input, ok := first["input"].(map[string]interface{}); !ok || input["path"] != "/a" {
+		t.Errorf("first tool input = %v, want {path: /a} (must not be corrupted by second tool's fragments)", first["input"])
+	}
+	second := result.ToolCalls[1]
+	input, ok := second["input"].(map[string]interface{})
+	if !ok || input["path"] != "/b" || input["content"] != "x" {
+		t.Fatalf("second tool input = %v, want {path: /b, content: x}", second["input"])
+	}
+}
+
 func TestStreamingE2E_TextFollowedByToolCall(t *testing.T) {
 	id := "chatcmpl-107"
 	model := "gpt-4"
@@ -2890,20 +3008,36 @@ func TestStreamingE2E_ToolCallEmptyNameFirst(t *testing.T) {
 				"type":  "function",
 				"function": map[string]interface{}{
 					"name":      "",
-					"arguments": `{"partial":`,
+					"arguments": `{"partial":true`,
 				},
 			},
 		},
 	}
 	sse := openAIChunk(id, model, delta, "") +
-		openAIToolCallChunk(id, model, 0, "call_late", "late_tool", `"data":true}`) +
+		openAIToolCallChunk(id, model, 0, "call_late", "late_tool", `,"data":true}`) +
 		openAIChunk(id, model, map[string]interface{}{}, "tool_calls")
 
 	_, result := runStreamingTestWithDone(t, sse, "claude-sonnet-4-6")
 
-	// Should handle gracefully even if initial data was incomplete
-	if result == nil {
-		t.Fatal("result is nil")
+	// The pre-name fragment ({"partial":) must be preserved and stitched
+	// together with the post-name fragment ("data":true}) rather than
+	// dropped — see accumulateToolCallDelta/flushToolCallArgs.
+	if result == nil || len(result.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %v, want 1", result)
+	}
+	tc := result.ToolCalls[0]
+	if tc["name"] != "late_tool" {
+		t.Errorf("name = %v, want late_tool", tc["name"])
+	}
+	input, ok := tc["input"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("input type = %T, want map (pre-name fragment was lost)", tc["input"])
+	}
+	if input["partial"] != true {
+		t.Errorf("input.partial = %v, want true", input["partial"])
+	}
+	if input["data"] != true {
+		t.Errorf("input.data = %v, want true", input["data"])
 	}
 }
 

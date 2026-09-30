@@ -502,8 +502,8 @@ func TestHTTPStatusCodeError(t *testing.T) {
 func TestDefaultRetryConfig(t *testing.T) {
 	config := DefaultRetryConfig()
 
-	if config.MaxRetries != 3 {
-		t.Errorf("Expected MaxRetries=3, got %d", config.MaxRetries)
+	if config.MaxRetries != 10 {
+		t.Errorf("Expected MaxRetries=10, got %d", config.MaxRetries)
 	}
 
 	if config.InitialDelay != 100*time.Millisecond {

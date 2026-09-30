@@ -244,9 +244,15 @@ func TestE2E_RetryFlow(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	// Create test configs
+	// Create test configs. A third node is required: with ErrorRateThreshold
+	// 0.5 and no minimum sample size, shouldOpen() opens a node's circuit
+	// after its very first failure (1/1 > 0.5), so the 2 failures this test
+	// injects immediately knock out 2 distinct nodes' circuits. A 3rd,
+	// still-closed node is needed for the retry to have somewhere left to
+	// succeed on.
 	config1 := createTestConfigE2E(t, "config1-retry", "http://backend1.test")
 	config2 := createTestConfigE2E(t, "config2-retry", "http://backend2.test")
+	config3 := createTestConfigE2E(t, "config3-retry", "http://backend3.test")
 
 	// Create load balancer
 	lb := &database.LoadBalancer{
@@ -257,6 +263,7 @@ func TestE2E_RetryFlow(t *testing.T) {
 		ConfigNodes: []database.ConfigNode{
 			{ConfigID: config1.ID, Weight: 1, Enabled: true},
 			{ConfigID: config2.ID, Weight: 1, Enabled: true},
+			{ConfigID: config3.ID, Weight: 1, Enabled: true},
 		},
 		MaxRetries:        3,
 		InitialRetryDelay: 100,

@@ -211,6 +211,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create handler
 	h := handler.NewHandler(cfg)
 
+	// Load the service-wide default proxy from system_settings into
+	// h.config.SystemProxy* (config 级 proxy_url 为空时的回落层)。
+	// 必须放在 InitDB + InitEncryption 之后；热更新由 UpdateSystemSettings 负责。
+	h.ApplySystemSettings()
+
 	// Setup routes
 	router.GET("/", h.Root)
 	router.GET("/health", h.HealthCheck)
@@ -300,6 +305,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		configAPI.GET("/proxy-errors", h.GetProxyErrors)
 		configAPI.GET("/proxy-errors/stats", h.GetProxyErrorStats)
 		configAPI.DELETE("/proxy-errors", h.CleanupProxyErrors)
+
+		// Session interruption monitoring (dashboard / auto-discovery)
+		configAPI.GET("/interruptions", h.GetInterruptions)
+		configAPI.GET("/interruptions/stats", h.GetInterruptionStats)
 
 		// System settings
 		configAPI.GET("/settings", h.GetSystemSettings)
@@ -465,21 +474,35 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	color.New(color.FgCyan, color.Bold).Println("\n🚀 Server starting...")
 
+	// Session-interruption monitor: log-only near-real-time (1-min) threshold
+	// scan. Alerting/self-heal is the shell script + systemd timer's job, so this
+	// stays a lightweight background goroutine that surfaces critical crossings
+	// in the journal.
+	interruptionMonitor := handler.NewInterruptionMonitor(handler.DefaultInterruptionThresholds())
+	interruptionMonitor.Start(context.Background())
+
 	// Graceful shutdown: drain in-flight requests on SIGTERM/SIGINT instead of
 	// killing them mid-response. A hard kill (the previous behavior under
 	// `systemctl restart`) drops every active streaming connection, which undici
 	// reports to Claude Code as "The socket connection was closed unexpectedly".
-	// systemd sends SIGTERM (KillSignal=SIGTERM) and respects our drain within
-	// TimeoutStopSec=30s.
+	// 30s used to be too short here: live traffic regularly has streaming
+	// requests still running past 30s (observed up to ~46s for a normal
+	// successful response, and the retry loop's effective deadline is up to
+	// 20m for a request working through transient upstream failures), so a
+	// routine `systemctl restart` during those windows silently killed other
+	// concurrent sessions' in-flight streams. Widened to 120s and paired with
+	// a matching TimeoutStopSec=150 in the systemd unit (see
+	// claude-openai-proxy.service) so systemd doesn't SIGKILL us before our
+	// own drain deadline elapses.
 	shutdownDone := make(chan error, 1)
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigChan
 		if logger := utils.GetLogger(); logger != nil {
-			logger.Info("[server] received %s — draining in-flight connections (up to 30s) before exit", sig)
+			logger.Info("[server] received %s — draining in-flight connections (up to 120s) before exit", sig)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		shutdownDone <- srv.Shutdown(ctx)
 	}()

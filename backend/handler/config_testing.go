@@ -35,6 +35,10 @@ func (h *ConfigHandler) TestConfig(c *gin.Context) {
 		RetryBackoffBase: cfg.RetryBackoffBase,
 		RetryBackoffMax:  cfg.RetryBackoffMax,
 		AnthropicAPIKey:  cfg.AnthropicAPIKey,
+		ProxyURL:         cfg.ProxyURL,
+		ProxyType:        cfg.ProxyType,
+		ProxyUsername:    cfg.ProxyUsername,
+		ProxyPassword:    cfg.ProxyPassword,
 	}
 
 	// Create a test client

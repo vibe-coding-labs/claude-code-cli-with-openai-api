@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Card, Form, InputNumber, Button, message, Statistic, Row, Col, Space,
+  Card, Form, InputNumber, Input, Button, message, Statistic, Row, Col, Space,
   Progress, Tooltip, Select, Divider, Alert
 } from 'antd';
 import {
   SettingOutlined, DatabaseOutlined, DeleteOutlined,
-  CompressOutlined, CloudUploadOutlined, HardDriveOutlined
+  CompressOutlined, CloudUploadOutlined, HddOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
 import type { SystemSettingsData, LogStorageStats } from '../types/settings';
@@ -42,6 +42,10 @@ const SystemSettings: React.FC = () => {
         max_db_size_gb: parseInt(data.max_db_size_gb || '10', 10),
         log_body_storage: data.log_body_storage || 'file',
         proxy_error_retention_days: parseInt(data.proxy_error_retention_days || '30', 10),
+        proxy_url: data.proxy_url || '',
+        proxy_type: data.proxy_type || 'auto',
+        proxy_username: data.proxy_username || '',
+        proxy_password: data.proxy_password || '',
       });
     } catch {
       message.error('Failed to load settings');
@@ -68,6 +72,10 @@ const SystemSettings: React.FC = () => {
         max_db_size_gb: String(values.max_db_size_gb),
         log_body_storage: values.log_body_storage,
         proxy_error_retention_days: String(values.proxy_error_retention_days),
+        proxy_url: values.proxy_url || '',
+        proxy_type: values.proxy_type || 'auto',
+        proxy_username: values.proxy_username || '',
+        proxy_password: values.proxy_password || '',
       });
       message.success('Settings saved successfully');
       loadLogStats();
@@ -127,8 +135,8 @@ const SystemSettings: React.FC = () => {
       <h2 style={{ marginBottom: 24 }}><SettingOutlined /> System Settings</h2>
       <Row gutter={24}>
         <Col span={16}>
-          <Card title="Log Retention & Storage" loading={loading}>
-            <Form form={form} layout="vertical">
+          <Form form={form} layout="vertical">
+            <Card title="Log Retention & Storage" loading={loading}>
               <Form.Item
                 name="log_retention_days"
                 label="Request Log Retention (days)"
@@ -175,6 +183,40 @@ const SystemSettings: React.FC = () => {
                   <Select.Option value="inline">Inline Storage (Legacy)</Select.Option>
                 </Select>
               </Form.Item>
+            </Card>
+
+            <Card title="Global Default Proxy" style={{ marginTop: 24 }} loading={loading}>
+              <Alert
+                message="Service-wide default proxy: requests from configs whose proxy_url is empty will go through this proxy. Supports tunnel proxies (http/https) and Clash-style SOCKS5."
+                type="info"
+                showIcon
+              />
+              <Form.Item
+                name="proxy_url"
+                label="Proxy URL"
+                extra="e.g. http://127.0.0.1:18901 (tunnel) or socks5://127.0.0.1:7891 (Clash). Leave empty for no proxy (falls back to environment variables)."
+              >
+                <Input placeholder="socks5://127.0.0.1:7891" />
+              </Form.Item>
+
+              <Form.Item name="proxy_type" label="Proxy Type">
+                <Select>
+                  <Select.Option value="auto">Auto (infer from URL scheme)</Select.Option>
+                  <Select.Option value="http">HTTP</Select.Option>
+                  <Select.Option value="https">HTTPS</Select.Option>
+                  <Select.Option value="socks5">SOCKS5 (local DNS)</Select.Option>
+                  <Select.Option value="socks5h">SOCKS5H (remote DNS)</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item name="proxy_username" label="Proxy Username (optional)">
+                <Input autoComplete="off" />
+              </Form.Item>
+
+              <Form.Item name="proxy_password" label="Proxy Password (optional)">
+                <Input.Password autoComplete="new-password" placeholder="Stored encrypted" />
+              </Form.Item>
+            </Card>
 
               <Form.Item>
                 <Space>
@@ -184,7 +226,6 @@ const SystemSettings: React.FC = () => {
                 </Space>
               </Form.Item>
             </Form>
-          </Card>
 
           <Card title="Maintenance Actions" style={{ marginTop: 24 }}>
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -238,7 +279,7 @@ const SystemSettings: React.FC = () => {
               <Statistic
                 title="Database Size"
                 value={formatBytes(stats?.total_size_bytes || 0)}
-                prefix={<HardDriveOutlined />}
+                prefix={<HddOutlined />}
               />
               <Statistic
                 title="Body Files Size"

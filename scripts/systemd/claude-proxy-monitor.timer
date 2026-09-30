@@ -1,0 +1,13 @@
+# scripts/systemd/claude-proxy-monitor.timer — 每 2 分钟运行一次会话中断监控决策引擎
+# 由 scripts/install-monitor-timer.sh 写入 ~/.config/systemd/user/
+
+[Unit]
+Description=Run session-interruption monitor every 2 minutes
+
+[Timer]
+OnCalendar=*:0/2
+Persistent=true
+Unit=claude-proxy-monitor.service
+
+[Install]
+WantedBy=timers.target

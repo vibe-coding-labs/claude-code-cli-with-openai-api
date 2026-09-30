@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 )
 
@@ -139,8 +141,11 @@ func (hc *DefaultHealthChecker) CheckNode(ctx context.Context, configID string) 
 	checkCtx, cancel := context.WithTimeout(ctx, hc.timeout)
 	defer cancel()
 
-	// Perform health check by sending a simple request
-	err = hc.performHealthCheck(checkCtx, config)
+	// Perform health check by sending a simple request. The result lives in
+	// checkErr — the err variable below is reused for the DB read and MUST NOT
+	// swallow the check outcome (previously GetHealthStatus overwrote it, so the
+	// check always looked successful once a row existed).
+	checkErr := hc.performHealthCheck(checkCtx, config)
 	responseTime := time.Since(startTime)
 
 	// Get current health status
@@ -157,7 +162,7 @@ func (hc *DefaultHealthChecker) CheckNode(ctx context.Context, configID string) 
 	}
 
 	// Update health status based on check result
-	if err == nil {
+	if checkErr == nil {
 		// Success
 		currentStatus.ConsecutiveSuccesses++
 		currentStatus.ConsecutiveFailures = 0
@@ -175,7 +180,8 @@ func (hc *DefaultHealthChecker) CheckNode(ctx context.Context, configID string) 
 		// Failure
 		currentStatus.ConsecutiveFailures++
 		currentStatus.ConsecutiveSuccesses = 0
-		currentStatus.LastError = err.Error()
+		currentStatus.LastError = checkErr.Error()
+		log.Printf("Health check failed for node %s: %v", configID, checkErr)
 
 		// Transition to unhealthy if failure threshold reached
 		if currentStatus.Status != "unhealthy" && currentStatus.ConsecutiveFailures >= hc.failureThreshold {
@@ -197,22 +203,45 @@ func (hc *DefaultHealthChecker) CheckNode(ctx context.Context, configID string) 
 }
 
 // performHealthCheck performs the actual health check request
-func (hc *DefaultHealthChecker) performHealthCheck(ctx context.Context, config *database.APIConfig) error {
+func (hc *DefaultHealthChecker) performHealthCheck(ctx context.Context, apiConfig *database.APIConfig) error {
 	// Create a simple HTTP request to check if the endpoint is reachable
 	// We'll use the base URL and send a HEAD request
-	req, err := http.NewRequestWithContext(ctx, "HEAD", config.OpenAIBaseURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", apiConfig.OpenAIBaseURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set authorization header
-	req.Header.Set("Authorization", "Bearer "+config.OpenAIAPIKey)
+	req.Header.Set("Authorization", "Bearer "+apiConfig.OpenAIAPIKey)
+
+	// Build the transport through the same proxy chain as real upstream
+	// traffic: per-config proxy first, then the service-wide system default
+	// proxy (config.GlobalConfig), then the environment. This makes the health
+	// check observe the proxy the request would actually traverse — a dead
+	// proxy is reported unhealthy instead of falsely "healthy" on a direct path.
+	pc := client.ProxyConfig{
+		ProxyURL:      apiConfig.ProxyURL,
+		ProxyType:     apiConfig.ProxyType,
+		ProxyUsername: apiConfig.ProxyUsername,
+		ProxyPassword: apiConfig.ProxyPassword,
+	}
+	if pc.ProxyURL == "" && config.GlobalConfig != nil {
+		pc = client.ProxyConfigFromConfig(config.GlobalConfig)
+	}
+	proxyFunc, dialCtx := client.BuildTransportProxy(pc)
 
 	// Send request
-	client := &http.Client{
-		Timeout: hc.timeout,
+	transport := &http.Transport{
+		Proxy:             proxyFunc,
+		DialContext:       dialCtx,
+		IdleConnTimeout:   300 * time.Second,
+		ForceAttemptHTTP2: true,
 	}
-	resp, err := client.Do(req)
+	checkClient := &http.Client{
+		Timeout:   hc.timeout,
+		Transport: transport,
+	}
+	resp, err := checkClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}

@@ -18,6 +18,9 @@ export interface APIConfig {
   retry_backoff_max?: number;
   custom_headers?: Record<string, string>;
   proxy_url?: string;
+  proxy_type?: string;
+  proxy_username?: string;
+  proxy_password?: string;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -42,6 +45,9 @@ export interface APIConfigRequest {
   request_timeout?: number;
   custom_headers?: Record<string, string>;
   proxy_url?: string;
+  proxy_type?: string;
+  proxy_username?: string;
+  proxy_password?: string;
   enabled?: boolean;
 }
 

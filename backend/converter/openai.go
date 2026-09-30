@@ -414,6 +414,17 @@ func (o *OpenAIConverter) BuildRequest(req *InternalRequest) ([]byte, error) {
 			utils.GetLogger().Debug("[BuildRequest] Tool name truncated: %q -> %q", tool.Name, toolName)
 		}
 		parameters := tool.Parameters
+		if parameters == nil {
+			// Some Claude-side tool defs (e.g. Anthropic's built-in
+			// server-executed "web_search" tool) carry no input_schema at
+			// all. Forwarding "parameters": null in the OpenAI-format
+			// tools[] array is rejected outright by strict providers
+			// (observed live: GLM — "The request parameter tools.parameters
+			// is invalid or missing"), which fails the ENTIRE request rather
+			// than just that one tool. An empty-object schema is what
+			// OpenAI's own spec expects for a no-argument function.
+			parameters = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		}
 		if isGeminiProvider && parameters != nil {
 			parameters = CleanSchemaForGemini(parameters)
 		}
@@ -720,6 +731,7 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 					argsBytes, _ := json.Marshal(cb.Input)
 					args = string(argsBytes)
 				}
+				isGeminiProvider := o.cfg != nil && IsGeminiProvider(o.cfg.OpenAIBaseURL)
 				toolCalls = append(toolCalls, models.OpenAIToolCall{
 					ID:   toolID,
 					Type: "function",
@@ -727,6 +739,7 @@ func (o *OpenAIConverter) convertInternalMessageToOpenAI(msg *InternalMessage) m
 						Name:      cb.Name,
 						Arguments: args,
 					},
+					ExtraContent: resolveThoughtSignatureExtraContent(toolID, isGeminiProvider),
 				})
 			case "tool_result":
 				// tool_result 现在由 BuildRequest 单独处理
@@ -948,6 +961,12 @@ func (o *OpenAIConverter) ParseResponse(body []byte) (*InternalResponse, error) 
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			}
 			input = NormalizeToolParameters(tc.Function.Name, input)
+
+			// Gemini's OpenAI-compat endpoint carries its thought_signature
+			// as a non-standard extra_content field; capture it now, keyed
+			// by the tool call's ID, so it can be restored later if Claude
+			// Code echoes this tool_use back in conversation history.
+			rememberThoughtSignature(tc.ID, tc.ExtraContent)
 
 			// 保留原始的 tool call ID，不进行转换
 			resp.Content = append(resp.Content, ContentBlock{

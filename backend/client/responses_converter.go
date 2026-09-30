@@ -539,6 +539,16 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				respStatus, _ := response["status"].(string)
 				finishReason = mapStatusToFinishReason(respStatus)
 			}
+			// The Responses API's top-level status is "completed" even when the
+			// model's turn ended in a function call — status alone can't tell
+			// text-completion and tool-call-completion apart. Without this
+			// override, finish_reason comes out "stop" (-> Anthropic stop_reason
+			// "end_turn") whenever any tool call was captured during this stream,
+			// which makes the Claude Code agentic loop think the turn is done and
+			// never execute the tool.
+			if len(toolCalls) > 0 && finishReason != "error" {
+				finishReason = "tool_calls"
+			}
 
 			usage := map[string]interface{}{}
 			if response != nil {
@@ -555,18 +565,24 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				}
 			}
 
+			// Always emit the finish_reason chunk, even when the upstream's
+			// response.completed event carries no usage block — omitting it here
+			// used to mean the downstream converter never learned finish_reason at
+			// all and silently fell back to a generic default.
+			sseData := map[string]interface{}{
+				"choices": []interface{}{
+					map[string]interface{}{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": finishReason,
+					},
+				},
+			}
 			if len(usage) > 0 {
-				choice := map[string]interface{}{
-					"index":         0,
-					"delta":         map[string]interface{}{},
-					"finish_reason": finishReason,
-				}
-				if err := writeSSE(map[string]interface{}{
-					"choices": []interface{}{choice},
-					"usage":   usage,
-				}); err != nil {
-					return err
-				}
+				sseData["usage"] = usage
+			}
+			if err := writeSSE(sseData); err != nil {
+				return err
 			}
 
 			fmt.Fprintf(writer, "data: [DONE]\n\n")
@@ -593,6 +609,9 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 
 	if finishReason == "" {
 		finishReason = "stop"
+	}
+	if len(toolCalls) > 0 && finishReason != "error" {
+		finishReason = "tool_calls"
 	}
 	choice := map[string]interface{}{
 		"index":         0,

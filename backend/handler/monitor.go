@@ -307,6 +307,17 @@ func CleanupOldData() error {
 		fmt.Printf("Warning: failed to cleanup old proxy errors: %v\n", err)
 	}
 
+	// Delete old session interruptions (default retention: 14 days)
+	interruptionRetentionDays := 14
+	if daysStr, err := database.GetSetting("interruption_retention_days"); err == nil {
+		if days, err := strconv.Atoi(daysStr); err == nil && days > 0 {
+			interruptionRetentionDays = days
+		}
+	}
+	if _, err := database.CleanupOldSessionInterruptions(time.Duration(interruptionRetentionDays) * 24 * time.Hour); err != nil {
+		fmt.Printf("Warning: failed to cleanup old session interruptions: %v\n", err)
+	}
+
 	// Delete load balancer request logs older than 30 days
 	if err := database.DeleteOldLoadBalancerRequestLogs(30); err != nil {
 		fmt.Printf("Warning: failed to delete old LB request logs: %v\n", err)

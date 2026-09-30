@@ -161,17 +161,38 @@ func (h *Handler) GetLogDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, log)
 }
 
-// GetSystemSettings retrieves all system settings
+// GetSystemSettings retrieves all system settings.
+// The stored proxy password column is ciphertext; it is decrypted back to the
+// plaintext proxy_password key so the UI can echo it (mirrors the config-level
+// round-trip, where the password is never kept as ciphertext in the browser).
 func (h *Handler) GetSystemSettings(c *gin.Context) {
 	settings, err := database.GetAllSettings()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load settings"})
 		return
 	}
+
+	if passEnc, ok := settings[settingProxyPasswordEncrypted]; ok && passEnc != "" {
+		pass, decErr := database.DecryptAPIKey(passEnc)
+		if decErr != nil {
+			// 解不出来就回显空，避免把密文当密码写回库
+			log.Printf("[system-proxy] failed to decrypt proxy password for display: %v", decErr)
+			pass = ""
+		}
+		settings[settingProxyPassword] = pass
+	} else {
+		settings[settingProxyPassword] = ""
+	}
+	delete(settings, settingProxyPasswordEncrypted)
+
 	c.JSON(http.StatusOK, settings)
 }
 
-// UpdateSystemSettings updates system settings
+// UpdateSystemSettings updates system settings.
+// Proxy keys are special-cased: proxy_password is encrypted before storage
+// (system_settings stores proxy_password_encrypted), and afterwards the
+// in-memory h.config.SystemProxy* fields are refreshed so the new service-wide
+// default proxy applies immediately, without a restart.
 func (h *Handler) UpdateSystemSettings(c *gin.Context) {
 	var req map[string]string
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -186,14 +207,88 @@ func (h *Handler) UpdateSystemSettings(c *gin.Context) {
 	}
 
 	username := c.GetString("username")
+
+	// 待同步到 h.config.SystemProxy* 的新值（keys 缺失 = 不修改该项）。
+	sysSync := map[string]*string{}
+	for key := range systemProxyKeys() {
+		sysSync[key] = nil // 存在即标记待同步
+	}
+
 	for key, value := range req {
-		if err := database.SetSetting(key, value, username); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save setting %s: %v", key, err)})
-			return
+		switch key {
+		case settingProxyPassword:
+			// 明文密码：非空则加密存储，空则保留旧密文不动。
+			if value != "" {
+				enc, encErr := database.EncryptAPIKey(value)
+				if encErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to encrypt proxy password: %v", encErr)})
+					return
+				}
+				if err := database.SetSetting(settingProxyPasswordEncrypted, enc, username); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save setting %s: %v", settingProxyPasswordEncrypted, err)})
+					return
+				}
+				v := value
+				sysSync[settingProxyPassword] = &v
+			}
+			continue
+		case settingProxyURL, settingProxyType, settingProxyUsername:
+			if err := database.SetSetting(key, value, username); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save setting %s: %v", key, err)})
+				return
+			}
+			v := value
+			sysSync[key] = &v
+		default:
+			if err := database.SetSetting(key, value, username); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save setting %s: %v", key, err)})
+				return
+			}
 		}
 	}
 
+	// 热生效：把新值同步进内存 SystemProxy*，config 级 proxy_url 为空的流量
+	// 在下一个请求即走新代理，无需重启。
+	h.syncSystemProxy(sysSync)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Settings updated successfully"})
+}
+
+// systemProxyKeys 返回全局默认代理相关的 system_settings 逻辑键。
+func systemProxyKeys() map[string]struct{} {
+	return map[string]struct{}{
+		settingProxyURL:      {},
+		settingProxyType:     {},
+		settingProxyUsername: {},
+		settingProxyPassword: {},
+	}
+}
+
+// syncSystemProxy 把 PUT 中出现的代理键同步到 h.config.SystemProxy*。
+// 未出现的键保持原值；密码在内存中始终为明文（与 config 级 ProxyPassword 一致）。
+func (h *Handler) syncSystemProxy(updates map[string]*string) {
+	if h.config == nil {
+		return
+	}
+	if v, ok := updates[settingProxyURL]; ok {
+		h.config.SystemProxyURL = derefProxyValue(v)
+	}
+	if v, ok := updates[settingProxyType]; ok {
+		h.config.SystemProxyType = derefProxyValue(v)
+	}
+	if v, ok := updates[settingProxyUsername]; ok {
+		h.config.SystemProxyUsername = derefProxyValue(v)
+	}
+	if v, ok := updates[settingProxyPassword]; ok {
+		h.config.SystemProxyPassword = derefProxyValue(v)
+	}
+}
+
+func derefProxyValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // GetLogStats returns log storage statistics

@@ -24,6 +24,14 @@ type Config struct {
 	RetryBackoffBase     float64 // 指数退避基数（秒），默认1秒
 	RetryBackoffMax      int     // 指数退避最大上限（秒），默认60秒
 	ProxyURL            string // HTTP proxy for upstream API requests
+	ProxyType           string // auto/http/https/socks5/socks5h（auto 按 proxy_url scheme 推断）
+	ProxyUsername       string // 可选代理认证用户名
+	ProxyPassword       string // 可选代理认证密码
+	// 服务级全局默认代理（system_settings 表），config 级 proxy_url 为空时回落
+	SystemProxyURL      string
+	SystemProxyType     string
+	SystemProxyUsername string
+	SystemProxyPassword string
 	ReasoningEffort      string // 思考级别: low, medium, high (o1/o3模型)
 	AnthropicAPIKey      string
 	AzureAPIVersion      string

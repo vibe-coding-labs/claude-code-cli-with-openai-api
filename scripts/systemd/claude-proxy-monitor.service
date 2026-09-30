@@ -1,0 +1,15 @@
+# scripts/systemd/claude-proxy-monitor.service — oneshot 决策引擎任务（由 timer 触发）
+# 由 scripts/install-monitor-timer.sh 写入 ~/.config/systemd/user/
+
+[Unit]
+Description=Session interruption monitor decision engine
+Wants=claude-openai-proxy.service
+
+[Service]
+Type=oneshot
+# 默认 dry-run：只记录 decision 不上报重启。观察 1-2 周后开闸：
+#   在 ExecStart 前设置 Environment=MONITOR_AUTORESTART=1 即真正允许自动重启
+ExecStart=/home/cc11001100/github/vibe-coding-labs/claude-code-cli-with-openai-api/scripts/monitor-interruptions.sh --dry-run
+
+[Install]
+WantedBy=default.target

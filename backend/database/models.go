@@ -85,14 +85,29 @@ func CreateAPIConfig(config *APIConfig) error {
 		config.RetryBackoffMax = 60
 	}
 
+	// Set proxy defaults: empty proxy_type falls back to 'auto'
+	if config.ProxyType == "" {
+		config.ProxyType = "auto"
+	}
+
+	// Encrypt proxy password for storage (same mechanism as the API key)
+	var proxyPasswordEnc string
+	if config.ProxyPassword != "" {
+		proxyPasswordEnc, err = EncryptAPIKey(config.ProxyPassword)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt proxy password: %w", err)
+		}
+	}
+
 	query := `
 		INSERT INTO api_configs (
 			id, name, description, user_id, openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
+			retry_backoff_base, retry_backoff_max, proxy_url, proxy_type, proxy_username, proxy_password_encrypted, upstream_endpoint,
+			stream_stall_timeout,
 			anthropic_api_key, enabled, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 	`
 
 	_, err = DB.Exec(query,
@@ -100,7 +115,8 @@ func CreateAPIConfig(config *APIConfig) error {
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
-		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.UpstreamEndpoint,
+		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.ProxyType, config.ProxyUsername, proxyPasswordEnc, config.UpstreamEndpoint,
+		config.StreamStallTimeout,
 		config.AnthropicAPIKey, config.Enabled, config.ExpiresAt,
 	)
 
@@ -117,8 +133,8 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
-			anthropic_api_key, enabled, expires_at, created_at, updated_at
+			retry_backoff_base, retry_backoff_max, COALESCE(proxy_url, ''), COALESCE(proxy_type, 'auto'), COALESCE(proxy_username, ''), COALESCE(proxy_password_encrypted, ''), COALESCE(stream_stall_timeout, 60), COALESCE(upstream_endpoint, ''),
+			COALESCE(anthropic_api_key, ''), enabled, expires_at, created_at, updated_at
 		FROM api_configs WHERE id = ?
 	`
 
@@ -131,7 +147,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
+		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.ProxyType, &config.ProxyUsername, &config.ProxyPasswordEncrypted, &config.StreamStallTimeout, &config.UpstreamEndpoint,
 		&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -168,6 +184,7 @@ func GetAPIConfig(id string) (*APIConfig, error) {
 	}
 	config.OpenAIAPIKey = decrypted
 	config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
+	decryptProxyPassword(config)
 
 	return config, nil
 }
@@ -190,8 +207,8 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
-			anthropic_api_key, enabled, created_at, updated_at
+			retry_backoff_base, retry_backoff_max, COALESCE(proxy_url, ''), COALESCE(proxy_type, 'auto'), COALESCE(proxy_username, ''), COALESCE(proxy_password_encrypted, ''), COALESCE(stream_stall_timeout, 60), COALESCE(upstream_endpoint, ''),
+			COALESCE(anthropic_api_key, ''), enabled, created_at, updated_at
 		FROM api_configs
 		WHERE anthropic_api_key = ? AND enabled = 1
 		LIMIT 1
@@ -205,7 +222,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 		&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 		&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 		&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
+		&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.ProxyType, &config.ProxyUsername, &config.ProxyPasswordEncrypted, &config.StreamStallTimeout, &config.UpstreamEndpoint,
 		&config.AnthropicAPIKey, &config.Enabled, &config.CreatedAt, &config.UpdatedAt,
 	)
 
@@ -238,6 +255,7 @@ func GetConfigByAnthropicAPIKey(apiKey string) (*APIConfig, error) {
 	}
 	config.OpenAIAPIKey = decrypted
 	config.OpenAIAPIKeyMasked = MaskAPIKey(decrypted)
+	decryptProxyPassword(config)
 
 	// Store in cache for future requests
 	cache.Set(apiKey, config)
@@ -300,8 +318,8 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
-			anthropic_api_key, enabled, expires_at, created_at, updated_at
+			retry_backoff_base, retry_backoff_max, COALESCE(proxy_url, ''), COALESCE(proxy_type, 'auto'), COALESCE(proxy_username, ''), COALESCE(proxy_password_encrypted, ''), COALESCE(stream_stall_timeout, 60), COALESCE(upstream_endpoint, ''),
+			COALESCE(anthropic_api_key, ''), enabled, expires_at, created_at, updated_at
 		FROM api_configs ORDER BY created_at DESC
 	`
 
@@ -322,7 +340,7 @@ func GetAllAPIConfigs() ([]*APIConfig, error) {
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
+			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.ProxyType, &config.ProxyUsername, &config.ProxyPasswordEncrypted, &config.StreamStallTimeout, &config.UpstreamEndpoint,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -370,8 +388,8 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 		SELECT id, name, COALESCE(description, ''), COALESCE(user_id, 0), openai_api_key_encrypted, openai_base_url,
 			big_model, middle_model, small_model, supported_models, model_mappings, max_tokens_limit, request_timeout, retry_count, reasoning_effort,
 			big_model_reasoning_effort, middle_model_reasoning_effort, small_model_reasoning_effort,
-			retry_backoff_base, retry_backoff_max, proxy_url, upstream_endpoint,
-			anthropic_api_key, enabled, expires_at, created_at, updated_at
+			retry_backoff_base, retry_backoff_max, COALESCE(proxy_url, ''), COALESCE(proxy_type, 'auto'), COALESCE(proxy_username, ''), COALESCE(proxy_password_encrypted, ''), COALESCE(stream_stall_timeout, 60), COALESCE(upstream_endpoint, ''),
+			COALESCE(anthropic_api_key, ''), enabled, expires_at, created_at, updated_at
 		FROM api_configs
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -394,7 +412,7 @@ func GetAPIConfigsByUser(userID int64) ([]*APIConfig, error) {
 			&config.OpenAIBaseURL, &config.BigModel, &config.MiddleModel, &config.SmallModel,
 			&supportedModelsJSON, &modelMappingsJSON, &config.MaxTokensLimit, &config.RequestTimeout, &config.RetryCount, &config.ReasoningEffort,
 			&config.BigModelReasoningEffort, &config.MiddleModelReasoningEffort, &config.SmallModelReasoningEffort,
-			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.UpstreamEndpoint,
+			&config.RetryBackoffBase, &config.RetryBackoffMax, &config.ProxyURL, &config.ProxyType, &config.ProxyUsername, &config.ProxyPasswordEncrypted, &config.StreamStallTimeout, &config.UpstreamEndpoint,
 			&config.AnthropicAPIKey, &config.Enabled, &expiresAt, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if expiresAt.Valid {
@@ -444,6 +462,18 @@ func GetAdminUserID() int64 {
 
 // UpdateAPIConfig updates an existing API configuration
 func UpdateAPIConfig(config *APIConfig) error {
+	// anthropic_api_key 是服务端自动生成/下发的字段，PUT body 从不提交它。
+	// 若 body 未带 key，从 DB 读回现有值，避免 UPDATE 把该列清空（空串会让
+	// 客户端鉴权失败），也避免下方 cache.Invalidate("") 用错 key 导致旧缓存
+	// 条目（旧 proxy_url 等）一直命中、配置热更新不生效。
+	if config.AnthropicAPIKey == "" {
+		existing, err := GetAPIConfig(config.ID)
+		if err != nil {
+			return err
+		}
+		config.AnthropicAPIKey = existing.AnthropicAPIKey
+	}
+
 	// Encrypt API key if provided
 	var encrypted string
 	if config.OpenAIAPIKey != "" {
@@ -496,13 +526,35 @@ func UpdateAPIConfig(config *APIConfig) error {
 		config.RetryBackoffMax = 60
 	}
 
+	// Set proxy defaults: empty proxy_type falls back to 'auto'
+	if config.ProxyType == "" {
+		config.ProxyType = "auto"
+	}
+
+	// Encrypt proxy password for storage; a new password replaces the stored
+	// one, an empty password keeps the existing encrypted value (write-only
+	// field, the frontend never echoes it back so "not submitted" == "keep").
+	var proxyPasswordEnc string
+	if config.ProxyPassword != "" {
+		proxyPasswordEnc, err = EncryptAPIKey(config.ProxyPassword)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt proxy password: %w", err)
+		}
+	} else {
+		existing, getErr := GetAPIConfig(config.ID)
+		if getErr != nil {
+			return getErr
+		}
+		proxyPasswordEnc = existing.ProxyPasswordEncrypted
+	}
+
 	query := `
 		UPDATE api_configs SET
 			name = ?, description = ?, openai_api_key_encrypted = ?, openai_base_url = ?,
 			big_model = ?, middle_model = ?, small_model = ?, supported_models = ?, model_mappings = ?, max_tokens_limit = ?,
 			request_timeout = ?, retry_count = ?, reasoning_effort = ?,
 			big_model_reasoning_effort = ?, middle_model_reasoning_effort = ?, small_model_reasoning_effort = ?,
-			retry_backoff_base = ?, retry_backoff_max = ?, proxy_url = ?, upstream_endpoint = ?,
+			retry_backoff_base = ?, retry_backoff_max = ?, proxy_url = ?, proxy_type = ?, proxy_username = ?, proxy_password_encrypted = ?, upstream_endpoint = ?, stream_stall_timeout = ?,
 			anthropic_api_key = ?, enabled = ?, expires_at = ?, updated_at = datetime('now')
 		WHERE id = ?
 	`
@@ -512,7 +564,7 @@ func UpdateAPIConfig(config *APIConfig) error {
 		config.BigModel, config.MiddleModel, config.SmallModel, string(supportedModelsJSON), string(modelMappingsJSON), config.MaxTokensLimit,
 		config.RequestTimeout, config.RetryCount, config.ReasoningEffort,
 		config.BigModelReasoningEffort, config.MiddleModelReasoningEffort, config.SmallModelReasoningEffort,
-		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.UpstreamEndpoint,
+		config.RetryBackoffBase, config.RetryBackoffMax, config.ProxyURL, config.ProxyType, config.ProxyUsername, proxyPasswordEnc, config.UpstreamEndpoint, config.StreamStallTimeout,
 		config.AnthropicAPIKey, config.Enabled, config.ExpiresAt, config.ID,
 	)
 
@@ -826,6 +878,24 @@ func GetRecentLogs(configID string, limit int) ([]*RequestLog, error) {
 	return logs, nil
 }
 
+// decryptProxyPassword decrypts the stored proxy password into the config's
+// ProxyPassword field. Empty/whitespace stored values stay empty; a decryption
+// failure (theoretically impossible unless the encryption key changed) degrades
+// to an empty password so the proxy request fails with a clear auth error
+// rather than passing a garbage password upstream.
+func decryptProxyPassword(config *APIConfig) {
+	if strings.TrimSpace(config.ProxyPasswordEncrypted) == "" {
+		config.ProxyPassword = ""
+		return
+	}
+	dec, err := DecryptAPIKey(config.ProxyPasswordEncrypted)
+	if err != nil {
+		config.ProxyPassword = ""
+		return
+	}
+	config.ProxyPassword = dec
+}
+
 // ToConfig converts database APIConfig to config.Config
 func (a *APIConfig) ToConfig() *config.Config {
 	return &config.Config{
@@ -839,6 +909,9 @@ func (a *APIConfig) ToConfig() *config.Config {
 		RetryCount:      a.RetryCount,
 		AnthropicAPIKey: a.AnthropicAPIKey,
 			ProxyURL:        a.ProxyURL,
+			ProxyType:       a.ProxyType,
+			ProxyUsername:   a.ProxyUsername,
+			ProxyPassword:   a.ProxyPassword,
 		UpstreamEndpoint: a.UpstreamEndpoint,
 	}
 }

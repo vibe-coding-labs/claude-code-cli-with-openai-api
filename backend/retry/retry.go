@@ -72,7 +72,7 @@ func ClassifyError(err error) ErrorCategory {
 		return CategoryPermanentQuota
 	}
 
-	if strings.Contains(errStr, "status 429") || strings.Contains(errStr, "rate limit") {
+	if strings.Contains(errStr, "status 429") || strings.Contains(errStr, "status code 429") || strings.Contains(errStr, "rate limit") {
 		return CategoryRateLimit
 	}
 
@@ -289,12 +289,12 @@ func IsUpstreamOverloadError(errStr string) bool {
 // "上游过载/暂时不可用"，语义等同于 503，应作为可重试的服务端错误处理。
 func isServerErrorStatus(errStr string) bool {
 	codes := []string{
-		"status 424", // 上游过载（第三方网关非标准码，等同于 503）
-		"status 500", "status 502", "status 503", "status 504",
-		"status 506", "status 507", "status 508",
+		"424", // 上游过载（第三方网关非标准码，等同于 503）
+		"500", "502", "503", "504",
+		"506", "507", "508",
 	}
 	for _, code := range codes {
-		if strings.Contains(errStr, code) {
+		if strings.Contains(errStr, "status code "+code) || strings.Contains(errStr, "status "+code) {
 			return true
 		}
 	}

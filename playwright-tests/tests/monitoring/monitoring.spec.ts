@@ -129,4 +129,66 @@ test.describe('Monitoring & Analytics', () => {
       }
     }
   });
+
+  test('T031: Interruption API endpoints return 200 with correct shape', async ({ page, request }) => {
+    // Extract the auth token set by the login flow so we can call the protected API.
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+    expect(token).toBeTruthy();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    // GET /api/interruptions
+    const listResp = await request.get('/api/interruptions?window=60&limit=50', { headers });
+    expect(listResp.status()).toBe(200);
+    const listBody = await listResp.json();
+    expect(Array.isArray(listBody.interruptions)).toBe(true);
+    expect(typeof listBody.count).toBe('number');
+    expect(typeof listBody.window_min).toBe('number');
+    if (listBody.interruptions.length > 0) {
+      const first = listBody.interruptions[0];
+      expect(typeof first.interruption_cause).toBe('string');
+      expect(typeof first.dimension).toBe('string');
+      expect(['subjective', 'infrastructure']).toContain(first.dimension);
+      expect(typeof first.stage).toBe('string');
+      expect(typeof first.created_at).toBe('string');
+    }
+
+    // GET /api/interruptions/stats
+    const statsResp = await request.get('/api/interruptions/stats?window=60&by_config=true', { headers });
+    expect(statsResp.status()).toBe(200);
+    const statsBody = await statsResp.json();
+    expect(Array.isArray(statsBody.stats)).toBe(true);
+    expect(Array.isArray(statsBody.flapping)).toBe(true);
+    expect(typeof statsBody.window_min).toBe('number');
+    if (statsBody.stats.length > 0) {
+      const s = statsBody.stats[0];
+      expect(typeof s.interruption_cause).toBe('string');
+      expect(typeof s.dimension).toBe('string');
+      expect(typeof s.count).toBe('number');
+    }
+    if (statsBody.flapping.length > 0) {
+      const f = statsBody.flapping[0];
+      expect(typeof f.session_id).toBe('string');
+      expect(typeof f.count).toBe('number');
+    }
+  });
+
+  test('T032: Session interruption monitoring panel renders', async ({ page }) => {
+    // Navigate to the admin-only monitoring page.
+    await page.goto('/ui/monitoring');
+
+    // Title
+    await expect(page.locator('h4:has-text("会话中断监控")')).toBeVisible();
+
+    // Summary statistic cards
+    await expect(page.locator('.ant-card .ant-statistic-title:has-text("全部中断")')).toBeVisible();
+    await expect(page.locator('.ant-card .ant-statistic-title:has-text("基础设施故障")')).toBeVisible();
+    await expect(page.locator('.ant-card .ant-statistic-title:has-text("主观停止")')).toBeVisible();
+    await expect(page.locator('.ant-card .ant-statistic-title:has-text("抖动会话")')).toBeVisible();
+
+    // Cause/distribution table header
+    await expect(page.locator('.ant-card:has-text("按原因分布")')).toBeVisible();
+
+    // Window selector present
+    await expect(page.locator('.ant-select')).toBeVisible();
+  });
 });

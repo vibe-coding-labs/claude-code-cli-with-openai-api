@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -484,16 +485,27 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 
 		var requestCount, successCount int64
 		var nodeAvgResponseTime float64
-		var lastRequestTime *time.Time
+		var lastRequestTimeStr sql.NullString
 
 		err = DB.QueryRow(nodeQuery, loadBalancerID, node.ConfigID, startTime).Scan(
-			&requestCount, &successCount, &nodeAvgResponseTime, &lastRequestTime,
+			&requestCount, &successCount, &nodeAvgResponseTime, &lastRequestTimeStr,
 		)
 		if err != nil {
 			// Node has no requests in the last 60 seconds
 			requestCount = 0
 			successCount = 0
 			nodeAvgResponseTime = 0
+		}
+
+		// MAX() aggregates lose the column's datetime type affinity, so the
+		// driver returns a raw string here instead of auto-parsing into
+		// time.Time (unlike a direct column scan). Parse it the same way
+		// client_stats.go does for the same reason.
+		var lastRequestTime *time.Time
+		if lastRequestTimeStr.Valid {
+			if parsed, perr := time.Parse("2006-01-02 15:04:05", lastRequestTimeStr.String); perr == nil {
+				lastRequestTime = &parsed
+			}
 		}
 
 		nodeSuccessRate := 0.0

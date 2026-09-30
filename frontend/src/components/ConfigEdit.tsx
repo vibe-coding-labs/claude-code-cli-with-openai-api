@@ -44,6 +44,9 @@ interface Config {
   big_model_reasoning_effort?: string;
   middle_model_reasoning_effort?: string;
   small_model_reasoning_effort?: string;
+  proxy_type?: string;
+  proxy_username?: string;
+  proxy_password?: string;
   enabled: boolean;
   expires_at?: string;
 }
@@ -199,6 +202,35 @@ const ConfigEdit: React.FC = () => {
                 自动检测
               </Button>
             </Space.Compact>
+          </Form.Item>
+
+          <Form.Item
+            name="proxy_type"
+            label="代理类型"
+            tooltip="auto：按 proxy_url 的 scheme 自动推断；http/https：HTTP 隧道（https 目标自动 CONNECT）；socks5：本地 DNS 的 SOCKS5（Clash 兼容）；socks5h：远端 DNS 的 SOCKS5。"
+          >
+            <Select style={{ width: '100%' }}>
+              <Select.Option value="auto">Auto（按 scheme 推断）</Select.Option>
+              <Select.Option value="http">HTTP</Select.Option>
+              <Select.Option value="https">HTTPS</Select.Option>
+              <Select.Option value="socks5">SOCKS5（本地 DNS）</Select.Option>
+              <Select.Option value="socks5h">SOCKS5H（远端 DNS）</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="proxy_username"
+            label="代理用户名（可选）"
+          >
+            <Input autoComplete="off" />
+          </Form.Item>
+
+          <Form.Item
+            name="proxy_password"
+            label="代理密码（可选）"
+            tooltip="仅部分代理需要认证。密码加密存储；留空表示不修改（回显保留旧值）。"
+          >
+            <Input.Password autoComplete="new-password" />
           </Form.Item>
 
           <Form.Item

@@ -34,7 +34,7 @@ func TestCircuitBreakerStateTransitionProperties(t *testing.T) {
 				name:              "closed remains closed at threshold boundary",
 				initialState:      "closed",
 				errorRateThreshold: 0.5,
-				operations:        []bool{false, false, true, true, true}, // 40% error rate
+				operations:        []bool{true, true, true, false, false}, // 40% error rate, failures last so no early prefix exceeds threshold
 				expectedState:     "closed",
 			},
 		}

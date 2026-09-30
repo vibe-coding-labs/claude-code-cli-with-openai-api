@@ -5,6 +5,7 @@ import (
 
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
 // ConvertClaudeToOpenAI converts a Claude API request to OpenAI format
@@ -37,6 +38,7 @@ func ConvertClaudeToOpenAIWithConfigAndMapping(claudeReq *models.ClaudeMessagesR
 	// Marshal Claude request to bytes
 	body, err := json.Marshal(claudeReq)
 	if err != nil {
+		utils.GetLogger().Error("[converter] request conversion: failed to marshal Claude request, falling back: %v", err)
 		return &ConversionResult{
 			Request: &models.OpenAIRequest{Model: cfg.BigModel},
 		}
@@ -45,6 +47,7 @@ func ConvertClaudeToOpenAIWithConfigAndMapping(claudeReq *models.ClaudeMessagesR
 	// Claude -> Internal -> OpenAI
 	openAIBody, internalReq, err := factory.ConvertClaudeToOpenAI(body, cfg)
 	if err != nil {
+		utils.GetLogger().Error("[converter] request conversion: factory failed for model=%q, falling back to legacyConvert: %v", claudeReq.Model, err)
 		return &ConversionResult{
 			Request: legacyConvert(claudeReq, cfg),
 		}
@@ -56,6 +59,7 @@ func ConvertClaudeToOpenAIWithConfigAndMapping(claudeReq *models.ClaudeMessagesR
 	// Unmarshal to OpenAI request
 	var openAIReq models.OpenAIRequest
 	if err := json.Unmarshal(openAIBody, &openAIReq); err != nil {
+		utils.GetLogger().Error("[converter] request conversion: failed to unmarshal converted body, falling back: %v", err)
 		return &ConversionResult{
 			Request: legacyConvert(claudeReq, cfg),
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/types"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -41,39 +42,52 @@ var streamMaxDuration = func() time.Duration {
 
 // ConvertOpenAIToClaudeResponse converts OpenAI response to Claude format
 // DEPRECATED: Use GlobalFactory.ConvertOpenAIToClaude instead
+//
+// Guarded so a panic on malformed upstream payload degrades to the legacy
+// fallback instead of crashing the whole proxy process; the panic (with stack)
+// is logged for post-mortem.
 func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
-	// Convert original request to JSON for factory
-	reqBody, err := json.Marshal(originalReq)
-	if err != nil {
+	return guardConversionPanic(nil, originalReq.Model, func() *models.ClaudeResponse {
 		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
-	}
+	}, func() *models.ClaudeResponse {
+		// Convert original request to JSON for factory
+		reqBody, err := json.Marshal(originalReq)
+		if err != nil {
+			logConversionFallback("ConvertOpenAIToClaudeResponse marshal request", err)
+			return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+		}
 
-	// Parse the original request to get InternalRequest
-	internalReq, err := GlobalFactory.ConvertClaudeToInternal(reqBody)
-	if err != nil {
-		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
-	}
+		// Parse the original request to get InternalRequest
+		internalReq, err := GlobalFactory.ConvertClaudeToInternal(reqBody)
+		if err != nil {
+			logConversionFallback("ConvertOpenAIToClaudeResponse ConvertClaudeToInternal", err)
+			return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+		}
 
-	// Convert OpenAI response to JSON
-	respBody, err := json.Marshal(openAIResp)
-	if err != nil {
-		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
-	}
+		// Convert OpenAI response to JSON
+		respBody, err := json.Marshal(openAIResp)
+		if err != nil {
+			logConversionFallback("ConvertOpenAIToClaudeResponse marshal response", err)
+			return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+		}
 
-	// Use factory to convert: OpenAI -> Internal -> Claude
-	claudeBody, _, err := GlobalFactory.ConvertOpenAIToClaude(respBody, internalReq)
-	if err != nil {
-		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
-	}
+		// Use factory to convert: OpenAI -> Internal -> Claude
+		claudeBody, _, err := GlobalFactory.ConvertOpenAIToClaude(respBody, internalReq)
+		if err != nil {
+			logConversionFallback("ConvertOpenAIToClaudeResponse ConvertOpenAIToClaude", err)
+			return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+		}
 
-	// Unmarshal to Claude response
-	var claudeResp models.ClaudeResponse
-	if err := json.Unmarshal(claudeBody, &claudeResp); err != nil {
-		return legacyConvertOpenAIToClaude(openAIResp, originalReq)
-	}
+		// Unmarshal to Claude response
+		var claudeResp models.ClaudeResponse
+		if err := json.Unmarshal(claudeBody, &claudeResp); err != nil {
+			logConversionFallback("ConvertOpenAIToClaudeResponse unmarshal", err)
+			return legacyConvertOpenAIToClaude(openAIResp, originalReq)
+		}
 
-	claudeResp.Model = originalReq.Model
-	return &claudeResp
+		claudeResp.Model = originalReq.Model
+		return &claudeResp
+	})
 }
 
 // legacyConvertOpenAIToClaude is the original conversion logic as fallback
@@ -304,15 +318,18 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 	done := make(chan bool, 1)
 	errChan := make(chan error, 1)
 
-	// Read from stream in a goroutine
+	// Read from stream in a goroutine. done is closed only when no panic fired:
+	// on a panic, the deferred body calls recover() DIRECTLY (required by Go's
+	// recover semantics), hands the value to guardStreamPanic which pushes the
+	// error (with stack) to errChan, and we must NOT also close(done), or the
+	// main select races between a normal completion and the panic error.
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				logger.Warn("[converter] panic recovered in streaming: %v", r)
-				errChan <- fmt.Errorf("streaming panic: %v", r)
+			r := recover() // must be called directly in this deferred frame
+			if !guardStreamPanic(c, errChan, types.StageStreaming, state.model, r) {
+				close(done)
 			}
 		}()
-		defer close(done)
 		for scanner.Scan() {
 			// Reset idle timer — upstream sent data (stall detection)
 			idleTimer.Reset(stallTimeout)
@@ -368,9 +385,25 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 			}
 			// Debug: log parsed chunk
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta != nil {
-				logger.Info("[converter] parsed chunk: delta.tool_calls_len=%d delta.content=%v", len(chunk.Choices[0].Delta.ToolCalls), chunk.Choices[0].Delta.Content)
+				logger.Debug("[converter] parsed chunk: delta.tool_calls_len=%d delta.content=%v", len(chunk.Choices[0].Delta.ToolCalls), chunk.Choices[0].Delta.Content)
 			}
 			state.updateUsage(&chunk)
+
+			// Some upstreams (observed: lant relay) send a mid-stream SSE
+			// "data:" line that is a bare {"error":{...}} object instead of a
+			// normal chat-completion chunk — no "choices" field at all. Before
+			// this check existed, such a chunk fell straight through the
+			// len(chunk.Choices)==0 guard below and was silently discarded,
+			// so genuine upstream errors (e.g. insufficient balance) never
+			// reached the client — the stream just looked like it completed
+			// normally with empty/truncated content instead of surfacing the
+			// real cause. Route it through errChan so it gets the same
+			// classification (api_error vs overloaded_error) as any other
+			// stream-ending error.
+			if chunk.Error != nil {
+				errChan <- fmt.Errorf("upstream error chunk: [%s] %s", chunk.Error.Type, chunk.Error.Message)
+				return
+			}
 
 			if len(chunk.Choices) == 0 {
 				continue
@@ -386,9 +419,16 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 			hasContent := delta.Content != nil || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0
 
 			if hasContent {
-				emittedToolArgsInTransition := false
 				// Debug: log chunk content
 				utils.GetLogger().Debug("[response_converter] chunk hasContent: content=%v tool_calls=%d", delta.Content, len(delta.ToolCalls))
+
+				// Fold every tool-call fragment in this chunk into internal
+				// state BEFORE any block-transition decision runs. This must
+				// happen unconditionally (not gated on the name being known)
+				// — see accumulateToolCallDelta's doc comment for why.
+				for _, tc := range delta.ToolCalls {
+					state.accumulateToolCallDelta(tc)
+				}
 
 				if !state.sentContentBlockStart {
 					// Lazy start: start first content block only when content arrives
@@ -397,13 +437,17 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 					if initBlockData != nil {
 						state.currentBlockStart = initBlockData
 					}
+					if initType == BlockToolUse && len(delta.ToolCalls) > 0 {
+						state.currentToolCallIndex = delta.ToolCalls[0].Index
+						backfillToolCallID(state, state.currentToolCallIndex)
+					}
 					emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
 					state.sentContentBlockStart = true
 				} else {
 					// Block transitions only when a block was already established on a previous chunk
-					utils.GetLogger().Info("[response_converter] calling shouldStartNewBlock, current type=%v, tool_calls=%d", state.currentBlockType, len(delta.ToolCalls))
-					shouldStart, newType, blockStartData := state.shouldStartNewBlock(choice)
-					utils.GetLogger().Info("[response_converter] shouldStartNewBlock result: shouldStart=%v newType=%v", shouldStart, newType)
+					utils.GetLogger().Debug("[response_converter] calling shouldStartNewBlock, current type=%v, tool_calls=%d", state.currentBlockType, len(delta.ToolCalls))
+					shouldStart, newType, blockStartData, toolIdx := state.shouldStartNewBlock(choice)
+					utils.GetLogger().Debug("[response_converter] shouldStartNewBlock result: shouldStart=%v newType=%v", shouldStart, newType)
 					if shouldStart {
 						// Emit empty args for current tool_use block before closing
 						emitEmptyToolArgsForBlock(c, state)
@@ -413,34 +457,11 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 						if blockStartData != nil {
 							state.currentBlockStart = blockStartData
 						}
-						emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
-
-						// litellm pattern: if trigger chunk has tool arguments, emit them
-						// after content_block_start (some providers send args with name/ID)
-						if state.currentBlockType == BlockToolUse && len(delta.ToolCalls) > 0 {
-							for _, tc := range delta.ToolCalls {
-								idx := tc.Index
-								if state.toolCalls[idx] == nil {
-									state.toolCalls[idx] = &toolCallInfo{}
-								}
-								if tc.ID != "" {
-									state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
-								} else if state.toolCalls[idx].id == "" {
-									if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
-										state.toolCalls[idx].id = id
-									}
-								}
-								toolName := state.restoreToolName(tc.Function.Name)
-								if toolName != "" {
-									state.toolCalls[idx].name = toolName
-								}
-								if tc.Function.Arguments != "" {
-									state.toolCalls[idx].argsBuffer += tc.Function.Arguments
-									emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
-									emittedToolArgsInTransition = true
-								}
-							}
+						if newType == BlockToolUse {
+							state.currentToolCallIndex = toolIdx
+							backfillToolCallID(state, toolIdx)
 						}
+						emitContentBlockStart(c, state.currentBlockIndex, state.currentBlockStart)
 					}
 				}
 
@@ -453,28 +474,16 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 						}
 					}
 				case BlockToolUse:
-					if !emittedToolArgsInTransition && len(delta.ToolCalls) > 0 {
-						tc := delta.ToolCalls[0]
-						idx := tc.Index
-						if state.toolCalls[idx] == nil {
-							state.toolCalls[idx] = &toolCallInfo{}
-						}
-						if tc.ID != "" {
-							state.toolCalls[idx].id = NormalizeToolCallID(tc.ID)
-						} else if state.toolCalls[idx].id == "" {
-							// Sync the generated ID from content_block_start
-							if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
-								state.toolCalls[idx].id = id
-							}
-						}
-						if tc.Function.Name != "" {
-							state.toolCalls[idx].name = state.restoreToolName(tc.Function.Name)
-						}
-						if tc.Function.Arguments != "" {
-							state.toolCalls[idx].argsBuffer += tc.Function.Arguments
-							emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, tc.Function.Arguments)
-						}
-					}
+					// Flush whatever has accumulated for the tool call that
+					// owns the currently open block — covers the resolving
+					// chunk itself, any chunks that arrived before it
+					// (buffered above by accumulateToolCallDelta), and every
+					// subsequent chunk. Fragments for a DIFFERENT (not yet
+					// opened) tool call index stay buffered in state.toolCalls
+					// and are only flushed once their own block opens, so a
+					// stray chunk for a not-yet-started parallel tool call
+					// can never corrupt the currently open one.
+					flushToolCallArgs(c, state, state.currentToolCallIndex)
 				case BlockThinking:
 					if delta.ReasoningContent != "" {
 						emitContentBlockDelta(c, state.currentBlockIndex, "thinking_delta", delta.ReasoningContent)
@@ -516,6 +525,7 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 	case err := <-errChan:
 		if strings.Contains(err.Error(), "client disconnected") {
 			logger.Info("[stream] ended: client disconnected after %v", time.Since(streamStart))
+			EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client disconnected mid-stream", time.Since(streamStart).Milliseconds(), state.model)
 			sendSSEError(c, "cancelled", "Request was cancelled by client")
 			return nil
 		}
@@ -526,16 +536,29 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 			finishAbortedStream(c, state, heartbeat, "overloaded_error", "API is temporarily overloaded. Please retry.")
 			return nil
 		}
+		// Transient network-layer errors (upstream connection dropped/reset
+		// mid-stream) are just as recoverable as a stall timeout — must also
+		// map to overloaded_error, or Claude Code treats it as a hard failure
+		// and the session just stops instead of auto-retrying.
+		if client.IsTransientNetworkError(errorMsg) {
+			logger.Warn("[stream] ended: transient network error after %v: %s", time.Since(streamStart), errorMsg)
+			finishAbortedStream(c, state, heartbeat, "overloaded_error", "Upstream connection dropped. Please retry.")
+			return nil
+		}
 		classifiedError := client.ClassifyOpenAIError(errorMsg)
 		logger.Warn("[stream] ended: upstream/scanner error after %v: %s", time.Since(streamStart), classifiedError)
+		cause, dimension := types.Classify(err, ctx)
+		EmitInterruption(c, cause, dimension, types.StageStreaming, errorMsg, time.Since(streamStart).Milliseconds(), state.model)
 		finishAbortedStream(c, state, heartbeat, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
 		return nil
 	case <-ctx.Done():
 		logger.Info("[stream] ended: client cancelled (request context done) after %v", time.Since(streamStart))
+		EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client cancelled (request context done)", time.Since(streamStart).Milliseconds(), state.model)
 		sendSSEError(c, "cancelled", "Request was cancelled by client")
 		return nil
 	case <-idleTimer.C:
 		logger.Warn("[stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
+		EmitInterruption(c, types.CauseUpstreamStall, types.DimensionInfrastructure, types.StageStreaming, fmt.Sprintf("upstream stalled (no data for %v)", stallTimeout), time.Since(streamStart).Milliseconds(), state.model)
 		finishAbortedStream(c, state, heartbeat, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
 		return nil
 	case <-time.After(streamMaxDuration):
@@ -593,10 +616,18 @@ func ConsumeSSEStream(c *gin.Context, reader io.Reader, ctx context.Context, sta
 		state.sentContentBlockFinish = true
 	}
 
-	// If no stop reason was set, default to end_turn
+	// If no stop reason was set (upstream never sent an explicit finish_reason
+	// before the stream closed), default to end_turn — unless tool calls were
+	// actually collected, in which case defaulting to end_turn would make the
+	// Claude Code agentic loop think the turn is done and skip executing the
+	// tool entirely.
 	state.mu.Lock()
 	if state.finalStopReason == "" {
-		state.finalStopReason = models.StopEndTurn
+		if hasToolCalls {
+			state.finalStopReason = models.StopToolUse
+		} else {
+			state.finalStopReason = models.StopEndTurn
+		}
 	}
 	finalStopReason := state.finalStopReason
 	usage := state.usage
@@ -761,6 +792,43 @@ func emitMessageDelta(c *gin.Context, state *StreamingState) {
 		},
 		"usage": usageData,
 	})
+}
+
+// backfillToolCallID copies the id generated for a block's content_block_start
+// (state.currentBlockStart["id"]) into the matching toolCallInfo when the
+// upstream chunk that triggered the transition never carried its own
+// tool_call.id. Without this, a tool call whose provider only ever sends the
+// name (no id) would end up with toolCallInfo.id == "" forever — which both
+// breaks emitEmptyToolArgsForBlock's id-based matching and causes the final
+// session-saving collection (ConsumeSSEStream's resultToolCalls) to drop the
+// tool call entirely, since that path requires id != "".
+func backfillToolCallID(state *StreamingState, idx int) {
+	info := state.toolCalls[idx]
+	if info == nil || info.id != "" {
+		return
+	}
+	if id, ok := state.currentBlockStart["id"].(string); ok && id != "" {
+		info.id = id
+	}
+}
+
+// flushToolCallArgs emits a content_block_delta for any bytes of the given
+// tool call's argsBuffer that haven't been sent to the client yet, tracked via
+// toolCallInfo.emittedLen. Safe to call on every chunk while a tool_use block
+// is open — a no-op once nothing new has accumulated since the last flush.
+// This is what actually delivers argument fragments that arrived before the
+// block's own content_block_start (buffered by accumulateToolCallDelta) —
+// they are flushed in one shot the moment the block opens.
+func flushToolCallArgs(c *gin.Context, state *StreamingState, idx int) {
+	info := state.toolCalls[idx]
+	if info == nil || info.emittedLen >= len(info.argsBuffer) {
+		return
+	}
+	pending := info.argsBuffer[info.emittedLen:]
+	info.emittedLen = len(info.argsBuffer)
+	if pending != "" {
+		emitContentBlockDelta(c, state.currentBlockIndex, models.DeltaInputJSON, pending)
+	}
 }
 
 // emitEmptyToolArgsIfNeeded emits a partial_json delta with "{}" for the current

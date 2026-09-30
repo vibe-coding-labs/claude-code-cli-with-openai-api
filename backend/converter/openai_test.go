@@ -307,6 +307,56 @@ func TestOpenAIConverter_BuildRequest_WithTools(t *testing.T) {
 	}
 }
 
+// TestOpenAIConverter_BuildRequest_NilToolParameters_DefaultsToEmptySchema
+// guards a live bug: Anthropic's built-in, server-executed tools (e.g.
+// "web_search") arrive from Claude Code with no input_schema at all —
+// ToolDefinition.Parameters ends up as a nil map. Marshaling that straight
+// through used to emit "parameters": null in the outgoing OpenAI-format
+// tools[] array, which strict upstreams reject outright (observed live:
+// GLM — "The request parameter tools.parameters is invalid or missing"),
+// failing the entire request rather than just degrading that one tool.
+func TestOpenAIConverter_BuildRequest_NilToolParameters_DefaultsToEmptySchema(t *testing.T) {
+	req := &InternalRequest{
+		Model: "glm-5.3",
+		Messages: []InternalMessage{
+			{Role: "user", Content: []ContentBlock{{Type: "text", Text: "search the web"}}},
+		},
+		Tools: []ToolDefinition{
+			{Name: "web_search", Description: "Built-in server-executed search", Parameters: nil},
+		},
+	}
+
+	c := NewOpenAIConverter(nil)
+	data, err := c.BuildRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assert directly against the raw JSON: unmarshaling into
+	// models.OpenAIRequest would silently turn a JSON null back into a Go
+	// nil map, masking exactly the bug this test exists to catch.
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	tools, _ := raw["tools"].([]interface{})
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	fn, _ := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+	params, ok := fn["parameters"]
+	if !ok || params == nil {
+		t.Fatalf("parameters = %v, want a non-null empty-object schema", params)
+	}
+	paramsMap, ok := params.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters = %T, want a JSON object", params)
+	}
+	if paramsMap["type"] != "object" {
+		t.Errorf("parameters.type = %v, want %q", paramsMap["type"], "object")
+	}
+}
+
 func TestOpenAIConverter_BuildRequest_WithToolUse(t *testing.T) {
 	req := &InternalRequest{
 		Model: "gpt-4",
@@ -1200,8 +1250,8 @@ func TestOpenAIConverter_EmptyAssistantMessage_HasNonEmptyContent(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := &InternalRequest{
-				Model:   "claude-sonnet-4-20250514",
-				Stream:  false,
+				Model:  "claude-sonnet-4-20250514",
+				Stream: false,
 				Messages: []InternalMessage{
 					{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hello"}}},
 					{Role: "assistant", Content: tt.content},
@@ -1301,27 +1351,27 @@ func TestOpenAIConverter_ToolChoiceMapping_E2E(t *testing.T) {
 	factory.SetOpenAIConfig(cfg)
 
 	tests := []struct {
-		name           string
+		name             string
 		claudeToolChoice string
-		expectedOpenAI interface{}
+		expectedOpenAI   interface{}
 	}{
 		{
-			name:           "auto maps to auto",
+			name:             "auto maps to auto",
 			claudeToolChoice: `{"type":"auto"}`,
-			expectedOpenAI: "auto",
+			expectedOpenAI:   "auto",
 		},
 		{
-			name:           "any maps to required",
+			name:             "any maps to required",
 			claudeToolChoice: `{"type":"any"}`,
-			expectedOpenAI: "required",
+			expectedOpenAI:   "required",
 		},
 		{
-			name:           "none maps to none",
+			name:             "none maps to none",
 			claudeToolChoice: `{"type":"none"}`,
-			expectedOpenAI: "none",
+			expectedOpenAI:   "none",
 		},
 		{
-			name:           "tool with name maps to function",
+			name:             "tool with name maps to function",
 			claudeToolChoice: `{"type":"tool","name":"get_weather"}`,
 			expectedOpenAI: map[string]interface{}{
 				"type": "function",

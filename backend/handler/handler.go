@@ -16,6 +16,7 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/types"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -458,6 +459,9 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  reasoningEffort, // 使用根据模型选择的思考级别
 			ProxyURL:         dbConfig.ProxyURL,
+			ProxyType:        dbConfig.ProxyType,
+			ProxyUsername:    dbConfig.ProxyUsername,
+			ProxyPassword:    dbConfig.ProxyPassword,
 			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)
@@ -523,7 +527,16 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 				"message": "Client disconnected",
 			},
 		})
-		// 客户端断开不需要重试
+		// 客户端断开不需要重试。归因字段取自 dbConfig/session（本处早于下方
+		// configID/sessionID 局部变量定义），model 用请求中的模型名。
+		var sid string
+		if session != nil {
+			sid = session.ID
+		}
+		if dbConfig != nil {
+			converter.SetInterruptionContext(c, dbConfig.ID, dbConfig.Name, sid)
+		}
+		converter.EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageRequest, "client disconnected before request", 0, req.Model)
 		return fmt.Errorf("client disconnected")
 	}
 
@@ -545,6 +558,14 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 	if sessionID != "" {
 		sessionIDPtr = &sessionID
 	}
+
+	// 归因字段交给转换器：ConsumeSSEStream / responses 流式埋点读取这些 gin 键，
+	// 无需把 config/session 一路透传到转换函数签名。
+	var configName string
+	if dbConfig != nil {
+		configName = dbConfig.Name
+	}
+	converter.SetInterruptionContext(c, configID, configName, sessionID)
 
 	if req.Stream {
 		// 流式响应 — stream creation 失败时智能重试（429/5xx）
@@ -632,12 +653,16 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 					converter.AbortSSEStream(c, state, heartbeat, "overloaded_error",
 						fmt.Sprintf("Upstream provider unresponsive after %d retries. Please try again later.", maxStallRetries))
 					h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", &req, nil, sessionIDPtr)
+					converter.EmitInterruption(c, types.CauseUpstreamStall, types.DimensionInfrastructure, types.StageStreaming, fmt.Sprintf("upstream stalled after %d retries", maxStallRetries), int64(time.Since(startTime).Milliseconds()), openAIReq.Model)
 					return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
 				}
 				if c.Request.Context().Err() != nil {
+					converter.EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client disconnected during stall check", int64(time.Since(startTime).Milliseconds()), openAIReq.Model)
 					return fmt.Errorf("client disconnected during stall check: %w", stallResult.Err)
 				}
 				logger.Error("  [stall-retry] Read error during pre-stream check: %v", stallResult.Err)
+				cause, dimension := types.Classify(stallResult.Err, c.Request.Context())
+				converter.EmitInterruption(c, cause, dimension, types.StageStreaming, stallResult.Err.Error(), int64(time.Since(startTime).Milliseconds()), openAIReq.Model)
 				converter.AbortSSEStream(c, state, heartbeat, "api_error", fmt.Sprintf("Streaming error: %s", stallResult.Err))
 				return stallResult.Err
 			}
@@ -867,6 +892,9 @@ func (h *Handler) handleMessageWithConfigAndManager(c *gin.Context, dbConfig *da
 			AnthropicAPIKey:  dbConfig.AnthropicAPIKey,
 			ReasoningEffort:  dbConfig.ReasoningEffort, // 传递思考级别配置
 			ProxyURL:         dbConfig.ProxyURL,
+			ProxyType:        dbConfig.ProxyType,
+			ProxyUsername:    dbConfig.ProxyUsername,
+			ProxyPassword:    dbConfig.ProxyPassword,
 			UpstreamEndpoint: upstreamEndpointOrDefault(dbConfig.UpstreamEndpoint, h.config.UpstreamEndpoint),
 		}
 		targetClient = client.NewOpenAIClient(targetConfig)

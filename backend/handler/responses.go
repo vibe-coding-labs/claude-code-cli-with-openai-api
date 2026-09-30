@@ -13,6 +13,7 @@ import (
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/retry"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/types"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -160,16 +161,23 @@ func (h *Handler) executeResponsesRequestWithConfig(c *gin.Context, dbConfig *da
 		AnthropicAPIKey:    dbConfig.AnthropicAPIKey,
 		ReasoningEffort:    dbConfig.ReasoningEffort,
 		ProxyURL:           dbConfig.ProxyURL,
+		ProxyType:          dbConfig.ProxyType,
+		ProxyUsername:      dbConfig.ProxyUsername,
+		ProxyPassword:      dbConfig.ProxyPassword,
 		StreamStallTimeout: dbConfig.StreamStallTimeout,
 		CustomHeaders:      dbConfig.CustomHeaders,
 	}
 	targetClient := client.NewOpenAIClient(targetConfig)
 
 	configID := dbConfig.ID
+	// 归因字段：responses 流式路径也会走 converter 埋点，此处提前置入 gin 键。
+	converter.SetInterruptionContext(c, configID, dbConfig.Name, "")
 	logger.Info("  Responses request: model=%s, messages=%d, stream=%v, tools=%v",
 		clientModel, len(openAIReq.Messages), openAIReq.Stream, len(openAIReq.Tools) > 0)
 
 	if c.Request.Context().Err() != nil {
+		converter.SetInterruptionContext(c, dbConfig.ID, dbConfig.Name, "")
+		converter.EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageRequest, "client disconnected before request", 0, clientModel)
 		return fmt.Errorf("client disconnected before request")
 	}
 
@@ -257,9 +265,11 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 					"message": fmt.Sprintf("Upstream provider unresponsive after %d retries.", maxStallRetries),
 				}})
 				h.responseHandler.logRequestWithDetails(c, configID, openAIReq.Model, 0, 0, startTime, "error", "upstream_stalled_after_retries", nil, nil, nil)
+				converter.EmitInterruption(c, types.CauseUpstreamStall, types.DimensionInfrastructure, types.StageStreaming, fmt.Sprintf("upstream stalled after %d retries", maxStallRetries), int64(time.Since(startTime).Milliseconds()), openAIReq.Model)
 				return fmt.Errorf("upstream stalled after %d retries", maxStallRetries)
 			}
 			if c.Request.Context().Err() != nil {
+				converter.EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client disconnected during stall check", int64(time.Since(startTime).Milliseconds()), openAIReq.Model)
 				return fmt.Errorf("client disconnected during stall check: %w", stallResult.Err)
 			}
 			logger.Error("  [responses stall-retry] read error during pre-stream check: %v", stallResult.Err)

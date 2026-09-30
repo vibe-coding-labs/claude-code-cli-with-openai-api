@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/types"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
 
@@ -336,63 +337,83 @@ func makeResponseObject(respID, model, status string, output []map[string]interf
 
 // ConvertOpenAIResponseToResponses translates a non-streaming Chat Completions
 // response into a Responses API response object. Mirrors translate_non_stream.
+// ConvertOpenAIResponseToResponses guards the single-shot Responses conversion:
+// a panic on malformed upstream data (nil choices, unexpected field shapes)
+// degrades to an empty completed response instead of crashing the whole proxy
+// process; the panic (with stack) is logged for post-mortem.
 func ConvertOpenAIResponseToResponses(resp *models.OpenAIResponse, model string, reqBody map[string]interface{}) map[string]interface{} {
-	output := []map[string]interface{}{}
-	status := "completed"
-	usagePrompt, usageCompletion, usageTotal := 0, 0, 0
-
-	if resp != nil {
-		usagePrompt = resp.Usage.PromptTokens
-		usageCompletion = resp.Usage.CompletionTokens
-		usageTotal = resp.Usage.TotalTokens
-		if len(resp.Choices) > 0 {
-			choice := resp.Choices[0]
-			msg := choice.Message
-			// v1 ignores reasoning_content (astron-code is not a reasoning model;
-			// half-baked reasoning items break codex's stream state machine).
-			if contentStr := openAIContentToString(msg.Content); contentStr != "" {
-				output = append(output, map[string]interface{}{
-					"type":   "message",
-					"id":     genResponsesID("msg"),
-					"status": "completed",
-					"role":   "assistant",
-					"content": []map[string]interface{}{
-						{"type": "output_text", "text": contentStr},
-					},
-				})
-			}
-			for _, tc := range msg.ToolCalls {
-				output = append(output, map[string]interface{}{
-					"type":      "function_call",
-					"id":        genResponsesID("fc"),
-					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": tc.Function.Arguments,
-				})
-			}
-			status = statusFromFinishReason(choice.FinishReason)
-		}
-	}
-
-	if len(output) == 0 {
-		output = append(output, map[string]interface{}{
-			"type":   "message",
-			"id":     genResponsesID("msg"),
+	return guardConversionPanic(nil, model, func() map[string]interface{} {
+		// Minimal, safe fallback: never re-invoke the risky conversion helpers
+		// (they may panic again). An empty completed response keeps the client
+		// (codex) on its protocol instead of receiving a torn reply.
+		return map[string]interface{}{
+			"type":   "response",
+			"id":     genResponsesID("resp"),
 			"status": "completed",
-			"role":   "assistant",
-			"content": []map[string]interface{}{
-				{"type": "output_text", "text": ""},
-			},
-		})
-	}
+			"output": []map[string]interface{}{{
+				"type": "message", "id": genResponsesID("msg"), "status": "completed", "role": "assistant",
+				"content": []map[string]interface{}{{"type": "output_text", "text": ""}},
+			}},
+			"usage": map[string]interface{}{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+		}
+	}, func() map[string]interface{} {
+		output := []map[string]interface{}{}
+		status := "completed"
+		usagePrompt, usageCompletion, usageTotal := 0, 0, 0
 
-	result := makeResponseObject(genResponsesID("resp"), model, status, output, reqBody)
-	result["usage"] = map[string]interface{}{
-		"input_tokens":  usagePrompt,
-		"output_tokens": usageCompletion,
-		"total_tokens":  usageTotal,
-	}
-	return result
+		if resp != nil {
+			usagePrompt = resp.Usage.PromptTokens
+			usageCompletion = resp.Usage.CompletionTokens
+			usageTotal = resp.Usage.TotalTokens
+			if len(resp.Choices) > 0 {
+				choice := resp.Choices[0]
+				msg := choice.Message
+				// v1 ignores reasoning_content (astron-code is not a reasoning model;
+				// half-baked reasoning items break codex's stream state machine).
+				if contentStr := openAIContentToString(msg.Content); contentStr != "" {
+					output = append(output, map[string]interface{}{
+						"type":   "message",
+						"id":     genResponsesID("msg"),
+						"status": "completed",
+						"role":   "assistant",
+						"content": []map[string]interface{}{
+							{"type": "output_text", "text": contentStr},
+						},
+					})
+				}
+				for _, tc := range msg.ToolCalls {
+					output = append(output, map[string]interface{}{
+						"type":      "function_call",
+						"id":        genResponsesID("fc"),
+						"call_id":   tc.ID,
+						"name":      tc.Function.Name,
+						"arguments": tc.Function.Arguments,
+					})
+				}
+				status = statusFromFinishReason(choice.FinishReason)
+			}
+		}
+
+		if len(output) == 0 {
+			output = append(output, map[string]interface{}{
+				"type":   "message",
+				"id":     genResponsesID("msg"),
+				"status": "completed",
+				"role":   "assistant",
+				"content": []map[string]interface{}{
+					{"type": "output_text", "text": ""},
+				},
+			})
+		}
+
+		result := makeResponseObject(genResponsesID("resp"), model, status, output, reqBody)
+		result["usage"] = map[string]interface{}{
+			"input_tokens":  usagePrompt,
+			"output_tokens": usageCompletion,
+			"total_tokens":  usageTotal,
+		}
+		return result
+	})
 }
 
 // openAIContentToString flattens an OpenAI message content (string or part
@@ -554,19 +575,51 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 	}
 
 	done := make(chan struct{})
-	errChan := make(chan error, 1)
+	errChan := make(chan error, 2)
 	idleTimer := time.NewTimer(stallTimeout)
 	defer idleTimer.Stop()
+
+	// Cap on consecutive malformed chunks: an upstream sending garbage must not
+	// degrade into a plausible-but-empty response.completed (codex would see a
+	// silent "no output"). Above the cap we end the stream with an explicit
+	// response.failed so the client's error path, not a fake success, wins.
+	const maxMalformedChunks = 50
+	malformed := 0
+
+	// sawDone is set when the upstream explicitly closes the stream: a bare
+	// [DONE] sentinel, or a chunk carrying a finish_reason. EOF without either
+	// (e.g. a proxy killed mid-stream) means the stream was truncated, which we
+	// MUST surface as an explicit failure — otherwise the client sees a
+	// plausible-but-incomplete response.completed (status "completed" via
+	// statusFromFinishReason("")) and never retries. Same class of silent
+	// truncation behind codex's "idle timeout waiting for SSE".
+	// Unlike streamFailed this is written by the scan goroutine only.
+	sawDone := false
+
+	// Set when the stream is ended with an explicit response.failed. The deferred
+	// body then skips close(done), so the main select deterministically takes the
+	// errChan path and does NOT also emit a plausible-but-empty response.completed
+	// after the failure (codex would treat that as a silent no-output success).
+	// Only the scanning goroutine touches this flag, read back in its own defer,
+	// so a plain bool is race-free here.
+	streamFailed := false
 
 	// Read + translate upstream chunks. This goroutine is the only SSE writer
 	// while running; the main goroutine emits terminal events only after
 	// <-done (goroutine exited), so emit()/seq are race-free.
 	go func() {
+		// done is closed only when the stream ended normally (no panic, no
+		// explicit response.failed). On a panic the error (with stack) goes to
+		// errChan; on an explicit stream failure the caller already pushed to
+		// errChan and set streamFailed. In both cases done stays open so the main
+		// select takes the error path deterministically and never fabricates a
+		// response.completed. recover() must be called directly in this deferred
+		// frame (Go's recover semantics) before delegating.
 		defer func() {
-			if r := recover(); r != nil {
-				errChan <- fmt.Errorf("responses streaming panic: %v", r)
+			r := recover() // must be called directly in this deferred frame
+			if !guardStreamPanic(c, errChan, types.StageStreaming, model, r) && !streamFailed {
+				close(done)
 			}
-			close(done)
 		}()
 
 		scanner := bufio.NewScanner(reader)
@@ -599,11 +652,27 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 				continue
 			}
 			if strings.TrimSpace(chunkData) == "[DONE]" {
+				sawDone = true
 				return
 			}
 
 			var raw map[string]interface{}
 			if err := json.Unmarshal([]byte(chunkData), &raw); err != nil {
+				malformed++
+				if malformed > maxMalformedChunks {
+					logger.Warn("[responses-stream] too many malformed chunks (%d), failing stream", malformed)
+					start()
+					emit("response.failed", map[string]interface{}{
+						"response": makeResponseObject(respID, model, "failed", []map[string]interface{}{
+							{"type": "error", "message": fmt.Sprintf("upstream sent %d malformed chunks", malformed)},
+						}, reqBody),
+					})
+					// Suppress the trailing response.completed: route the main select
+					// to the error path (done stays open) instead of a fake success.
+					streamFailed = true
+					errChan <- fmt.Errorf("upstream sent %d malformed chunks", malformed)
+					return
+				}
 				continue
 			}
 
@@ -627,12 +696,31 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 							{"type": "error", "message": errMsg},
 						}, reqBody),
 					})
+					// Suppress the trailing response.completed: route the main select
+					// to the error path (done stays open) instead of a fake success.
+					streamFailed = true
+					errChan <- fmt.Errorf("upstream error: %s", errMsg)
 					return
 				}
 			}
 
 			var chunk models.OpenAIResponse
 			if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
+				malformed++
+				if malformed > maxMalformedChunks {
+					logger.Warn("[responses-stream] too many malformed chunks (%d), failing stream", malformed)
+					start()
+					emit("response.failed", map[string]interface{}{
+						"response": makeResponseObject(respID, model, "failed", []map[string]interface{}{
+							{"type": "error", "message": fmt.Sprintf("upstream sent %d malformed chunks", malformed)},
+						}, reqBody),
+					})
+					// Suppress the trailing response.completed: route the main select
+					// to the error path (done stays open) instead of a fake success.
+					streamFailed = true
+					errChan <- fmt.Errorf("upstream sent %d malformed chunks", malformed)
+					return
+				}
 				continue
 			}
 			if len(chunk.Choices) == 0 {
@@ -663,7 +751,7 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 					if tc.ID != "" && tc.Function.Name != "" {
 						toolCalls = append(toolCalls, responsesAccumToolCall{ID: tc.ID, Name: tc.Function.Name})
 						curTCIdx = len(toolCalls) - 1
-						logger.Info("[responses-stream] new tool_call: idx=%d id=%q name=%q", curTCIdx, tc.ID, tc.Function.Name)
+						logger.Debug("[responses-stream] new tool_call: idx=%d id=%q name=%q", curTCIdx, tc.ID, tc.Function.Name)
 						if tc.Function.Arguments != "" {
 							toolCalls[curTCIdx].Args.WriteString(tc.Function.Arguments)
 						}
@@ -678,6 +766,7 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 
 			if choice.FinishReason != "" {
 				finishReason = choice.FinishReason
+				sawDone = true
 				// Do NOT return: OpenAI emits a trailing usage-only chunk
 				// (choices:[]) AFTER the finish chunk. Returning here would
 				// lose token accounting. Keep looping; usage is captured at
@@ -687,7 +776,48 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 		}
 
 		if err := scanner.Err(); err != nil {
+			// Scanner-level read error (e.g. connection reset, proxy torn down):
+			// surface it as an explicit overloaded_error response.failed instead of
+			// letting the deferred close(done) race the errChan branch — done would
+			// route the main select to the normal path and emit a fake
+			// response.completed the client would take as success.
+			msg := fmt.Sprintf("upstream stream read error: %v", err)
+			logger.Warn("[responses-stream] %s: %s", msg, client.ClassifyOpenAIError(msg))
+			start()
+			emit("response.failed", map[string]interface{}{
+				"response": makeResponseObject(respID, model, "failed", []map[string]interface{}{
+					{"type": "error", "code": "overloaded_error", "message": msg},
+				}, reqBody),
+			})
+			streamFailed = true
 			errChan <- fmt.Errorf("scanner error: %w", err)
+			return
+		}
+
+		// Upstream truncated the stream WITHOUT a completion marker: no [DONE]
+		// sentinel, no finish_reason chunk — just EOF. This is the signature of a
+		// mid-stream disconnect (killed proxy, upstream crash, network drop), and
+		// letting it through the normal path would emit a plausible-but-truncated
+		// response.completed that the client treats as success and never retries.
+		// Surface it as an explicit overloaded_error response.failed so clients
+		// (codex/OpenAI SDK) retry. Only the scanning goroutine reads sawDone, and
+		// only it writes streamFailed / errChan here (same pattern as the
+		// malformed-chunk cap above), so no locks are needed.
+		if !sawDone {
+			cur := time.Since(streamStart)
+			start()
+			msg := fmt.Sprintf("upstream closed the stream before completion (truncated after %v)", cur)
+			logger.Warn("[responses-stream] %s: %s", msg, client.ClassifyOpenAIError(msg))
+			emit("response.failed", map[string]interface{}{
+				"response": makeResponseObject(respID, model, "failed", []map[string]interface{}{
+					{"type": "error", "code": "overloaded_error", "message": msg},
+				}, reqBody),
+			})
+			// The main select's errChan branch classifies + emits the
+			// interruption record once; do NOT duplicate it here.
+			streamFailed = true
+			errChan <- fmt.Errorf("truncated stream: %s", msg)
+			return
 		}
 	}()
 
@@ -698,15 +828,20 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 	case err := <-errChan:
 		if strings.Contains(err.Error(), "client disconnected") {
 			logger.Info("[responses-stream] ended: client disconnected after %v", time.Since(streamStart))
+			EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client disconnected mid-stream", time.Since(streamStart).Milliseconds(), model)
 			return nil
 		}
 		logger.Warn("[responses-stream] ended: %s after %v", client.ClassifyOpenAIError(err.Error()), time.Since(streamStart))
+		cause, dimension := types.Classify(err, ctx)
+		EmitInterruption(c, cause, dimension, types.StageStreaming, err.Error(), time.Since(streamStart).Milliseconds(), model)
 		return nil
 	case <-ctx.Done():
 		logger.Info("[responses-stream] ended: client cancelled after %v", time.Since(streamStart))
+		EmitInterruption(c, types.CauseClientDisconnect, types.DimensionSubjective, types.StageStreaming, "client cancelled (request context done)", time.Since(streamStart).Milliseconds(), model)
 		return nil
 	case <-idleTimer.C:
 		logger.Warn("[responses-stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
+		EmitInterruption(c, types.CauseUpstreamStall, types.DimensionInfrastructure, types.StageStreaming, fmt.Sprintf("upstream stalled (no data for %v)", stallTimeout), time.Since(streamStart).Milliseconds(), model)
 		return nil
 	case <-time.After(streamMaxDuration):
 		logger.Warn("[responses-stream] ended: exceeded max stream duration %v", streamMaxDuration)

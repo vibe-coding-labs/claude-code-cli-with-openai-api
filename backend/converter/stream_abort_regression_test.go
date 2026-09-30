@@ -81,6 +81,12 @@ func TestStreamingE2E_UpstreamAbortCompletesProtocol(t *testing.T) {
 	for _, ev := range events {
 		if ev.EventType == "error" {
 			hasError = true
+			errData, _ := ev.Data["error"].(map[string]interface{})
+			if errType, _ := errData["type"].(string); errType != "overloaded_error" {
+				t.Errorf("error.type = %q, want overloaded_error (a mid-stream io.ErrUnexpectedEOF is a "+
+					"transient network hiccup, not a hard failure — Claude Code only auto-retries on "+
+					"overloaded_error; anything else and the session just stops)", errType)
+			}
 			break
 		}
 	}

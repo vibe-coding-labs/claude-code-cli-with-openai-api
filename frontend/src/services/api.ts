@@ -110,6 +110,74 @@ export const configAPI = {
   },
 };
 
+// --- 会话中断监控（全局，服务单配置非 LB） ---
+export interface InterruptionEvent {
+  id: number;
+  session_id?: string;
+  request_id?: string;
+  config_id?: string;
+  config_name?: string;
+  model?: string;
+  user_id?: number;
+  client_ip?: string;
+  interruption_cause: string;
+  dimension: string; // 'subjective' | 'infrastructure'
+  stage: string;
+  detail?: string;
+  duration_ms?: number;
+  created_at: string;
+}
+
+export interface InterruptionStat {
+  config_id?: string;
+  config_name?: string;
+  interruption_cause: string;
+  dimension: string;
+  count: number;
+}
+
+export interface FlappingSession {
+  session_id: string;
+  config_id?: string;
+  config_name?: string;
+  count: number;
+  last_at?: string;
+}
+
+export interface InterruptionsResponse {
+  interruptions: InterruptionEvent[];
+  count: number;
+  window_min: number;
+}
+
+export interface InterruptionStatsResponse {
+  stats: InterruptionStat[];
+  flapping: FlappingSession[];
+  since: string;
+  window_min: number;
+}
+
+export const interruptionAPI = {
+  getInterruptions: async (params?: {
+    config_id?: string;
+    dimension?: string;
+    window?: number;
+    limit?: number;
+  }): Promise<InterruptionsResponse> => {
+    const response = await api.get<InterruptionsResponse>('/api/interruptions', { params });
+    return response.data;
+  },
+
+  getInterruptionStats: async (params?: {
+    config_id?: string;
+    window?: number;
+    by_config?: boolean;
+  }): Promise<InterruptionStatsResponse> => {
+    const response = await api.get<InterruptionStatsResponse>('/api/interruptions/stats', { params });
+    return response.data;
+  },
+};
+
 export const userAPI = {
   listUsers: async (): Promise<User[]> => {
     const response = await api.get<{ users: User[] }>('/api/users');

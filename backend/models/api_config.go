@@ -23,6 +23,9 @@ type APIConfig struct {
 	RetryBackoffMax int               `json:"retry_backoff_max"`          // 指数退避最大上限（秒），默认60秒
 	CustomHeaders   map[string]string `json:"custom_headers,omitempty"`
 	ProxyURL        string            `json:"proxy_url,omitempty"` // HTTP proxy for upstream API requests
+	ProxyType       string            `json:"proxy_type,omitempty"` // auto/http/https/socks5/socks5h
+	ProxyUsername   string            `json:"proxy_username,omitempty"`
+	ProxyPassword   string            `json:"proxy_password,omitempty"` // write-only; never echoed back in responses
 	Enabled         bool              `json:"enabled"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
@@ -58,6 +61,9 @@ type APIConfigRequest struct {
 	RetryBackoffMax int               `json:"retry_backoff_max"`  // 指数退避最大上限（秒），默认60秒
 	CustomHeaders   map[string]string `json:"custom_headers,omitempty"`
 	ProxyURL        string            `json:"proxy_url,omitempty"` // HTTP proxy for upstream API requests
+	ProxyType       string            `json:"proxy_type,omitempty"` // auto/http/https/socks5/socks5h
+	ProxyUsername   string            `json:"proxy_username,omitempty"`
+	ProxyPassword   string            `json:"proxy_password,omitempty"` // write-only; never echoed back in responses
 	Enabled         bool              `json:"enabled"`
 }
 
