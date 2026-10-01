@@ -172,11 +172,11 @@ func (l *Logger) log(level LogLevel, format string, args ...interface{}) {
 		levelColor.Sprint(levelName),
 		color.New(color.FgWhite).Sprint(caller),
 	)
-	
+
 	if l.prefix != "" {
 		fmt.Printf("[%s] ", color.New(color.FgMagenta).Sprint(l.prefix))
 	}
-	
+
 	fmt.Println(message)
 
 	// File output (without colors)
@@ -216,7 +216,7 @@ func (l *Logger) ErrorWithCause(err error, format string, args ...interface{}) {
 	if err != nil {
 		l.log(ERROR, "%s | error: %v", message, err)
 	} else {
-		l.log(ERROR, message)
+		l.log(ERROR, "%s", message)
 	}
 }
 

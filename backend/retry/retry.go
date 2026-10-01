@@ -14,7 +14,7 @@ import (
 type ErrorCategory int
 
 const (
-	CategoryRateLimit      ErrorCategory = iota
+	CategoryRateLimit ErrorCategory = iota
 	CategoryServerError
 	CategoryNetwork
 	CategoryProtocol
@@ -289,8 +289,8 @@ func IsUpstreamOverloadError(errStr string) bool {
 // "上游过载/暂时不可用"，语义等同于 503，应作为可重试的服务端错误处理。
 func isServerErrorStatus(errStr string) bool {
 	codes := []string{
-		"status 424", // 上游过载（第三方网关非标准码，等同于 503）
-		"status 500", "status 502", "status 503", "status 504",
+		"status 424", "status code 408", "status 408", "status code 429", "status 429", // transient upstream/rate-limit responses
+		"status code 500", "status 500", "status code 502", "status 502", "status code 503", "status 503", "status code 504", "status 504",
 		"status 506", "status 507", "status 508",
 	}
 	for _, code := range codes {
@@ -370,9 +370,9 @@ func FormatRetryError(result *Result) error {
 // RecoveryState tracks the state machine for a single request recovery process.
 type RecoveryState struct {
 	categoryAttempts        map[ErrorCategory]int
-	errorHistory           []ErrorRecord
-	totalDelay             time.Duration
-	backoffMultiplier      float64
+	errorHistory            []ErrorRecord
+	totalDelay              time.Duration
+	backoffMultiplier       float64
 	consecutiveSameCategory int
 }
 

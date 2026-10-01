@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
@@ -368,7 +369,60 @@ func TestStreamingErrorChunk(t *testing.T) {
 	}
 }
 
-// TestSequenceNumberIndependentAcrossInvocations guards against a global seq.
+// TestStreamingTruncatedDoesNotComplete verifies clean EOF without [DONE] is an error.
+func TestStreamingTruncatedDoesNotComplete(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}` + "\n\n"
+	c, w := sseContext(t)
+	res := ConvertOpenAIStreamingToResponses(c, strings.NewReader(sse), "m", nil, 20*time.Millisecond)
+	if res == nil || res.Error == nil {
+		t.Fatalf("expected truncated stream error, got %#v", res)
+	}
+	events := parseSSEData(t, w.Body.String())
+	if contains(eventTypes(events), "response.completed") {
+		t.Fatalf("truncated stream emitted response.completed: %v", eventTypes(events))
+	}
+}
+
+func TestStreamingMalformedJSONIsError(t *testing.T) {
+	sse := "data: {not-json}\n\n"
+	c, w := sseContext(t)
+	res := ConvertOpenAIStreamingToResponses(c, strings.NewReader(sse), "m", nil, 0)
+	if res == nil || res.Error == nil {
+		t.Fatalf("expected malformed stream error, got %#v", res)
+	}
+	if contains(eventTypes(parseSSEData(t, w.Body.String())), "response.completed") {
+		t.Fatal("malformed stream emitted response.completed")
+	}
+}
+
+func TestStreamingToolCallIDsStable(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"ls","arguments":"{}"}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+	c, w := sseContext(t)
+	ConvertOpenAIStreamingToResponses(c, strings.NewReader(sse), "m", nil, 0)
+	events := parseSSEData(t, w.Body.String())
+	var eventID, finalID string
+	for _, event := range events {
+		switch event["type"] {
+		case "response.output_item.added":
+			item := event["item"].(map[string]interface{})
+			eventID, _ = item["id"].(string)
+		case "response.completed":
+			resp := event["response"].(map[string]interface{})
+			output := resp["output"].([]interface{})
+			item := output[0].(map[string]interface{})
+			finalID, _ = item["id"].(string)
+		}
+	}
+	if eventID == "" || eventID != finalID {
+		t.Fatalf("tool call ID changed: event=%q final=%q", eventID, finalID)
+	}
+}
+
 func TestSequenceNumberIndependentAcrossInvocations(t *testing.T) {
 	sse := `data: {"choices":[{"delta":{"content":"x"},"finish_reason":null}]}` + "\n\n" +
 		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" + `data: [DONE]` + "\n\n"

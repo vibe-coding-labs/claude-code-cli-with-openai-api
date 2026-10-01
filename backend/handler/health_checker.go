@@ -31,6 +31,7 @@ type DefaultHealthChecker struct {
 	wg                sync.WaitGroup
 	mu                sync.RWMutex
 	running           bool
+	stopping          bool
 }
 
 // NewHealthChecker creates a new health checker instance
@@ -48,22 +49,31 @@ func NewHealthChecker(loadBalancerID string, interval, timeout time.Duration, fa
 // Start starts the health checker
 func (hc *DefaultHealthChecker) Start(ctx context.Context) error {
 	hc.mu.Lock()
-	if hc.running {
+	if hc.running || hc.stopping {
 		hc.mu.Unlock()
-		return fmt.Errorf("health checker already running")
+		return fmt.Errorf("health checker already running or stopping")
 	}
-	hc.running = true
 	hc.mu.Unlock()
 
-	// Get load balancer configuration
+	// Validate configuration before publishing the running state.
 	lb, err := database.GetLoadBalancer(hc.loadBalancerID)
 	if err != nil {
 		return fmt.Errorf("failed to get load balancer: %w", err)
 	}
 
-	// Start health check goroutine
+	hc.mu.Lock()
+	if hc.running || hc.stopping {
+		hc.mu.Unlock()
+		return fmt.Errorf("health checker already running or stopping")
+	}
+	hc.stopChan = make(chan struct{})
+	stopChan := hc.stopChan
+	hc.running = true
 	hc.wg.Add(1)
-	go hc.runHealthChecks(ctx, lb)
+	hc.mu.Unlock()
+
+	// Start health check goroutine
+	go hc.runHealthChecks(ctx, lb, stopChan)
 
 	log.Printf("Health checker started for load balancer %s (interval: %v)", hc.loadBalancerID, hc.interval)
 	return nil
@@ -77,18 +87,34 @@ func (hc *DefaultHealthChecker) Stop() error {
 		return fmt.Errorf("health checker not running")
 	}
 	hc.running = false
+	hc.stopping = true
+	stopChan := hc.stopChan
+	close(stopChan)
 	hc.mu.Unlock()
-
-	close(hc.stopChan)
 	hc.wg.Wait()
+	hc.mu.Lock()
+	hc.stopping = false
+	hc.mu.Unlock()
 
 	log.Printf("Health checker stopped for load balancer %s", hc.loadBalancerID)
 	return nil
 }
 
 // runHealthChecks runs periodic health checks
-func (hc *DefaultHealthChecker) runHealthChecks(ctx context.Context, lb *database.LoadBalancer) {
+func (hc *DefaultHealthChecker) runHealthChecks(ctx context.Context, lb *database.LoadBalancer, stopChan <-chan struct{}) {
 	defer hc.wg.Done()
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-stopChan:
+			cancel()
+		case <-runCtx.Done():
+		}
+	}()
+	defer func() { cancel(); <-watchDone }()
 
 	ticker := time.NewTicker(hc.interval)
 	defer ticker.Stop()
@@ -100,29 +126,31 @@ func (hc *DefaultHealthChecker) runHealthChecks(ctx context.Context, lb *databas
 		select {
 		case <-ctx.Done():
 			return
-		case <-hc.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
-			hc.checkAllNodes(ctx, lb)
+			hc.checkAllNodes(runCtx, lb)
 		}
 	}
 }
 
 // checkAllNodes checks health of all nodes in the load balancer
 func (hc *DefaultHealthChecker) checkAllNodes(ctx context.Context, lb *database.LoadBalancer) {
+	var checks sync.WaitGroup
 	for _, node := range lb.ConfigNodes {
 		if !node.Enabled {
 			continue
 		}
-
-		// Check node health in a separate goroutine to avoid blocking
+		checks.Add(1)
 		go func(configID string) {
+			defer checks.Done()
 			_, err := hc.CheckNode(ctx, configID)
 			if err != nil {
 				log.Printf("Health check failed for config %s: %v", configID, err)
 			}
 		}(node.ConfigID)
 	}
+	checks.Wait()
 }
 
 // CheckNode performs a health check on a single node
@@ -144,8 +172,8 @@ func (hc *DefaultHealthChecker) CheckNode(ctx context.Context, configID string) 
 	responseTime := time.Since(startTime)
 
 	// Get current health status
-	currentStatus, err := database.GetHealthStatus(configID)
-	if err != nil {
+	currentStatus, statusErr := database.GetHealthStatus(configID)
+	if statusErr != nil {
 		// Initialize if doesn't exist
 		currentStatus = &database.HealthStatus{
 			ConfigID:             configID,

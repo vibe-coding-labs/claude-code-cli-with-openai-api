@@ -10,32 +10,32 @@ func TestCircuitBreakerStateTransitionProperties(t *testing.T) {
 	// Property 1: State transitions follow the defined state machine
 	t.Run("Property: State transitions are deterministic", func(t *testing.T) {
 		testCases := []struct {
-			name              string
-			initialState      string
+			name               string
+			initialState       string
 			errorRateThreshold float64
-			operations        []bool // true = success, false = failure
-			expectedState     string
+			operations         []bool // true = success, false = failure
+			expectedState      string
 		}{
 			{
-				name:              "closed to open on high error rate",
-				initialState:      "closed",
+				name:               "closed to open on high error rate",
+				initialState:       "closed",
 				errorRateThreshold: 0.5,
-				operations:        []bool{false, false, false, true, true}, // 60% error rate
-				expectedState:     "open",
+				operations:         []bool{false, false, false, true, true}, // 60% error rate
+				expectedState:      "open",
 			},
 			{
-				name:              "closed remains closed with low error rate",
-				initialState:      "closed",
+				name:               "closed remains closed with low error rate",
+				initialState:       "closed",
 				errorRateThreshold: 0.5,
-				operations:        []bool{true, true, true, false, true}, // 20% error rate
-				expectedState:     "closed",
+				operations:         []bool{true, true, true, false, true}, // 20% error rate
+				expectedState:      "closed",
 			},
 			{
-				name:              "closed remains closed at threshold boundary",
-				initialState:      "closed",
+				name:               "closed remains closed at threshold boundary",
+				initialState:       "closed",
 				errorRateThreshold: 0.5,
-				operations:        []bool{false, false, true, true, true}, // 40% error rate
-				expectedState:     "closed",
+				operations:         []bool{false, false, true, true, true}, // 40% error rate
+				expectedState:      "closed",
 			},
 		}
 
@@ -60,7 +60,8 @@ func TestCircuitBreakerStateTransitionProperties(t *testing.T) {
 					})
 
 					// Check if should transition to open
-					if state == "closed" && cb.shouldOpen() {
+					// The production transition path applies the minimum sample window.
+					if state == "closed" && len(cb.requests) >= 5 && cb.shouldOpen() {
 						state = "open"
 					}
 				}

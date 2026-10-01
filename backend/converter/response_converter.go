@@ -39,7 +39,16 @@ var streamMaxDuration = func() time.Duration {
 	return 20 * time.Minute
 }()
 
-// ConvertOpenAIToClaudeResponse converts OpenAI response to Claude format
+func resetStreamIdleTimer(timer *time.Timer, timeout time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(timeout)
+}
+
 // DEPRECATED: Use GlobalFactory.ConvertOpenAIToClaude instead
 func ConvertOpenAIToClaudeResponse(openAIResp *models.OpenAIResponse, originalReq *models.ClaudeMessagesRequest) *models.ClaudeResponse {
 	// Convert original request to JSON for factory
@@ -217,6 +226,8 @@ type StreamingResult struct {
 	OutputTokens int
 	StopReason   string
 	ToolCalls    []map[string]interface{}
+	// Error is non-nil when the upstream did not complete successfully.
+	Error error
 }
 
 // ConvertOpenAIStreamingToClaude converts OpenAI streaming response to Claude format.
@@ -235,6 +246,9 @@ func ConvertOpenAIStreamingToClaude(c *gin.Context, reader io.Reader, originalRe
 // stallTimeout controls the mid-stream idle timeout — if upstream sends no data for this duration,
 // an overloaded_error is sent to trigger client-side retry. Pass 0 to use the default (120 seconds).
 func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader, originalReq *models.ClaudeMessagesRequest, ctx context.Context, toolNameMapping map[string]string, stallTimeout time.Duration) *StreamingResult {
+	if err := validateStreamReader(reader); err != nil {
+		return &StreamingResult{Error: err}
+	}
 	state := newStreamingState(originalReq.Model, toolNameMapping)
 	streamStart := time.Now()
 	logger := utils.GetLogger()
@@ -259,6 +273,13 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	// and corrupt the chunked stream (root cause of InvalidHTTPResponse).
 	bindSSEWriter(c)
 
+	// Closing the upstream body on every exit is important for timeout and
+	// cancellation paths: it unblocks scanner.Scan and prevents a reader
+	// goroutine from surviving after the client response has ended.
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
+
 	// Emit initial events (litellm: sent_first_chunk + sent_content_block_start)
 	emitMessageStart(c, state)
 	emitPing(c)
@@ -278,24 +299,26 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	idleTimer := time.NewTimer(stallTimeout)
 	defer idleTimer.Stop()
 
-	done := make(chan bool, 1)
-	errChan := make(chan error, 1)
+	resultChan := make(chan error, 1)
+	scannerDone := make(chan struct{})
 
 	// Read from stream in a goroutine
 	go func() {
+		defer close(scannerDone)
+		var resultErr error
 		defer func() {
 			if r := recover(); r != nil {
 				logger.Warn("[converter] panic recovered in streaming: %v", r)
-				errChan <- fmt.Errorf("streaming panic: %v", r)
+				resultErr = fmt.Errorf("streaming panic: %v", r)
 			}
+			resultChan <- resultErr
 		}()
-		defer close(done)
 		for scanner.Scan() {
 			// Reset idle timer — upstream sent data (stall detection)
-			idleTimer.Reset(stallTimeout)
+			resetStreamIdleTimer(idleTimer, stallTimeout)
 			select {
 			case <-ctx.Done():
-				errChan <- fmt.Errorf("client disconnected")
+				resultErr = fmt.Errorf("client disconnected")
 				return
 			default:
 			}
@@ -305,7 +328,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			// spending more upstream tokens. The closed flag is set by the
 			// serialized writer in sse_utils.go.
 			if sseWriteClosed(c) {
-				errChan <- fmt.Errorf("client disconnected")
+				resultErr = fmt.Errorf("client disconnected")
 				return
 			}
 
@@ -328,6 +351,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 			}
 
 			if strings.TrimSpace(chunkData) == "[DONE]" {
+				resultErr = nil
 				return
 			}
 
@@ -339,6 +363,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 				}
 				if state.chunkErrors > 50 {
 					logger.Warn("[converter] too many chunk errors (%d), aborting stream", state.chunkErrors)
+					resultErr = fmt.Errorf("too many invalid upstream chunks")
 					return
 				}
 				continue
@@ -471,61 +496,71 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 				}
 				emitMessageDelta(c, state)
 				state.emittedMessageDelta = true
+				resultErr = nil
 				return
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			errChan <- fmt.Errorf("scanner error: %w", err)
+			resultErr = fmt.Errorf("streaming reader error: %w", err)
+		} else {
+			resultErr = fmt.Errorf("upstream stream ended before [DONE]")
 		}
 	}()
 
 	// Wait for completion or cancellation. Each non-normal exit logs its
 	// specific reason + elapsed time, so a client-side "socket connection was
 	// closed unexpectedly" can be correlated to a server-side cause.
+	streamErr := error(nil)
 	select {
-	case <-done:
-		// Normal completion — falls through to emit terminal events below.
-		logger.Info("[stream] upstream completed normally after %v", time.Since(streamStart))
-	case err := <-errChan:
-		if strings.Contains(err.Error(), "client disconnected") {
-			logger.Info("[stream] ended: client disconnected after %v", time.Since(streamStart))
-			sendSSEError(c, "cancelled", "Request was cancelled by client")
-			return nil
+	case err := <-resultChan:
+		streamErr = err
+		logger.Info("[stream] upstream completed after %v (err=%v)", time.Since(streamStart), err)
+		if err != nil {
+			errorMsg := err.Error()
+			errorType := "api_error"
+			if strings.Contains(errorMsg, "client disconnected") || ctx.Err() != nil {
+				errorType = "cancelled"
+			} else if client.IsModelRoutingError(errorMsg) {
+				errorType = "overloaded_error"
+			}
+			sendSSEError(c, errorType, errorMsg)
 		}
-		errorMsg := err.Error()
-		// Model routing errors → overloaded_error so Claude Code auto-retries
-		if client.IsModelRoutingError(errorMsg) {
-			logger.Warn("[stream] ended: model routing error after %v: %s", time.Since(streamStart), errorMsg)
-			sendSSEError(c, "overloaded_error", "API is temporarily overloaded. Please retry.")
-			return nil
-		}
-		classifiedError := client.ClassifyOpenAIError(errorMsg)
-		logger.Warn("[stream] ended: upstream/scanner error after %v: %s", time.Since(streamStart), classifiedError)
-		sendSSEError(c, "api_error", fmt.Sprintf("Streaming error: %s", classifiedError))
-		return nil
 	case <-ctx.Done():
-		logger.Info("[stream] ended: client cancelled (request context done) after %v", time.Since(streamStart))
+		streamErr = ctx.Err()
+		if closer, ok := reader.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		<-scannerDone
 		sendSSEError(c, "cancelled", "Request was cancelled by client")
-		return nil
 	case <-idleTimer.C:
-		logger.Warn("[stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
+		streamErr = fmt.Errorf("upstream stalled")
+		if closer, ok := reader.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		<-scannerDone
 		sendSSEError(c, "overloaded_error", fmt.Sprintf("Upstream provider stalled (no data for %v). Please retry.", stallTimeout))
-		return nil
 	case <-time.After(streamMaxDuration):
-		logger.Warn("[stream] ended: exceeded max stream duration %v", streamMaxDuration)
-		sendSSEError(c, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v); set PROXY_STREAM_MAX_DURATION_MIN to extend if your workload needs longer generations", streamMaxDuration))
-		return nil
+		streamErr = fmt.Errorf("streaming timeout")
+		if closer, ok := reader.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		<-scannerDone
+		sendSSEError(c, "api_error", fmt.Sprintf("Streaming timeout (exceeded %v)", streamMaxDuration))
 	}
 
-	// Only the normal-completion case (<-done) reaches here (every other
-	// case returns above). Stop the heartbeat SYNCHRONOUSLY before emitting
-	// the terminal events, so no ping can be written after message_stop —
-	// orphan pings after the chunked terminator corrupt the next
-	// keep-alive response (InvalidHTTPResponse). The scanner goroutine has
-	// already exited (it closed `done`), so after this only the main
-	// goroutine writes.
+	// Join the scanner before reading shared state or emitting terminal SSE.
+	<-scannerDone
+
+	// Stop the heartbeat synchronously before terminal events. The scanner
+	// has exited, so only this goroutine writes from here onward.
 	heartbeat.Stop()
+	if streamErr != nil {
+		return &StreamingResult{
+			Content: collectedContent.String(), InputTokens: state.usage.InputTokens,
+			OutputTokens: state.usage.OutputTokens, Error: streamErr,
+		}
+	}
 
 	// --- Degenerate output detection ---
 	// Check if the collected text content contains pseudo-tool-call markers
@@ -534,19 +569,10 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	// producing invalid output that Claude Code CLI cannot parse.
 	// Treat as overloaded_error so the client auto-retries.
 	collectedText := collectedContent.String()
-	state.mu.Lock()
-	degenUsage := state.usage
-	state.mu.Unlock()
 	if isDegenerate, pattern := GetDegenerateDetector().IsDegenerate(collectedText); isDegenerate {
 		logger.Warn("[stream] degenerate output detected (pattern=%s), emitting overloaded_error for auto-retry. Content preview: %.200s", pattern, collectedText)
 		sendSSEError(c, "overloaded_error", "Degenerate output detected (pseudo-tool-call markers in text). Please retry.")
-		return &StreamingResult{
-			Content:      collectedText,
-			InputTokens:  degenUsage.InputTokens,
-			OutputTokens: degenUsage.OutputTokens,
-			StopReason:   "overloaded_error",
-			ToolCalls:    nil,
-		}
+		streamErr = fmt.Errorf("degenerate output detected: %s", pattern)
 	}
 
 	// --- Empty content detection ---
@@ -560,13 +586,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 	if GetDegenerateDetector().IsEmptyContent(collectedText, hasToolCalls) {
 		logger.Warn("[stream] empty content detected (no text and no tool calls), emitting overloaded_error for auto-retry")
 		sendSSEError(c, "overloaded_error", "Empty response detected (no meaningful content). Please retry.")
-		return &StreamingResult{
-			Content:      collectedText,
-			InputTokens:  degenUsage.InputTokens,
-			OutputTokens: degenUsage.OutputTokens,
-			StopReason:   "overloaded_error",
-			ToolCalls:    nil,
-		}
+		streamErr = fmt.Errorf("empty response detected")
 	}
 
 	// If content_block_finish was never sent (stream ended without finish_reason),
@@ -657,6 +677,7 @@ func ConvertOpenAIStreamingToClaudeWithMapping(c *gin.Context, reader io.Reader,
 		OutputTokens: usage.OutputTokens,
 		StopReason:   string(finalStopReason),
 		ToolCalls:    resultToolCalls,
+		Error:        streamErr,
 	}
 }
 

@@ -29,6 +29,8 @@ type DefaultCircuitBreaker struct {
 	mu                 sync.RWMutex
 	requests           []requestRecord
 	halfOpenAttempts   int
+	halfOpenInFlight   int
+	halfOpenSuccesses  int
 }
 
 type requestRecord struct {
@@ -88,13 +90,16 @@ func (cb *DefaultCircuitBreaker) executeInClosed(ctx context.Context, fn func() 
 		timestamp: time.Now(),
 		success:   err == nil,
 	})
-	cb.cleanOldRequests()
+	cb.cleanOldRequestsLocked()
 	cb.mu.Unlock()
 
 	if err != nil {
 		cb.RecordFailure()
-		// Check if we should open the circuit
-		if cb.shouldOpen() {
+		// Check if we should open the circuit after the minimum sample window.
+		cb.mu.RLock()
+		enoughSamples := len(cb.requests) >= 5
+		cb.mu.RUnlock()
+		if enoughSamples && cb.shouldOpen() {
 			if err := database.TransitionCircuitBreakerToOpen(cb.configID, int(cb.timeout.Seconds())); err != nil {
 				log.Printf("Failed to transition circuit breaker to open: %v", err)
 			} else {
@@ -111,49 +116,58 @@ func (cb *DefaultCircuitBreaker) executeInClosed(ctx context.Context, fn func() 
 // executeInHalfOpen executes the function in half-open state
 func (cb *DefaultCircuitBreaker) executeInHalfOpen(ctx context.Context, fn func() error) error {
 	cb.mu.Lock()
+	if cb.halfOpenInFlight >= cb.halfOpenRequests {
+		cb.mu.Unlock()
+		return fmt.Errorf("circuit breaker half-open probe limit reached")
+	}
 	cb.halfOpenAttempts++
-	attempts := cb.halfOpenAttempts
+	cb.halfOpenInFlight++
 	cb.mu.Unlock()
 
 	err := fn()
 
+	cb.mu.Lock()
+	cb.halfOpenInFlight--
+	if err == nil {
+		cb.halfOpenSuccesses++
+	}
+	successes := cb.halfOpenSuccesses
+	cb.mu.Unlock()
+
 	if err != nil {
-		// Failure in half-open state - go back to open
 		cb.RecordFailure()
-		if err := database.TransitionCircuitBreakerToOpen(cb.configID, int(cb.timeout.Seconds())); err != nil {
-			log.Printf("Failed to transition circuit breaker to open: %v", err)
+		if transitionErr := database.TransitionCircuitBreakerToOpen(cb.configID, int(cb.timeout.Seconds())); transitionErr != nil {
+			log.Printf("Failed to transition circuit breaker to open: %v", transitionErr)
 		} else {
 			log.Printf("Circuit breaker for %s returned to open state after failure", cb.configID)
 		}
 		cb.mu.Lock()
 		cb.halfOpenAttempts = 0
+		cb.halfOpenInFlight = 0
+		cb.halfOpenSuccesses = 0
 		cb.mu.Unlock()
 		return err
 	}
 
-	// Success in half-open state
 	cb.RecordSuccess()
-
-	// Check if we've had enough successful attempts to close the circuit
-	if attempts >= cb.halfOpenRequests {
-		if err := database.TransitionCircuitBreakerToClosed(cb.configID); err != nil {
-			log.Printf("Failed to transition circuit breaker to closed: %v", err)
+	if successes >= cb.halfOpenRequests {
+		if transitionErr := database.TransitionCircuitBreakerToClosed(cb.configID); transitionErr != nil {
+			log.Printf("Failed to transition circuit breaker to closed: %v", transitionErr)
 		} else {
 			log.Printf("Circuit breaker for %s closed after successful recovery", cb.configID)
 		}
 		cb.mu.Lock()
 		cb.halfOpenAttempts = 0
+		cb.halfOpenInFlight = 0
+		cb.halfOpenSuccesses = 0
 		cb.requests = make([]requestRecord, 0)
 		cb.mu.Unlock()
 	}
-
 	return nil
 }
 
 // shouldOpen determines if the circuit should open based on error rate
 func (cb *DefaultCircuitBreaker) shouldOpen() bool {
-	const minRequestsToEvaluateErrorRate = 5
-
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 
@@ -162,9 +176,6 @@ func (cb *DefaultCircuitBreaker) shouldOpen() bool {
 	}
 
 	totalRequests := len(cb.requests)
-	if totalRequests < minRequestsToEvaluateErrorRate {
-		return false
-	}
 
 	failedRequests := 0
 	for _, req := range cb.requests {
@@ -178,7 +189,7 @@ func (cb *DefaultCircuitBreaker) shouldOpen() bool {
 }
 
 // cleanOldRequests removes requests outside the time window
-func (cb *DefaultCircuitBreaker) cleanOldRequests() {
+func (cb *DefaultCircuitBreaker) cleanOldRequestsLocked() {
 	cutoff := time.Now().Add(-cb.windowDuration)
 	validRequests := make([]requestRecord, 0)
 	for _, req := range cb.requests {
@@ -187,6 +198,12 @@ func (cb *DefaultCircuitBreaker) cleanOldRequests() {
 		}
 	}
 	cb.requests = validRequests
+}
+
+func (cb *DefaultCircuitBreaker) cleanOldRequests() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.cleanOldRequestsLocked()
 }
 
 // GetState returns the current circuit breaker state
@@ -217,6 +234,8 @@ func (cb *DefaultCircuitBreaker) Reset() {
 	cb.mu.Lock()
 	cb.requests = make([]requestRecord, 0)
 	cb.halfOpenAttempts = 0
+	cb.halfOpenInFlight = 0
+	cb.halfOpenSuccesses = 0
 	cb.mu.Unlock()
 
 	if err := database.TransitionCircuitBreakerToClosed(cb.configID); err != nil {

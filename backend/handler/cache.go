@@ -18,12 +18,12 @@ type Cache interface {
 
 // CacheStats holds cache statistics
 type CacheStats struct {
-	Hits        int64
-	Misses      int64
-	Evictions   int64
-	Size        int
-	MaxSize     int
-	HitRate     float64
+	Hits      int64
+	Misses    int64
+	Evictions int64
+	Size      int
+	MaxSize   int
+	HitRate   float64
 }
 
 // cacheEntry represents a cache entry with TTL
@@ -36,13 +36,13 @@ type cacheEntry struct {
 
 // LRUCache implements an LRU cache with TTL support
 type LRUCache struct {
-	maxSize    int
-	items      map[string]*cacheEntry
-	lruList    *list.List
-	mu         sync.RWMutex
-	hits       int64
-	misses     int64
-	evictions  int64
+	maxSize   int
+	items     map[string]*cacheEntry
+	lruList   *list.List
+	mu        sync.RWMutex
+	hits      int64
+	misses    int64
+	evictions int64
 }
 
 // NewLRUCache creates a new LRU cache
@@ -194,20 +194,22 @@ func (c *LRUCache) CleanupExpired() int {
 
 // CacheManager manages multiple caches
 type CacheManager struct {
-	healthStatusCache    Cache
-	circuitBreakerCache  Cache
-	configCache          Cache
-	cleanupInterval      time.Duration
-	stopCleanup          chan struct{}
-	mu                   sync.RWMutex
+	healthStatusCache   Cache
+	circuitBreakerCache Cache
+	configCache         Cache
+	cleanupInterval     time.Duration
+	stopCleanup         chan struct{}
+	cleanupWG           sync.WaitGroup
+	cleanupRunning      bool
+	mu                  sync.RWMutex
 }
 
 // NewCacheManager creates a new cache manager
 func NewCacheManager(cleanupInterval time.Duration) *CacheManager {
 	return &CacheManager{
-		healthStatusCache:   NewLRUCache(1000),   // Cache up to 1000 health statuses
-		circuitBreakerCache: NewLRUCache(1000),   // Cache up to 1000 circuit breaker states
-		configCache:         NewLRUCache(500),    // Cache up to 500 configs
+		healthStatusCache:   NewLRUCache(1000), // Cache up to 1000 health statuses
+		circuitBreakerCache: NewLRUCache(1000), // Cache up to 1000 circuit breaker states
+		configCache:         NewLRUCache(500),  // Cache up to 500 configs
 		cleanupInterval:     cleanupInterval,
 		stopCleanup:         make(chan struct{}),
 	}
@@ -215,23 +217,44 @@ func NewCacheManager(cleanupInterval time.Duration) *CacheManager {
 
 // StartCleanup starts the periodic cleanup of expired entries
 func (cm *CacheManager) StartCleanup() {
+	cm.mu.Lock()
+	if cm.cleanupRunning {
+		cm.mu.Unlock()
+		return
+	}
+	cm.stopCleanup = make(chan struct{})
+	stopCleanup := cm.stopCleanup
+	cm.cleanupRunning = true
+	cm.cleanupWG.Add(1)
+	cm.mu.Unlock()
+
 	ticker := time.NewTicker(cm.cleanupInterval)
 	go func() {
+		defer cm.cleanupWG.Done()
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				cm.cleanupExpired()
-			case <-cm.stopCleanup:
-				ticker.Stop()
+			case <-stopCleanup:
 				return
 			}
 		}
 	}()
 }
 
-// StopCleanup stops the periodic cleanup
+// StopCleanup stops the periodic cleanup and waits for it to exit.
 func (cm *CacheManager) StopCleanup() {
-	close(cm.stopCleanup)
+	cm.mu.Lock()
+	if !cm.cleanupRunning {
+		cm.mu.Unlock()
+		return
+	}
+	cm.cleanupRunning = false
+	stopCleanup := cm.stopCleanup
+	close(stopCleanup)
+	cm.mu.Unlock()
+	cm.cleanupWG.Wait()
 }
 
 // cleanupExpired removes expired entries from all caches
@@ -265,9 +288,9 @@ func (cm *CacheManager) GetConfigCache() Cache {
 // GetAllStats returns statistics for all caches
 func (cm *CacheManager) GetAllStats() map[string]CacheStats {
 	return map[string]CacheStats{
-		"health_status":    cm.healthStatusCache.Stats(),
-		"circuit_breaker":  cm.circuitBreakerCache.Stats(),
-		"config":           cm.configCache.Stats(),
+		"health_status":   cm.healthStatusCache.Stats(),
+		"circuit_breaker": cm.circuitBreakerCache.Stats(),
+		"config":          cm.configCache.Stats(),
 	}
 }
 

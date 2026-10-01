@@ -25,6 +25,7 @@ type LoadBalancerManager struct {
 	cancel            context.CancelFunc
 	mu                sync.RWMutex
 	running           bool
+	starting          bool
 }
 
 // LoadBalancerManagerConfig holds configuration for the load balancer manager
@@ -78,6 +79,8 @@ func NewLoadBalancerManager(loadBalancerID string, config LoadBalancerManagerCon
 		cancel()
 		return nil, fmt.Errorf("failed to create selector: %w", err)
 	}
+	cacheManager := NewCacheManager(5 * time.Minute)
+	selector.SetCacheManager(cacheManager)
 
 	// Create retry handler
 	retryHandler := NewRetryHandler(
@@ -111,9 +114,6 @@ func NewLoadBalancerManager(loadBalancerID string, config LoadBalancerManagerCon
 	// Create connection pool manager
 	connectionPoolMgr := NewConnectionPoolManager()
 
-	// Create cache manager
-	cacheManager := NewCacheManager(5 * time.Minute) // Cleanup every 5 minutes
-
 	return &LoadBalancerManager{
 		loadBalancerID:    loadBalancerID,
 		healthChecker:     healthChecker,
@@ -132,32 +132,48 @@ func NewLoadBalancerManager(loadBalancerID string, config LoadBalancerManagerCon
 // Start starts all components
 func (lbm *LoadBalancerManager) Start() error {
 	lbm.mu.Lock()
-	if lbm.running {
+	if lbm.running || lbm.starting {
 		lbm.mu.Unlock()
-		return fmt.Errorf("load balancer manager already running")
+		return fmt.Errorf("load balancer manager already running or starting")
 	}
-	lbm.running = true
+	lbm.starting = true
+	ctx, cancel := context.WithCancel(context.Background())
+	lbm.ctx = ctx
+	lbm.cancel = cancel
 	lbm.mu.Unlock()
 
-	// Start cache cleanup
+	if err := lbm.healthChecker.Start(ctx); err != nil {
+		cancel()
+		lbm.mu.Lock()
+		lbm.starting = false
+		lbm.mu.Unlock()
+		return fmt.Errorf("failed to start health checker: %w", err)
+	}
+	if err := lbm.monitor.Start(ctx); err != nil {
+		_ = lbm.healthChecker.Stop()
+		cancel()
+		lbm.mu.Lock()
+		lbm.starting = false
+		lbm.mu.Unlock()
+		return fmt.Errorf("failed to start monitor: %w", err)
+	}
+	if err := lbm.alertManager.Start(ctx); err != nil {
+		_ = lbm.monitor.Stop()
+		_ = lbm.healthChecker.Stop()
+		cancel()
+		lbm.mu.Lock()
+		lbm.starting = false
+		lbm.mu.Unlock()
+		return fmt.Errorf("failed to start alert manager: %w", err)
+	}
 	if lbm.cacheManager != nil {
 		lbm.cacheManager.StartCleanup()
 	}
 
-	// Start health checker
-	if err := lbm.healthChecker.Start(lbm.ctx); err != nil {
-		return fmt.Errorf("failed to start health checker: %w", err)
-	}
-
-	// Start monitor
-	if err := lbm.monitor.Start(lbm.ctx); err != nil {
-		return fmt.Errorf("failed to start monitor: %w", err)
-	}
-
-	// Start alert manager
-	if err := lbm.alertManager.Start(lbm.ctx); err != nil {
-		return fmt.Errorf("failed to start alert manager: %w", err)
-	}
+	lbm.mu.Lock()
+	lbm.starting = false
+	lbm.running = true
+	lbm.mu.Unlock()
 
 	log.Printf("Load balancer manager started for %s", lbm.loadBalancerID)
 	return nil
@@ -171,10 +187,13 @@ func (lbm *LoadBalancerManager) Stop() error {
 		return fmt.Errorf("load balancer manager not running")
 	}
 	lbm.running = false
+	cancel := lbm.cancel
 	lbm.mu.Unlock()
 
 	// Cancel context
-	lbm.cancel()
+	if cancel != nil {
+		cancel()
+	}
 
 	// Stop all components
 	if err := lbm.healthChecker.Stop(); err != nil {

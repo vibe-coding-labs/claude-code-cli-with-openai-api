@@ -21,15 +21,16 @@ type AlertManager interface {
 
 // DefaultAlertManager implements the AlertManager interface
 type DefaultAlertManager struct {
-	loadBalancerID    string
-	checkInterval     time.Duration
-	errorRateWindow   int // minutes
+	loadBalancerID     string
+	checkInterval      time.Duration
+	errorRateWindow    int // minutes
 	errorRateThreshold float64
-	minHealthyNodes   int
-	stopChan          chan struct{}
-	wg                sync.WaitGroup
-	mu                sync.RWMutex
-	running           bool
+	minHealthyNodes    int
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+	mu                 sync.RWMutex
+	running            bool
+	stopping           bool
 }
 
 // AlertManagerConfig holds alert manager configuration
@@ -55,16 +56,18 @@ func NewAlertManager(loadBalancerID string, config AlertManagerConfig) AlertMana
 // Start starts the alert manager
 func (am *DefaultAlertManager) Start(ctx context.Context) error {
 	am.mu.Lock()
-	if am.running {
+	if am.running || am.stopping {
 		am.mu.Unlock()
 		return fmt.Errorf("alert manager already running")
 	}
+	am.stopChan = make(chan struct{})
+	stopChan := am.stopChan
 	am.running = true
+	am.wg.Add(1)
 	am.mu.Unlock()
 
 	// Start alert checking goroutine
-	am.wg.Add(1)
-	go am.runAlertChecks(ctx)
+	go am.runAlertChecks(ctx, stopChan)
 
 	log.Printf("Alert manager started for load balancer %s", am.loadBalancerID)
 	return nil
@@ -78,17 +81,22 @@ func (am *DefaultAlertManager) Stop() error {
 		return fmt.Errorf("alert manager not running")
 	}
 	am.running = false
+	am.stopping = true
+	stopChan := am.stopChan
 	am.mu.Unlock()
 
-	close(am.stopChan)
+	close(stopChan)
 	am.wg.Wait()
+	am.mu.Lock()
+	am.stopping = false
+	am.mu.Unlock()
 
 	log.Printf("Alert manager stopped for load balancer %s", am.loadBalancerID)
 	return nil
 }
 
 // runAlertChecks runs periodic alert checks
-func (am *DefaultAlertManager) runAlertChecks(ctx context.Context) {
+func (am *DefaultAlertManager) runAlertChecks(ctx context.Context, stopChan <-chan struct{}) {
 	defer am.wg.Done()
 
 	ticker := time.NewTicker(am.checkInterval)
@@ -101,7 +109,7 @@ func (am *DefaultAlertManager) runAlertChecks(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-am.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			am.CheckAndCreateAlerts(am.loadBalancerID)

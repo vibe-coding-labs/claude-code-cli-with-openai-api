@@ -61,6 +61,14 @@ func TestAlertManagerStartStop(t *testing.T) {
 	if err := am.Stop(); err == nil {
 		t.Error("Expected error when stopping already stopped alert manager")
 	}
+	for i := 0; i < 3; i++ {
+		if err := am.Start(ctx); err != nil {
+			t.Fatalf("restart %d: %v", i, err)
+		}
+		if err := am.Stop(); err != nil {
+			t.Fatalf("stop after restart %d: %v", i, err)
+		}
+	}
 }
 
 func TestAlertManagerAllNodesDown(t *testing.T) {

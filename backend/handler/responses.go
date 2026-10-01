@@ -212,7 +212,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 	var reader io.ReadCloser
 	createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
 		var err error
-		reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+		reader, err = targetClient.CreateChatCompletionStreamContext(c.Request.Context(), openAIReq)
 		return err
 	})
 	if !createResult.Succeeded {
@@ -239,7 +239,7 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 					logger.Warn("  [responses stall-retry] %d/%d upstream stalled, retrying...", stallRetry+1, maxStallRetries)
 					createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
 						var err error
-						reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+						reader, err = targetClient.CreateChatCompletionStreamContext(c.Request.Context(), openAIReq)
 						return err
 					})
 					if !createResult.Succeeded {
@@ -276,7 +276,13 @@ func (h *Handler) executeResponsesStream(c *gin.Context, targetClient *client.Op
 	}
 
 	if streamResult != nil {
-		h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", nil, nil)
+		status := "success"
+		errMsg := ""
+		if streamResult.Error != nil {
+			status = "error"
+			errMsg = streamResult.Error.Error()
+		}
+		h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, status, errMsg, nil, nil)
 	} else {
 		logger.Warn("  Responses stream ended without result for config %s (client disconnected or terminal error)", configID)
 	}

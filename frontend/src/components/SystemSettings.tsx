@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   SettingOutlined, DatabaseOutlined, DeleteOutlined,
-  CompressOutlined, CloudUploadOutlined, HardDriveOutlined
+  CompressOutlined, CloudUploadOutlined, HddOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
 import type { SystemSettingsData, LogStorageStats } from '../types/settings';
@@ -238,7 +238,7 @@ const SystemSettings: React.FC = () => {
               <Statistic
                 title="Database Size"
                 value={formatBytes(stats?.total_size_bytes || 0)}
-                prefix={<HardDriveOutlined />}
+                prefix={<HddOutlined />}
               />
               <Statistic
                 title="Body Files Size"

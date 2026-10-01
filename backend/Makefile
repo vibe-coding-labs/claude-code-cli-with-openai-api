@@ -14,6 +14,9 @@ all: build-prod
 build-frontend:
 	@echo "Building frontend..."
 	@cd ../frontend && npm run build
+	@mkdir -p frontend_build
+	@find frontend_build -mindepth 1 ! -name .gitkeep -delete
+	@cp -a ../frontend/build/. frontend_build/
 	@echo "Frontend build complete!"
 
 # Build for production (with embedded frontend)

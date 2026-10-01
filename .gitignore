@@ -1,5 +1,7 @@
-# Temporary data directory
-data/tmp/
+# Embedded frontend staging output
+/backend/frontend_build/*
+!/backend/frontend_build/.gitkeep
+
 data/debug/
 
 # Database backup files

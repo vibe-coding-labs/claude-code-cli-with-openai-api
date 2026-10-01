@@ -47,20 +47,20 @@ func (m *DefaultMonitor) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return fmt.Errorf("monitor already running")
 	}
+	m.stopChan = make(chan struct{})
+	stopChan := m.stopChan
 	m.running = true
-	m.mu.Unlock()
+	m.wg.Add(3)
 
 	// Start log processing goroutine
-	m.wg.Add(1)
-	go m.processLogs(ctx)
+	go m.processLogs(ctx, stopChan)
 
 	// Start stats aggregation goroutine
-	m.wg.Add(1)
-	go m.aggregateStats(ctx)
+	go m.aggregateStats(ctx, stopChan)
 
 	// Start cleanup goroutine
-	m.wg.Add(1)
-	go m.cleanupOldData(ctx)
+	go m.cleanupOldData(ctx, stopChan)
+	m.mu.Unlock()
 
 	log.Printf("Monitor started for load balancer %s", m.loadBalancerID)
 	return nil
@@ -74,9 +74,9 @@ func (m *DefaultMonitor) Stop() error {
 		return fmt.Errorf("monitor not running")
 	}
 	m.running = false
+	stopChan := m.stopChan
+	close(stopChan)
 	m.mu.Unlock()
-
-	close(m.stopChan)
 	m.wg.Wait()
 
 	log.Printf("Monitor stopped for load balancer %s", m.loadBalancerID)
@@ -100,14 +100,14 @@ func (m *DefaultMonitor) RecordRequest(log *database.LoadBalancerRequestLog) {
 }
 
 // processLogs processes request logs from the channel
-func (m *DefaultMonitor) processLogs(ctx context.Context) {
+func (m *DefaultMonitor) processLogs(ctx context.Context, stopChan <-chan struct{}) {
 	defer m.wg.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.stopChan:
+		case <-stopChan:
 			return
 		case log := <-m.logChan:
 			if err := database.CreateLoadBalancerRequestLog(log); err != nil {
@@ -118,7 +118,7 @@ func (m *DefaultMonitor) processLogs(ctx context.Context) {
 }
 
 // aggregateStats periodically aggregates statistics
-func (m *DefaultMonitor) aggregateStats(ctx context.Context) {
+func (m *DefaultMonitor) aggregateStats(ctx context.Context, stopChan <-chan struct{}) {
 	defer m.wg.Done()
 
 	ticker := time.NewTicker(1 * time.Minute)
@@ -128,7 +128,7 @@ func (m *DefaultMonitor) aggregateStats(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			m.performAggregation()
@@ -146,7 +146,7 @@ func (m *DefaultMonitor) performAggregation() {
 }
 
 // cleanupOldData periodically cleans up old logs and stats
-func (m *DefaultMonitor) cleanupOldData(ctx context.Context) {
+func (m *DefaultMonitor) cleanupOldData(ctx context.Context, stopChan <-chan struct{}) {
 	defer m.wg.Done()
 
 	// Run cleanup once per day at 2 AM
@@ -165,7 +165,7 @@ func (m *DefaultMonitor) cleanupOldData(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		return
-	case <-m.stopChan:
+	case <-stopChan:
 		return
 	case <-time.After(initialDelay):
 		m.performCleanup()
@@ -176,7 +176,7 @@ func (m *DefaultMonitor) cleanupOldData(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			m.performCleanup()
@@ -187,7 +187,7 @@ func (m *DefaultMonitor) cleanupOldData(ctx context.Context) {
 // performCleanup performs the actual cleanup
 func (m *DefaultMonitor) performCleanup() {
 	log.Printf("Starting cleanup of old data for load balancer %s", m.loadBalancerID)
-	
+
 	if err := CleanupOldData(); err != nil {
 		log.Printf("Failed to cleanup old data: %v", err)
 	} else {

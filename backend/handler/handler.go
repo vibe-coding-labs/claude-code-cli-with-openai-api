@@ -554,7 +554,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 
 		createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
 			var err error
-			reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+			reader, err = targetClient.CreateChatCompletionStreamContext(c.Request.Context(), openAIReq)
 			if err != nil {
 				currentCategory := retry.ClassifyError(err)
 				if currentCategory != lastCategory {
@@ -600,7 +600,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 						// Re-create stream for retry
 						createResult := retry.NewEngine().Execute(c.Request.Context(), func() error {
 							var err error
-							reader, err = targetClient.CreateChatCompletionStream(openAIReq)
+							reader, err = targetClient.CreateChatCompletionStreamContext(c.Request.Context(), openAIReq)
 							return err
 						})
 						if !createResult.Succeeded {
@@ -645,8 +645,14 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		}
 
 		if streamResult != nil {
-			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, "success", "", &req, sessionIDPtr)
-			if h.sessionHandler != nil && sessionID != "" {
+			status := "success"
+			errMsg := ""
+			if streamResult.Error != nil {
+				status = "error"
+				errMsg = streamResult.Error.Error()
+			}
+			h.responseHandler.logRequestWithStreamingDetails(c, configID, openAIReq.Model, streamResult, startTime, status, errMsg, &req, sessionIDPtr)
+			if streamResult.Error == nil && h.sessionHandler != nil && sessionID != "" {
 				var assistantContent interface{}
 				if len(streamResult.ToolCalls) > 0 {
 					contentBlocks := make([]map[string]interface{}, 0)
@@ -666,13 +672,7 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 				h.responseHandler.SaveMessagesToSession(h.sessionHandler, sessionID, &req, assistantContent, streamResult.InputTokens, streamResult.OutputTokens)
 			}
 		} else {
-			// ConvertOpenAIStreamingToClaudeWithMapping returned nil: the
-			// client disconnected mid-stream OR a terminal SSE error was
-			// already sent to the client inside the converter. Do not write
-			// anything else (the connection may already be closed). Logged so
-			// the rate of disconnects is observable when verifying the
-			// InvalidHTTPResponse fix.
-			logger.Warn("  Stream ended without result for config %s (client disconnected or terminal error already sent)", configID)
+			logger.Warn("  Stream ended without result for config %s", configID)
 		}
 	} else {
 		// 非流式响应

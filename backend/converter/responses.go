@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/client"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/utils"
 )
@@ -432,9 +431,21 @@ func toIntFromAny(v interface{}) int {
 }
 
 type responsesAccumToolCall struct {
-	ID   string
-	Name string
-	Args strings.Builder
+	Index      int
+	ID         string
+	ResponseID string
+	Name       string
+	Args       strings.Builder
+}
+
+func resetResponsesIdleTimer(timer *time.Timer, timeout time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(timeout)
 }
 
 // ConvertOpenAIStreamingToResponses translates a Chat Completions SSE stream
@@ -443,6 +454,12 @@ type responsesAccumToolCall struct {
 // codex does not expect Anthropic ping events. Returns a StreamingResult for
 // usage logging (nil on client disconnect / terminal error).
 func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model string, reqBody map[string]interface{}, stallTimeout time.Duration) *StreamingResult {
+	if err := validateStreamReader(reader); err != nil {
+		return &StreamingResult{Error: err}
+	}
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
 	logger := utils.GetLogger()
 	streamStart := time.Now()
 	ctx := c.Request.Context()
@@ -482,9 +499,10 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 	contentOpen := false
 	var fullText strings.Builder
 	var toolCalls []responsesAccumToolCall
-	curTCIdx := -1
+	toolCallByIndex := make(map[int]int)
 	usagePrompt, usageCompletion, usageTotal := 0, 0, 0
 	finishReason := ""
+	upstreamDone := false
 
 	start := func() {
 		if started {
@@ -573,7 +591,6 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		for scanner.Scan() {
-			idleTimer.Reset(stallTimeout)
 			select {
 			case <-ctx.Done():
 				errChan <- fmt.Errorf("client disconnected")
@@ -599,12 +616,21 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 				continue
 			}
 			if strings.TrimSpace(chunkData) == "[DONE]" {
+				upstreamDone = true
 				return
 			}
+			resetResponsesIdleTimer(idleTimer, stallTimeout)
 
 			var raw map[string]interface{}
 			if err := json.Unmarshal([]byte(chunkData), &raw); err != nil {
-				continue
+				start()
+				emit("response.failed", map[string]interface{}{
+					"response": makeResponseObject(respID, model, "failed", []map[string]interface{}{
+						{"type": "error", "message": "Malformed upstream SSE data"},
+					}, reqBody),
+				})
+				errChan <- fmt.Errorf("malformed upstream SSE data: %w", err)
+				return
 			}
 
 			// Capture usage BEFORE the empty-choices skip: upstreams that force
@@ -633,7 +659,8 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 
 			var chunk models.OpenAIResponse
 			if err := json.Unmarshal([]byte(chunkData), &chunk); err != nil {
-				continue
+				errChan <- fmt.Errorf("malformed upstream SSE data: %w", err)
+				return
 			}
 			if len(chunk.Choices) == 0 {
 				continue
@@ -655,24 +682,25 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 					})
 				}
 
-				// Tool call deltas: a new call carries id+name; subsequent
-				// fragments carry argument shards that accumulate to curTCIdx.
+				// Tool call deltas are keyed by OpenAI's index so parallel calls
+				// cannot steal each other's argument fragments.
 				for _, tc := range delta.ToolCalls {
-					// Debug: log incoming tool call delta
 					logger.Debug("[responses-stream] tool_call delta: id=%q name=%q args_len=%d", tc.ID, tc.Function.Name, len(tc.Function.Arguments))
-					if tc.ID != "" && tc.Function.Name != "" {
-						toolCalls = append(toolCalls, responsesAccumToolCall{ID: tc.ID, Name: tc.Function.Name})
-						curTCIdx = len(toolCalls) - 1
-						logger.Info("[responses-stream] new tool_call: idx=%d id=%q name=%q", curTCIdx, tc.ID, tc.Function.Name)
-						if tc.Function.Arguments != "" {
-							toolCalls[curTCIdx].Args.WriteString(tc.Function.Arguments)
-						}
-					} else if curTCIdx >= 0 && tc.Function.Arguments != "" {
-						toolCalls[curTCIdx].Args.WriteString(tc.Function.Arguments)
-					} else {
-						// Log when tool call is ignored
-						logger.Warn("[responses-stream] tool_call ignored: id=%q name=%q curTCIdx=%d args_len=%d", tc.ID, tc.Function.Name, curTCIdx, len(tc.Function.Arguments))
+					pos, exists := toolCallByIndex[tc.Index]
+					if !exists {
+						pos = len(toolCalls)
+						toolCallByIndex[tc.Index] = pos
+						toolCalls = append(toolCalls, responsesAccumToolCall{
+							Index: tc.Index, ID: tc.ID, ResponseID: genResponsesID("fc"), Name: tc.Function.Name,
+						})
 					}
+					if tc.ID != "" {
+						toolCalls[pos].ID = tc.ID
+					}
+					if tc.Function.Name != "" {
+						toolCalls[pos].Name = tc.Function.Name
+					}
+					toolCalls[pos].Args.WriteString(tc.Function.Arguments)
 				}
 			}
 
@@ -688,29 +716,44 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 
 		if err := scanner.Err(); err != nil {
 			errChan <- fmt.Errorf("scanner error: %w", err)
+		} else if !upstreamDone {
+			errChan <- fmt.Errorf("upstream stream ended before [DONE]")
 		}
 	}()
 
+	streamErr := error(nil)
 	select {
-	case <-done:
-		// Normal completion — emit terminal events below.
-		logger.Info("[responses-stream] upstream completed normally after %v", time.Since(streamStart))
 	case err := <-errChan:
-		if strings.Contains(err.Error(), "client disconnected") {
-			logger.Info("[responses-stream] ended: client disconnected after %v", time.Since(streamStart))
-			return nil
+		streamErr = err
+	case <-done:
+		// The worker may publish its final read error immediately before
+		// closing done. Prefer that error over a generic missing-[DONE]
+		// classification.
+		select {
+		case err := <-errChan:
+			streamErr = err
+		default:
+			if !upstreamDone {
+				streamErr = fmt.Errorf("upstream stream ended before [DONE]")
+			}
 		}
-		logger.Warn("[responses-stream] ended: %s after %v", client.ClassifyOpenAIError(err.Error()), time.Since(streamStart))
-		return nil
 	case <-ctx.Done():
-		logger.Info("[responses-stream] ended: client cancelled after %v", time.Since(streamStart))
-		return nil
+		streamErr = fmt.Errorf("client disconnected")
 	case <-idleTimer.C:
-		logger.Warn("[responses-stream] ended: upstream stalled (no data for %v) after %v total", stallTimeout, time.Since(streamStart))
-		return nil
+		streamErr = fmt.Errorf("upstream stalled")
 	case <-time.After(streamMaxDuration):
-		logger.Warn("[responses-stream] ended: exceeded max stream duration %v", streamMaxDuration)
-		return nil
+		streamErr = fmt.Errorf("streaming timeout")
+	}
+	if streamErr != nil {
+		if closer, ok := reader.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		// The upstream body must be closed before waiting so scanner.Scan
+		// can exit; terminal state is read only after the reader goroutine
+		// has stopped. Stream readers are expected to be closable bodies.
+		<-done
+		logger.Warn("[responses-stream] ended with error: %v after %v", streamErr, time.Since(streamStart))
+		return &StreamingResult{Error: streamErr, InputTokens: usagePrompt, OutputTokens: usageCompletion}
 	}
 
 	// --- Terminal events (only reached on normal <-done) ---
@@ -722,7 +765,7 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 	}
 	resultToolCalls := []map[string]interface{}{}
 	for i, tc := range toolCalls {
-		fcID := genResponsesID("fc")
+		fcID := tc.ResponseID
 		oidx := baseIdx + i
 		args := tc.Args.String()
 		emit("response.output_item.added", map[string]interface{}{
@@ -780,7 +823,7 @@ func ConvertOpenAIStreamingToResponses(c *gin.Context, reader io.Reader, model s
 	for _, tc := range toolCalls {
 		output = append(output, map[string]interface{}{
 			"type":      "function_call",
-			"id":        genResponsesID("fc"),
+			"id":        tc.ResponseID,
 			"call_id":   tc.ID,
 			"name":      tc.Name,
 			"arguments": tc.Args.String(),

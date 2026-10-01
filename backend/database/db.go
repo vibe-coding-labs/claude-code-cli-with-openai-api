@@ -6,12 +6,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var DB *sql.DB
+var dbMu sync.RWMutex
 
 // InitDB initializes the SQLite database
 func InitDB(dbPath string) error {
@@ -39,7 +41,9 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	dbMu.Lock()
 	DB = db
+	dbMu.Unlock()
 	log.Printf("✅ Database initialized at: %s", dbPath)
 
 	// Create tables
@@ -378,8 +382,8 @@ func runMigrations() error {
 		`ALTER TABLE load_balancers ADD COLUMN weight_update_interval INTEGER DEFAULT 300;`,
 		// 迁移9: 为 load_balancers 添加日志配置字段
 		`ALTER TABLE load_balancers ADD COLUMN log_level TEXT DEFAULT 'standard';`,
-			// 迁移10: 为 api_configs 添加流式预验证超时字段
-			`ALTER TABLE api_configs ADD COLUMN stream_stall_timeout INTEGER DEFAULT 60;`,
+		// 迁移10: 为 api_configs 添加流式预验证超时字段
+		`ALTER TABLE api_configs ADD COLUMN stream_stall_timeout INTEGER DEFAULT 60;`,
 	}
 
 	for _, migration := range migrations {
@@ -417,8 +421,13 @@ func IsInitialized() bool {
 
 // CloseDB closes the database connection
 func CloseDB() error {
-	if DB != nil {
-		return DB.Close()
+	dbMu.Lock()
+	db := DB
+	DB = nil
+	dbMu.Unlock()
+
+	if db != nil {
+		return db.Close()
 	}
 	return nil
 }

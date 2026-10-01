@@ -28,6 +28,23 @@ type EnhancedSelector struct {
 	dynamicWeights    map[string]int // Dynamic weights based on performance
 	rng               *rand.Rand
 	circuitBreakerMgr *CircuitBreakerManager
+	cacheManager      *CacheManager
+	healthCache       map[string]healthCacheEntry
+	healthCacheTTL    time.Duration
+	healthCacheMu     sync.Mutex
+	circuitStateCache map[string]circuitStateEntry
+	healthySnapshot   []*database.APIConfig
+	snapshotExpiresAt time.Time
+}
+
+type circuitStateEntry struct {
+	state     string
+	expiresAt time.Time
+}
+
+type healthCacheEntry struct {
+	status    *database.HealthStatus
+	expiresAt time.Time
 }
 
 // NewEnhancedSelector creates a new enhanced selector
@@ -40,6 +57,9 @@ func NewEnhancedSelector(lb *database.LoadBalancer, cbMgr *CircuitBreakerManager
 		dynamicWeights:    make(map[string]int),
 		rng:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		circuitBreakerMgr: cbMgr,
+		healthCache:       make(map[string]healthCacheEntry),
+		healthCacheTTL:    250 * time.Millisecond,
+		circuitStateCache: make(map[string]circuitStateEntry),
 	}
 
 	// Load initial configs
@@ -50,7 +70,12 @@ func NewEnhancedSelector(lb *database.LoadBalancer, cbMgr *CircuitBreakerManager
 	return selector, nil
 }
 
-// SelectConfig selects a healthy config based on the load balancing strategy
+func (s *EnhancedSelector) SetCacheManager(cm *CacheManager) {
+	s.mu.Lock()
+	s.cacheManager = cm
+	s.mu.Unlock()
+}
+
 func (s *EnhancedSelector) SelectConfig(ctx context.Context) (*database.APIConfig, error) {
 	// Get available (healthy) nodes
 	availableConfigs, err := s.getHealthyConfigs()
@@ -84,25 +109,65 @@ func (s *EnhancedSelector) getHealthyConfigs() ([]*database.APIConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	s.healthCacheMu.Lock()
+	if time.Now().Before(s.snapshotExpiresAt) {
+		configs := append([]*database.APIConfig(nil), s.healthySnapshot...)
+		s.healthCacheMu.Unlock()
+		return configs, nil
+	}
+	s.healthCacheMu.Unlock()
+
 	var healthyConfigs []*database.APIConfig
 
 	for _, config := range s.configs {
-		// Check health status
-		healthStatus, err := database.GetHealthStatus(config.ID)
-		if err != nil || healthStatus.Status != "healthy" {
+		var healthStatus *database.HealthStatus
+		if s.cacheManager != nil {
+			if cached, ok := s.cacheManager.GetHealthStatusCache().Get(config.ID); ok {
+				healthStatus, _ = cached.(*database.HealthStatus)
+			}
+		}
+		if healthStatus == nil {
+			var err error
+			healthStatus, err = database.GetHealthStatus(config.ID)
+			if err != nil {
+				continue
+			}
+			if s.cacheManager != nil {
+				s.cacheManager.GetHealthStatusCache().Set(config.ID, healthStatus, s.healthCacheTTL)
+			}
+		}
+		if healthStatus.Status != "healthy" {
 			continue
 		}
 
 		// Check circuit breaker state
 		if s.circuitBreakerMgr != nil {
 			cb := s.circuitBreakerMgr.GetCircuitBreaker(config.ID)
-			if cb.GetState() == "open" {
+			now := time.Now()
+			s.healthCacheMu.Lock()
+			cachedState, stateOK := s.circuitStateCache[config.ID]
+			s.healthCacheMu.Unlock()
+			state := "closed"
+			if stateOK && now.Before(cachedState.expiresAt) {
+				state = cachedState.state
+			} else {
+				state = cb.GetState()
+				s.healthCacheMu.Lock()
+				s.circuitStateCache[config.ID] = circuitStateEntry{state: state, expiresAt: now.Add(250 * time.Millisecond)}
+				s.healthCacheMu.Unlock()
+			}
+			if state == "open" {
 				continue
 			}
 		}
 
 		healthyConfigs = append(healthyConfigs, config)
 	}
+
+	s.healthCacheMu.Lock()
+	s.healthySnapshot = append([]*database.APIConfig(nil), healthyConfigs...)
+	s.snapshotExpiresAt = time.Now().Add(s.healthCacheTTL)
+	s.healthCacheMu.Unlock()
 
 	return healthyConfigs, nil
 }
@@ -249,6 +314,12 @@ func (s *EnhancedSelector) RefreshNodes() error {
 
 	s.loadBalancer = lb
 	s.configs = make([]*database.APIConfig, 0)
+	s.healthCacheMu.Lock()
+	s.healthCache = make(map[string]healthCacheEntry)
+	s.circuitStateCache = make(map[string]circuitStateEntry)
+	s.healthySnapshot = nil
+	s.snapshotExpiresAt = time.Time{}
+	s.healthCacheMu.Unlock()
 
 	// Load all configs for the nodes
 	for _, node := range lb.ConfigNodes {
@@ -270,6 +341,23 @@ func (s *EnhancedSelector) RefreshNodes() error {
 
 	if len(s.configs) == 0 {
 		return fmt.Errorf("no available configs in load balancer")
+	}
+
+	// Warm the local snapshots before serving traffic. This keeps the first
+	// concurrent selection from making every caller pay the database lookup.
+	now := time.Now()
+	for _, config := range s.configs {
+		if status, err := database.GetHealthStatus(config.ID); err == nil && status != nil {
+			s.healthCacheMu.Lock()
+			s.healthCache[config.ID] = healthCacheEntry{status: status, expiresAt: now.Add(s.healthCacheTTL)}
+			s.healthCacheMu.Unlock()
+		}
+		if s.circuitBreakerMgr != nil {
+			state := s.circuitBreakerMgr.GetCircuitBreaker(config.ID).GetState()
+			s.healthCacheMu.Lock()
+			s.circuitStateCache[config.ID] = circuitStateEntry{state: state, expiresAt: now.Add(s.healthCacheTTL)}
+			s.healthCacheMu.Unlock()
+		}
 	}
 
 	return nil

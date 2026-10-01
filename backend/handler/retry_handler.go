@@ -167,7 +167,7 @@ func IsRetryableHTTPStatus(statusCode int) bool {
 
 // RetryConfig holds retry configuration
 const (
-	DefaultMaxRetries = 10                     // 默认重试 10 次（覆盖网络抖动+上游超时）
+	DefaultMaxRetries = 3                      // 默认重试 3 次，避免与客户端和上游重试叠加放大
 	MinRetryCount     = 3                      // 最少重试 3 次
 	MaxRetryCount     = 50                     // 最多重试 50 次
 	BaseBackoffDelay  = 100 * time.Millisecond // 基础退避 100ms

@@ -1045,11 +1045,45 @@ func (r *readCloserFromReader) Close() error {
 	return r.closer.Close()
 }
 
+type streamBridgeCloser struct {
+	pipe     *io.PipeReader
+	upstream io.Closer
+}
+
+func (c streamBridgeCloser) Close() error {
+	pipeErr := c.pipe.Close()
+	upstreamErr := c.upstream.Close()
+	return errors.Join(pipeErr, upstreamErr)
+}
+
+// cancelOnCloseReadCloser keeps the per-request deadline context alive while
+// the caller consumes a successful stream, then releases its timer when the
+// upstream body is closed.
+type cancelOnCloseReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnCloseReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	return err
+}
+
 func newReadCloserFromReader(reader io.Reader, closer io.Closer) io.ReadCloser {
 	return &readCloserFromReader{Reader: reader, closer: closer}
 }
 
 func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
+	return c.CreateChatCompletionStreamContext(context.Background(), openAIReq)
+}
+
+// CreateChatCompletionStreamContext creates a streaming request bound to ctx.
+// The context cancels both connection establishment and retry backoff.
+func (c *OpenAIClient) CreateChatCompletionStreamContext(ctx context.Context, openAIReq *models.OpenAIRequest) (io.ReadCloser, error) {
 	logger := utils.GetLogger()
 	startTime := time.Now()
 	deadline := c.retryDeadline(startTime)
@@ -1107,12 +1141,22 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 				break
 			}
 			logger.Info("  ⏱️  Retry attempt %d/%d after %v backoff", attempt, c.RetryCount, backoffDuration)
-			time.Sleep(backoffDuration)
+			backoffTimer := time.NewTimer(backoffDuration)
+			select {
+			case <-ctx.Done():
+				if !backoffTimer.Stop() {
+					select {
+					case <-backoffTimer.C:
+					default:
+					}
+				}
+				return nil, ctx.Err()
+			case <-backoffTimer.C:
+			}
 		}
 
-		// For streaming, don't set timeout on context as response body will be read over time
-		// Only use deadline check for connection establishment
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+		// Bind each upstream attempt to the caller's context.
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
 		if err != nil {
 			logger.Error("← [OpenAIClient] Failed to create request: %v", err)
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -1199,11 +1243,13 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 					return nil, fmt.Errorf("429 rate limit: exhausted %d retries", ratelimit429Cfg.MaxAttempts)
 				}
 
-				ratelimit429Ctx, ratelimit429Cancel := context.WithTimeout(context.Background(), time.Until(deadline))
-				defer ratelimit429Cancel()
-
+				ratelimit429Ctx, ratelimit429Cancel := context.WithTimeout(ctx, time.Until(deadline))
 				waitResult, waitErr := ratelimit.Global.WaitWith429Backoff(ratelimit429Ctx, c.ConfigID, errorMsg, ratelimit429Cfg)
+				ratelimit429Cancel()
 				if waitErr != nil {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
 					return nil, fmt.Errorf("cancelled while waiting for 429 backoff: %w", waitErr)
 				}
 				if waitResult.Severity == ratelimit.SeverityQuotaExhausted {
@@ -1243,15 +1289,35 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 
 		// If upstream is Responses API, wrap the stream reader to convert SSE format
 		if c.UpstreamEndpoint == "responses" {
-			// Check if upstream actually returned Responses API format or Chat Completions.
-			// Read the first few bytes to detect the format.
-			peekBuf := make([]byte, 64)
-			n, _ := resp.Body.Read(peekBuf)
-			firstBytes := strings.TrimSpace(string(peekBuf[:n]))
+			// Buffer complete SSE frames for format detection. A fixed-size peek can
+			// split the first JSON event and misclassify a Responses stream as Chat.
+			buffered := bufio.NewReaderSize(resp.Body, 64*1024)
+			var prefix bytes.Buffer
+			dataSeen := false
+			// Continue reading through the first complete SSE frame even when it
+			// arrives without a blank separator, so partial network reads cannot
+			// force a format decision from an incomplete JSON object.
+			for prefix.Len() < 1024*1024 {
+				line, readErr := buffered.ReadString('\n')
+				prefix.WriteString(line)
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "data:") {
+					dataSeen = true
+				}
+				if (trimmed == "" && dataSeen) || readErr != nil {
+					if readErr != nil && !errors.Is(readErr, io.EOF) {
+						resp.Body.Close()
+						return nil, fmt.Errorf("read upstream stream prefix: %w", readErr)
+					}
+					break
+				}
+			}
+			firstBytes := prefix.String()
 			isResponsesFormat := strings.Contains(firstBytes, `"type":"response`) || strings.Contains(firstBytes, "response.")
 
-			// Create a combined reader that includes the peeked bytes
-			combinedReader := io.MultiReader(bytes.NewReader(peekBuf[:n]), resp.Body)
+			// Replay the bytes consumed for detection, then continue from the
+			// buffered reader. The wrapper retains cancellation and Close semantics.
+			combinedReader := io.MultiReader(bytes.NewReader(prefix.Bytes()), buffered)
 
 			if isResponsesFormat {
 				pr, pw := io.Pipe()
@@ -1264,7 +1330,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 						pw.Close()
 					}
 				}()
-				return pr, nil
+				return newReadCloserFromReader(pr, streamBridgeCloser{pipe: pr, upstream: resp.Body}), nil
 			}
 			// Chat Completions format: pass through as-is
 			resp.Body = newReadCloserFromReader(combinedReader, resp.Body)

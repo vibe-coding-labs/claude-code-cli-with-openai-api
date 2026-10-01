@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	stdlog "log"
 	"sync"
 	"time"
@@ -82,7 +83,13 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`
 
-	result, err := DB.Exec(query,
+	dbMu.RLock()
+	db := DB
+	dbMu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+	result, err := db.Exec(query,
 		log.ConfigID, log.UserID, log.SessionID, log.Model, log.InputTokens, log.OutputTokens, log.TotalTokens,
 		log.DurationMs, log.Status, log.ErrorMessage, log.RequestBody, log.ResponseBody,
 		log.RequestBodyPath, log.ResponseBodyPath,
@@ -116,7 +123,7 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 			if storeErr != nil {
 				stdlog.Printf("Failed to store request body file (keeping inline): %v", storeErr)
 			} else if reqPath != "" {
-				if _, updateErr := DB.Exec("UPDATE request_logs SET request_body = NULL, request_body_path = ? WHERE id = ?", reqPath, id); updateErr != nil {
+				if _, updateErr := db.Exec("UPDATE request_logs SET request_body = NULL, request_body_path = ? WHERE id = ?", reqPath, id); updateErr != nil {
 					stdlog.Printf("Failed to update request_body_path in DB: %v", updateErr)
 				}
 			}
@@ -128,7 +135,7 @@ func LogRequestSync(log *RequestLog, sessionID *string) error {
 			if storeErr != nil {
 				stdlog.Printf("Failed to store response body file (keeping inline): %v", storeErr)
 			} else if respPath != "" {
-				if _, updateErr := DB.Exec("UPDATE request_logs SET response_body = NULL, response_body_path = ? WHERE id = ?", respPath, id); updateErr != nil {
+				if _, updateErr := db.Exec("UPDATE request_logs SET response_body = NULL, response_body_path = ? WHERE id = ?", respPath, id); updateErr != nil {
 					stdlog.Printf("Failed to update response_body_path in DB: %v", updateErr)
 				}
 			}

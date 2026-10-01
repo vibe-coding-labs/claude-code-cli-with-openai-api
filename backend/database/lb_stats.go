@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -172,7 +173,7 @@ func GetNodeStatsByLoadBalancer(loadBalancerID string, startTime time.Time) ([]N
 		query := `
 			SELECT
 				COUNT(*) as request_count,
-				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN success != 0 THEN 1 ELSE 0 END), 0) as success_count,
 				COALESCE(AVG(duration_ms), 0) as avg_response_time_ms
 			FROM load_balancer_request_logs
 			WHERE load_balancer_id = ? AND selected_config_id = ? AND request_time >= ?
@@ -239,7 +240,7 @@ func AggregateStatsForTimeBucket(loadBalancerID string, timeBucket time.Time) er
 		query := `
 			SELECT
 				COUNT(*) as request_count,
-				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN success != 0 THEN 1 ELSE 0 END), 0) as success_count,
 				COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as failed_count,
 				COALESCE(SUM(duration_ms), 0) as total_duration_ms
 			FROM load_balancer_request_logs
@@ -375,6 +376,20 @@ func GetNodeStatsForTimeWindow(loadBalancerID, configID, timeWindow string) (*No
 	}, nil
 }
 
+func parseSQLiteTime(value string) (time.Time, error) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported SQLite time %q", value)
+}
+
 // GetRealTimeMetrics retrieves real-time metrics for a load balancer
 func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 	// Get load balancer info
@@ -475,7 +490,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 		nodeQuery := `
 			SELECT
 				COUNT(*) as request_count,
-				COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN success != 0 THEN 1 ELSE 0 END), 0) as success_count,
 				COALESCE(AVG(duration_ms), 0) as avg_response_time_ms,
 				MAX(request_time) as last_request_time
 			FROM load_balancer_request_logs
@@ -484,16 +499,22 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 
 		var requestCount, successCount int64
 		var nodeAvgResponseTime float64
-		var lastRequestTime *time.Time
+		var lastRequestValue sql.NullString
 
 		err = DB.QueryRow(nodeQuery, loadBalancerID, node.ConfigID, startTime).Scan(
-			&requestCount, &successCount, &nodeAvgResponseTime, &lastRequestTime,
+			&requestCount, &successCount, &nodeAvgResponseTime, &lastRequestValue,
 		)
 		if err != nil {
-			// Node has no requests in the last 60 seconds
-			requestCount = 0
-			successCount = 0
-			nodeAvgResponseTime = 0
+			return nil, fmt.Errorf("failed to query node metrics for config %s: %w", node.ConfigID, err)
+		}
+
+		var lastRequestAt *time.Time
+		if lastRequestValue.Valid {
+			parsed, parseErr := parseSQLiteTime(lastRequestValue.String)
+			if parseErr != nil {
+				return nil, fmt.Errorf("failed to parse last request time for config %s: %w", node.ConfigID, parseErr)
+			}
+			lastRequestAt = &parsed
 		}
 
 		nodeSuccessRate := 0.0
@@ -511,7 +532,7 @@ func GetRealTimeMetrics(loadBalancerID string) (*RealTimeMetrics, error) {
 			RequestsPerSecond:   nodeRequestsPerSecond,
 			SuccessRate:         nodeSuccessRate,
 			AvgResponseTimeMs:   nodeAvgResponseTime,
-			LastRequestTime:     lastRequestTime,
+			LastRequestTime:     lastRequestAt,
 		})
 	}
 

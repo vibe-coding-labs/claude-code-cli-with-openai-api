@@ -363,10 +363,11 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 	roleSent := false
 	var fullText strings.Builder
 	type toolCall struct {
-		ID    string
-		Name  string
-		Args  strings.Builder
-		Index int
+		ID     string
+		ItemID string
+		Name   string
+		Args   strings.Builder
+		Index  int
 	}
 	var toolCalls []toolCall
 	lastToolIdx := -1
@@ -398,12 +399,12 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 		}
 
 		if strings.TrimSpace(chunkData) == "[DONE]" {
-			break
+			return fmt.Errorf("responses stream ended before response.completed")
 		}
 
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(chunkData), &raw); err != nil {
-			continue
+			return fmt.Errorf("malformed Responses SSE data: %w", err)
 		}
 
 		eventType, _ := raw["type"].(string)
@@ -420,17 +421,18 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				if itype, _ := item["type"].(string); itype == "function_call" {
 					itemName, _ := item["name"].(string)
 					itemCallID, _ := item["call_id"].(string)
+					itemID, _ := item["id"].(string)
 					if itemName != "" {
 						found := false
 						for i, tc := range toolCalls {
-							if tc.ID == itemCallID {
+							if (itemID != "" && tc.ItemID == itemID) || (itemID == "" && itemCallID != "" && tc.ID == itemCallID) {
 								found = true
 								lastToolIdx = i
 								break
 							}
 						}
 						if !found {
-							tc := toolCall{ID: itemCallID, Name: itemName, Index: 0}
+							tc := toolCall{ID: itemCallID, ItemID: itemID, Name: itemName, Index: len(toolCalls)}
 							toolCalls = append(toolCalls, tc)
 							lastToolIdx = len(toolCalls) - 1
 						}
@@ -466,10 +468,11 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 			// full tool call once on function_call_arguments.done instead.
 			delta, _ := raw["delta"].(string)
 			callID, _ := raw["call_id"].(string)
+			itemID, _ := raw["item_id"].(string)
 
 			found := false
 			for i, tc := range toolCalls {
-				if tc.ID == callID {
+				if (itemID != "" && tc.ItemID == itemID) || (itemID == "" && callID != "" && tc.ID == callID) {
 					toolCalls[i].Args.WriteString(delta)
 					found = true
 					lastToolIdx = i
@@ -477,15 +480,15 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				}
 			}
 			if !found {
-				// opencode.ai does NOT include call_id in arguments.delta events.
-				// If we already announced a tool call via output_item.added,
-				// append the arguments to the most recent one. Otherwise create
-				// a fresh entry keyed by callID (or empty).
-				if len(toolCalls) > 0 && lastToolIdx >= 0 {
+				if itemID != "" || callID != "" {
+					return fmt.Errorf("Responses arguments delta references an unknown tool call")
+				}
+				// Upstreams without identifiers use the most recently announced call.
+				if itemID == "" && callID == "" && len(toolCalls) > 0 && lastToolIdx >= 0 {
 					toolCalls[lastToolIdx].Args.WriteString(delta)
 					found = true
 				} else {
-					tc := toolCall{ID: callID, Index: len(toolCalls)}
+					tc := toolCall{ID: callID, ItemID: itemID, Index: len(toolCalls)}
 					tc.Args.WriteString(delta)
 					toolCalls = append(toolCalls, tc)
 					lastToolIdx = len(toolCalls) - 1
@@ -495,27 +498,33 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 		case "response.function_call_arguments.done":
 			// Arguments complete: emit ONE tool_calls delta per tracked call.
 			callID, _ := raw["call_id"].(string)
-			if callID == "" && len(toolCalls) > 0 && lastToolIdx >= 0 {
+			itemID, _ := raw["item_id"].(string)
+			if callID == "" && itemID == "" && len(toolCalls) > 0 && lastToolIdx >= 0 {
 				callID = toolCalls[lastToolIdx].ID
 			}
 			var targetIdx = lastToolIdx
-			if callID != "" {
+			if callID != "" || itemID != "" {
+				targetIdx = -1
 				for i, tc := range toolCalls {
-					if tc.ID == callID {
+					if (itemID != "" && tc.ItemID == itemID) || (itemID == "" && callID != "" && tc.ID == callID) {
 						targetIdx = i
 						break
 					}
 				}
 			}
 			if targetIdx < 0 || targetIdx >= len(toolCalls) {
-				break
+				return fmt.Errorf("Responses arguments done references an unknown tool call")
 			}
 			tc := toolCalls[targetIdx]
+			arguments := tc.Args.String()
+			if completeArgs, ok := raw["arguments"].(string); ok {
+				arguments = completeArgs
+			}
 			toolDelta := map[string]interface{}{
 				"index":    targetIdx,
 				"id":       tc.ID,
 				"type":     "function",
-				"function": map[string]interface{}{"name": tc.Name, "arguments": tc.Args.String()},
+				"function": map[string]interface{}{"name": tc.Name, "arguments": arguments},
 			}
 			choice := map[string]interface{}{
 				"index": 0,
@@ -533,7 +542,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				return err
 			}
 
-		case "response.completed":
+		case "response.completed", "response.incomplete":
 			response, _ := raw["response"].(map[string]interface{})
 			if response != nil {
 				respStatus, _ := response["status"].(string)
@@ -555,35 +564,30 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				}
 			}
 
-			if len(usage) > 0 {
-				choice := map[string]interface{}{
-					"index":         0,
-					"delta":         map[string]interface{}{},
-					"finish_reason": finishReason,
-				}
-				if err := writeSSE(map[string]interface{}{
-					"choices": []interface{}{choice},
-					"usage":   usage,
-				}); err != nil {
-					return err
-				}
+			if eventType == "response.incomplete" {
+				finishReason = "length"
+			} else if len(toolCalls) > 0 {
+				finishReason = "tool_calls"
+			} else if finishReason == "" {
+				finishReason = "stop"
+			}
+			choice := map[string]interface{}{
+				"index":         0,
+				"delta":         map[string]interface{}{},
+				"finish_reason": finishReason,
+			}
+			if err := writeSSE(map[string]interface{}{
+				"choices": []interface{}{choice},
+				"usage":   usage,
+			}); err != nil {
+				return err
 			}
 
-			fmt.Fprintf(writer, "data: [DONE]\n\n")
-			return nil
+			_, err := fmt.Fprintf(writer, "data: [DONE]\n\n")
+			return err
 
 		case "response.failed":
-			writeSSE(map[string]interface{}{
-				"choices": []interface{}{
-					map[string]interface{}{
-						"index":         0,
-						"delta":         map[string]interface{}{},
-						"finish_reason": "error",
-					},
-				},
-			})
-			fmt.Fprintf(writer, "data: [DONE]\n\n")
-			return nil
+			return fmt.Errorf("upstream Responses stream failed")
 		}
 	}
 
@@ -592,7 +596,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 	}
 
 	if finishReason == "" {
-		finishReason = "stop"
+		return fmt.Errorf("responses stream ended without terminal event")
 	}
 	choice := map[string]interface{}{
 		"index":         0,

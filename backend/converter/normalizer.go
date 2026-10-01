@@ -67,11 +67,11 @@ func SnakeToCamel(name string) string {
 }
 
 // NormalizeToolParameters normalizes parameter names to match expected casing.
-// Returns an empty object (not nil) when params is nil, to satisfy Claude CLI's
-// requirement that tool_use input must be a string or object.
+// A nil input remains nil so callers can distinguish omitted parameters from an
+// explicitly supplied empty object.
 func NormalizeToolParameters(toolName string, params map[string]interface{}) map[string]interface{} {
 	if params == nil {
-		return map[string]interface{}{} // Empty object, not nil (Claude CLI requirement)
+		return nil
 	}
 
 	knownSnakeParams := map[string]bool{
