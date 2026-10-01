@@ -29,6 +29,9 @@ func TestClaudeContentBlockMarshalJSON(t *testing.T) {
 		{"thinking block with content",
 			ClaudeContentBlock{Type: "thinking", Thinking: "think"},
 			`{"type":"thinking","thinking":"think"}`},
+		{"tool_result block falls through default branch",
+			ClaudeContentBlock{Type: "tool_result", ToolUseID: "toolu_1", Content: "done"},
+			`{"type":"tool_result","tool_use_id":"toolu_1","content":"done"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

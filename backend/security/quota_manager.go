@@ -407,44 +407,51 @@ func (qm *QuotaManager) quotaResetWorker() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		ctx := context.Background()
-		
-		// Find quotas that need reset
-		query := `
-			SELECT id, tenant_id, quota_type, period, [limit], current_usage, reset_at, updated_at
-			FROM quotas
-			WHERE reset_at <= ?
-		`
+		qm.quotaResetTick()
+	}
+}
 
-		rows, err := qm.db.QueryContext(ctx, query, time.Now())
+// quotaResetTick performs a single pass over quotas whose reset_at has
+// elapsed and resets them. Split out from quotaResetWorker so it can be
+// invoked directly in tests without waiting on the real 1-minute ticker.
+func (qm *QuotaManager) quotaResetTick() {
+	ctx := context.Background()
+
+	// Find quotas that need reset
+	query := `
+		SELECT id, tenant_id, quota_type, period, [limit], current_usage, reset_at, updated_at
+		FROM quotas
+		WHERE reset_at <= ?
+	`
+
+	rows, err := qm.db.QueryContext(ctx, query, time.Now())
+	if err != nil {
+		return
+	}
+
+	var quotasToReset []*database.Quota
+	for rows.Next() {
+		quota := &database.Quota{}
+		err := rows.Scan(
+			&quota.ID,
+			&quota.TenantID,
+			&quota.QuotaType,
+			&quota.Period,
+			&quota.Limit,
+			&quota.CurrentUsage,
+			&quota.ResetAt,
+			&quota.UpdatedAt,
+		)
 		if err != nil {
 			continue
 		}
+		quotasToReset = append(quotasToReset, quota)
+	}
+	rows.Close()
 
-		var quotasToReset []*database.Quota
-		for rows.Next() {
-			quota := &database.Quota{}
-			err := rows.Scan(
-				&quota.ID,
-				&quota.TenantID,
-				&quota.QuotaType,
-				&quota.Period,
-				&quota.Limit,
-				&quota.CurrentUsage,
-				&quota.ResetAt,
-				&quota.UpdatedAt,
-			)
-			if err != nil {
-				continue
-			}
-			quotasToReset = append(quotasToReset, quota)
-		}
-		rows.Close()
-
-		// Reset each quota
-		for _, quota := range quotasToReset {
-			_ = qm.resetQuotaInternal(ctx, quota)
-		}
+	// Reset each quota
+	for _, quota := range quotasToReset {
+		_ = qm.resetQuotaInternal(ctx, quota)
 	}
 }
 

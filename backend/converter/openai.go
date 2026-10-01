@@ -943,6 +943,20 @@ func (o *OpenAIConverter) ParseResponse(body []byte) (*InternalResponse, error) 
 		resp.StopReason = "end_turn"
 	}
 
+	// Some upstreams (observed live: several SenseNova-routed GLM-5.2 configs)
+	// emit a populated tool_calls array but still report finish_reason="stop"
+	// instead of the spec-correct "tool_calls". Trust the actual content over
+	// the upstream's own finish_reason label — a message with tool_calls always
+	// means the turn ended on a tool call, whatever finish_reason says. Without
+	// this, stop_reason comes out "end_turn" despite a tool_use content block,
+	// and Claude Code's agentic loop treats the turn as finished and never
+	// executes the tool. Skip the override when finish_reason was "length": the
+	// tool call arguments may be truncated mid-JSON, and max_tokens is the more
+	// accurate signal for the client to act on.
+	if len(message.ToolCalls) > 0 && resp.StopReason != "max_tokens" {
+		resp.StopReason = "tool_use"
+	}
+
 	// 解析 content
 	if message.Content != nil {
 		if text, ok := message.Content.(string); ok && text != "" {

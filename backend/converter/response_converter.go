@@ -203,6 +203,13 @@ func legacyConvertOpenAIToClaude(openAIResp *models.OpenAIResponse, originalReq 
 		stopReason = models.StopEndTurn
 	}
 
+	// Mirrors the same override in converter/openai.go's ParseResponse: some
+	// upstreams report finish_reason="stop" even though they emitted a real
+	// tool call. Trust the merged message.ToolCalls over the label.
+	if len(message.ToolCalls) > 0 && stopReason != models.StopMaxTokens {
+		stopReason = models.StopToolUse
+	}
+
 	usage := models.ClaudeUsage{
 		InputTokens:  openAIResp.Usage.PromptTokens,
 		OutputTokens: openAIResp.Usage.CompletionTokens,

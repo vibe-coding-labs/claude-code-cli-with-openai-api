@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"os"
 	"testing"
 )
 
@@ -117,6 +118,54 @@ func TestDegenerateDetector_InvalidPattern(t *testing.T) {
 	err := d.AddPattern(`[invalid regex`)
 	if err == nil {
 		t.Error("AddPattern should return error for invalid regex")
+	}
+}
+
+// TestNewDegenerateDetector_EnvPatterns covers newDegenerateDetector's
+// PROXY_DEGENERATE_PATTERNS env-var branch: valid custom patterns are loaded,
+// a malformed regex among them is skipped without failing the whole load, and
+// empty entries (from stray semicolons) are ignored.
+func TestNewDegenerateDetector_EnvPatterns(t *testing.T) {
+	const envVar = "PROXY_DEGENERATE_PATTERNS"
+	old, hadOld := os.LookupEnv(envVar)
+	defer func() {
+		if hadOld {
+			os.Setenv(envVar, old)
+		} else {
+			os.Unsetenv(envVar)
+		}
+	}()
+
+	os.Setenv(envVar, `</CUSTOM_ONE_\w+>;;[invalid(;</CUSTOM_TWO_\w+>`)
+	d := newDegenerateDetector()
+
+	if got, _ := d.IsDegenerate("</CUSTOM_ONE_tag>"); !got {
+		t.Error("expected first valid custom env pattern to match")
+	}
+	if got, _ := d.IsDegenerate("</CUSTOM_TWO_tag>"); !got {
+		t.Error("expected second valid custom env pattern (after the invalid one) to match")
+	}
+	if got, _ := d.IsDegenerate("totally unrelated text"); got {
+		t.Error("unrelated text should not match any pattern")
+	}
+}
+
+// TestNewDegenerateDetector_NoEnvVar covers the branch where
+// PROXY_DEGENERATE_PATTERNS is unset — only the built-in default patterns
+// should be loaded.
+func TestNewDegenerateDetector_NoEnvVar(t *testing.T) {
+	const envVar = "PROXY_DEGENERATE_PATTERNS"
+	old, hadOld := os.LookupEnv(envVar)
+	os.Unsetenv(envVar)
+	defer func() {
+		if hadOld {
+			os.Setenv(envVar, old)
+		}
+	}()
+
+	d := newDegenerateDetector()
+	if len(d.patterns) != len(defaultDegeneratePatterns) {
+		t.Errorf("expected only %d default patterns with no env var set, got %d", len(defaultDegeneratePatterns), len(d.patterns))
 	}
 }
 

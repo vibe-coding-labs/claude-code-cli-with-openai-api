@@ -2,6 +2,7 @@ package converter
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/models"
@@ -90,16 +91,23 @@ func legacyConvert(claudeReq *models.ClaudeMessagesRequest, cfg *config.Config) 
 	// In practice, the new converter should handle all cases
 	openAIModel := cfg.BigModel
 	if claudeReq.Model != "" {
-		// Try to determine which model category this is
-		modelLower := claudeReq.Model
-		if len(modelLower) >= 5 && modelLower[:5] == "claude" {
-			if len(modelLower) > 10 && modelLower[6:10] == "haiku" {
-				openAIModel = cfg.SmallModel
-			} else if len(modelLower) > 12 && modelLower[6:12] == "sonnet" {
-				openAIModel = cfg.MiddleModel
-			} else if len(modelLower) > 10 && modelLower[6:10] == "opus" {
-				openAIModel = cfg.BigModel
-			}
+		// Match utils.MapClaudeModelToOpenAIWithConfig's keyword-based
+		// detection (the canonical, primary-path implementation). The
+		// original byte-offset slicing here (modelLower[:5]=="claude",
+		// modelLower[6:10]=="haiku", modelLower[6:12]=="sonnet") never
+		// matched any real Claude model name — "claude" is 6 bytes, not 5,
+		// and real names have a "-" separator at index 6 (e.g.
+		// "claude-3-haiku-20240307"), so the outer condition was always
+		// false and this fallback silently ignored the requested tier,
+		// routing every request to cfg.BigModel regardless of whether
+		// haiku/sonnet/opus was requested.
+		modelLower := strings.ToLower(claudeReq.Model)
+		if strings.Contains(modelLower, "haiku") {
+			openAIModel = cfg.SmallModel
+		} else if strings.Contains(modelLower, "sonnet") {
+			openAIModel = cfg.MiddleModel
+		} else if strings.Contains(modelLower, "opus") {
+			openAIModel = cfg.BigModel
 		}
 	}
 

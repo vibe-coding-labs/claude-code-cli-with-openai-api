@@ -242,7 +242,7 @@ func extractNoToolOutputCallID(errorBody string) string {
 	end := len(remainder)
 	for i, r := range remainder {
 		switch r {
-		case ' ', '.', ',', '"', '\'', '\\', '\n', '\r', '\t', '}', ']', ')':
+		case ' ', '.', ',', '"', '\'', '`', '\\', '\n', '\r', '\t', '}', ']', ')':
 			end = i
 			goto done
 		}

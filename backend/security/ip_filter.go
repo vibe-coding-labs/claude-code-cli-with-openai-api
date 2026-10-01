@@ -235,7 +235,7 @@ func (ipf *ipFilter) ListRules(ctx context.Context, tenantID string) ([]database
 	query := `
 		SELECT id, tenant_id, rule_type, ip_address, description, created_at
 		FROM ip_rules
-		WHERE tenant_id = ? OR tenant_id IS NULL
+		WHERE tenant_id = ? OR tenant_id IS NULL OR tenant_id = ''
 		ORDER BY created_at DESC
 	`
 	rows, err := ipf.db.QueryContext(ctx, query, tenantID)

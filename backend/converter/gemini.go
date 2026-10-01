@@ -38,7 +38,17 @@ var geminiSchemaAllowed = map[string]bool{
 	"pattern":     true,
 }
 
-// stripUnsupportedSchemaFields removes unsupported JSON Schema fields for Gemini
+// stripUnsupportedSchemaFields removes unsupported JSON Schema fields for Gemini.
+//
+// "properties" is special-cased: its map keys are arbitrary user-defined
+// parameter names (e.g. "city", "query"), not JSON Schema keywords, so they
+// must never be run through the geminiSchemaAllowed whitelist — only recurse
+// into each property's own nested schema. Before this fix, every property
+// whose name didn't coincidentally match a schema keyword (the overwhelming
+// majority — "city", "query", "path", etc. are never in geminiSchemaAllowed)
+// was silently dropped, so any tool declaration parsed from an incoming
+// Gemini request ended up with an empty "properties": {} — the model then
+// has no idea what arguments the tool expects.
 func stripUnsupportedSchemaFields(schema map[string]interface{}) map[string]interface{} {
 	if schema == nil {
 		return nil
@@ -46,16 +56,33 @@ func stripUnsupportedSchemaFields(schema map[string]interface{}) map[string]inte
 
 	result := make(map[string]interface{})
 	for key, value := range schema {
-		if geminiSchemaAllowed[key] {
-			// Recursively process nested schemas
-			switch v := value.(type) {
-			case map[string]interface{}:
-				result[key] = stripUnsupportedSchemaFields(v)
-			case []interface{}:
-				result[key] = stripUnsupportedSchemaArray(v)
-			default:
+		if !geminiSchemaAllowed[key] {
+			continue
+		}
+		if key == "properties" {
+			if props, ok := value.(map[string]interface{}); ok {
+				cleanedProps := make(map[string]interface{}, len(props))
+				for propName, propVal := range props {
+					if propMap, ok := propVal.(map[string]interface{}); ok {
+						cleanedProps[propName] = stripUnsupportedSchemaFields(propMap)
+					} else {
+						cleanedProps[propName] = propVal
+					}
+				}
+				result[key] = cleanedProps
+			} else {
 				result[key] = value
 			}
+			continue
+		}
+		// Recursively process nested schemas
+		switch v := value.(type) {
+		case map[string]interface{}:
+			result[key] = stripUnsupportedSchemaFields(v)
+		case []interface{}:
+			result[key] = stripUnsupportedSchemaArray(v)
+		default:
+			result[key] = value
 		}
 	}
 	return result
@@ -482,8 +509,15 @@ func (g *GeminiConverter) ParseStreamEvent(line []byte) (*StreamEvent, error) {
 			}
 		}
 
-		// Map finish reason
+		// Map finish reason. event.Delta may still be nil here — the final
+		// chunk of a Gemini stream commonly carries only finishReason (no
+		// parts, e.g. an empty candidate.Content.Parts), so it must be
+		// allocated before writing StopReason or this panics with a nil
+		// pointer dereference and takes down the streaming goroutine.
 		if candidate.FinishReason != "" {
+			if event.Delta == nil {
+				event.Delta = &StreamDelta{}
+			}
 			switch candidate.FinishReason {
 			case "MAX_TOKENS":
 				event.Delta.StopReason = "max_tokens"

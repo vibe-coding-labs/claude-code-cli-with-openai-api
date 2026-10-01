@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/claude/models"
 	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/config"
+	"github.com/vibe-coding-labs/claude-code-cli-with-openai-api/database"
 )
 
 func TestAdminHandler_GetMe(t *testing.T) {
@@ -218,4 +219,81 @@ func TestGetMeForClaudeCodeCLI(t *testing.T) {
 			t.Errorf("Required field '%s' missing in response", field)
 		}
 	}
+}
+
+// TestAdminHandler_GetMe_WithDatabase covers the database.IsInitialized()
+// branches inside GetMe: a non-"default" configID resolves the org name
+// from a real DB-stored APIConfig when found, and falls back to "Proxy
+// Organization" when the DB is initialized but the config lookup misses.
+func TestAdminHandler_GetMe_WithDatabase(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tdb, err := database.InitTestDB()
+	if err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+	defer func() {
+		tdb.Close()
+		database.DB = nil
+	}()
+	if err := database.InitEncryption(); err != nil {
+		t.Fatalf("failed to init encryption: %v", err)
+	}
+
+	cfg := &config.Config{}
+	handler := NewAdminHandler(cfg)
+
+	apiCfg := &database.APIConfig{
+		ID:            "cfg-1",
+		Name:          "My Custom Org",
+		OpenAIBaseURL: "https://api.example.com",
+	}
+	if err := database.CreateAPIConfig(apiCfg); err != nil {
+		t.Fatalf("failed to create api config: %v", err)
+	}
+
+	t.Run("db initialized, config found", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/me", nil)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = []gin.Param{{Key: "id", Value: apiCfg.ID}}
+
+		handler.GetMe(c)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp models.OrganizationResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Name != "My Custom Org" {
+			t.Errorf("expected org name 'My Custom Org', got '%s'", resp.Name)
+		}
+		if resp.ID != "org_cfg-1" {
+			t.Errorf("expected org ID 'org_cfg-1', got '%s'", resp.ID)
+		}
+	})
+
+	t.Run("db initialized, config not found", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/me", nil)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = []gin.Param{{Key: "id", Value: "cfg-nonexistent"}}
+
+		handler.GetMe(c)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp models.OrganizationResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Name != "Proxy Organization" {
+			t.Errorf("expected org name 'Proxy Organization', got '%s'", resp.Name)
+		}
+	})
 }

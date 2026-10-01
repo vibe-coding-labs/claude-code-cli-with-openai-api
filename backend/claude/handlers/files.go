@@ -73,6 +73,13 @@ func (h *FilesHandler) ListFiles(c *gin.Context) {
 
 	var params models.ListFilesParams
 	c.ShouldBindQuery(&params)
+	// models.ListFilesParams has no `form` struct tags, so ShouldBindQuery
+	// only matches an exact-case "Purpose" query key and silently leaves
+	// params.Purpose empty for real clients sending "?purpose=...". Read it
+	// explicitly so the filter below actually works.
+	if q := c.Query("purpose"); q != "" {
+		params.Purpose = q
+	}
 
 	// 简单实现：返回所有文件
 	files := make([]models.FileResponse, 0, len(h.files))

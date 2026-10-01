@@ -33,24 +33,40 @@ Use "claude-with-openai-api [command] --help" for more information about a comma
 	// This is handled by making server the default in Execute()
 }
 
+// shouldDefaultToServer reports whether Execute should inject the "server"
+// subcommand into args (args[0] is the program name, matching os.Args).
+// It returns false when args already name an explicit subcommand (e.g.
+// "config", "migrate"), or when the first argument is a help/version flag
+// that cobra should handle itself on the root command. It returns true for
+// a completely bare invocation as well as a flag-only invocation (e.g.
+// "claude-with-openai-api --port 8080"), so that flags meant for the server
+// command work without spelling out "server" explicitly.
+func shouldDefaultToServer(args []string) bool {
+	if len(args) <= 1 {
+		return true
+	}
+	firstArg := args[1]
+	if firstArg == "" {
+		return true
+	}
+	if firstArg[0] != '-' {
+		// An explicit subcommand was given.
+		return false
+	}
+	switch firstArg {
+	case "--help", "-h", "--version", "-v":
+		return false
+	}
+	return true
+}
+
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
-	// Check if a subcommand was provided
-	// If not, and it's not help/version, default to server
-	hasSubcommand := false
-	if len(os.Args) > 1 {
-		firstArg := os.Args[1]
-		// Check if it's a flag (starts with -) or a subcommand
-		if firstArg[0] != '-' {
-			hasSubcommand = true
-		} else if firstArg == "--help" || firstArg == "-h" || firstArg == "--version" || firstArg == "-v" {
-			hasSubcommand = false // Let cobra handle these
-		}
-	}
-
-	// If no subcommand and not help/version, default to server
-	if !hasSubcommand && len(os.Args) == 1 {
-		os.Args = append(os.Args, "server")
+	if shouldDefaultToServer(os.Args) {
+		args := make([]string, 0, len(os.Args)+1)
+		args = append(args, os.Args[0], "server")
+		args = append(args, os.Args[1:]...)
+		os.Args = args
 	}
 
 	if err := rootCmd.Execute(); err != nil {

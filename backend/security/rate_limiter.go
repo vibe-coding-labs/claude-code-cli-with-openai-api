@@ -120,7 +120,7 @@ func (rl *rateLimiter) GetLimits(ctx context.Context, tenantID string) ([]databa
 	query := `
 		SELECT id, tenant_id, dimension, algorithm, [limit], window, created_at
 		FROM rate_limits
-		WHERE tenant_id = ? OR tenant_id IS NULL
+		WHERE tenant_id = ? OR tenant_id IS NULL OR tenant_id = ''
 		ORDER BY created_at DESC
 	`
 	rows, err := rl.db.QueryContext(ctx, query, tenantID)
@@ -233,18 +233,50 @@ func (rl *rateLimiter) cleanupExpiredCounters() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		now := time.Now()
-		rl.cache.Range(func(key, value interface{}) bool {
-			counter := value.(*rateLimitCounter)
+		rl.cleanupExpiredCountersOnce()
+	}
+}
+
+// cleanupExpiredCountersOnce performs a single sweep of the counter cache,
+// removing entries unused for more than 10 minutes. Split out from
+// cleanupExpiredCounters so it can be exercised directly in tests without
+// waiting on the real 1-minute ticker.
+//
+// The cache holds three different counter types (fixed window, sliding
+// window, token bucket) side by side under different key suffixes, so this
+// must type-switch rather than unconditionally assert *rateLimitCounter —
+// doing otherwise panics (and kills the process, since this runs in a
+// detached goroutine with no recover) as soon as more than one algorithm is
+// in use at the same time.
+func (rl *rateLimiter) cleanupExpiredCountersOnce() {
+	now := time.Now()
+	rl.cache.Range(func(key, value interface{}) bool {
+		switch counter := value.(type) {
+		case *rateLimitCounter:
 			counter.mu.Lock()
-			// Remove counters that haven't been used in the last 10 minutes
 			if now.Sub(counter.windowStart) > 10*time.Minute {
 				rl.cache.Delete(key)
 			}
 			counter.mu.Unlock()
-			return true
-		})
-	}
+		case *slidingWindowCounter:
+			counter.mu.Lock()
+			var lastActivity time.Time
+			if n := len(counter.requests); n > 0 {
+				lastActivity = counter.requests[n-1]
+			}
+			if lastActivity.IsZero() || now.Sub(lastActivity) > 10*time.Minute {
+				rl.cache.Delete(key)
+			}
+			counter.mu.Unlock()
+		case *tokenBucketCounter:
+			counter.mu.Lock()
+			if now.Sub(counter.lastRefill) > 10*time.Minute {
+				rl.cache.Delete(key)
+			}
+			counter.mu.Unlock()
+		}
+		return true
+	})
 }
 
 

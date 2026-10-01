@@ -15,6 +15,11 @@ func TestNormalizeToolCallID(t *testing.T) {
 		{"abc123", "toolu_abc123"},
 		{"", ""},
 		{"toolu_", "toolu_"},
+		// Characters outside [a-zA-Z0-9_-] must be sanitized to underscores,
+		// regardless of which prefix branch produced the ID.
+		{"toolu_ab@c!123", "toolu_ab_c_123"},
+		{"call_foo bar/baz", "toolu_foo_bar_baz"},
+		{"foo.bar:baz", "toolu_foo_bar_baz"},
 	}
 	for _, tt := range tests {
 		if got := NormalizeToolCallID(tt.input); got != tt.expected {

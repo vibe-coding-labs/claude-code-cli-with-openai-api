@@ -457,6 +457,221 @@ func TestResult_ErrorSummary(t *testing.T) {
 	}
 }
 
+// fakeNetError implements net.Error for testing the errors.As(err, &netErr) branch
+// of ClassifyError without depending on an actual network operation.
+type fakeNetError struct{ msg string }
+
+func (e *fakeNetError) Error() string   { return e.msg }
+func (e *fakeNetError) Timeout() bool   { return true }
+func (e *fakeNetError) Temporary() bool { return true }
+
+func TestClassifyError_NetErrorInterface(t *testing.T) {
+	err := &fakeNetError{msg: "some obscure transport failure"}
+	if got := ClassifyError(err); got != CategoryNetwork {
+		t.Errorf("got %v, want CategoryNetwork for net.Error", got)
+	}
+}
+
+func TestClassifyError_CircuitBreakerOpen(t *testing.T) {
+	err := fmt.Errorf("circuit breaker is open for config xyz")
+	if got := ClassifyError(err); got != CategoryNetwork {
+		t.Errorf("got %v, want CategoryNetwork", got)
+	}
+}
+
+func TestClassifyError_EmptyChoicesOrDecodeResponse(t *testing.T) {
+	tests := []string{
+		"upstream returned empty choices",
+		"failed to decode response body",
+	}
+	for _, s := range tests {
+		if got := ClassifyError(fmt.Errorf("%s", s)); got != CategoryServerError {
+			t.Errorf("%q: got %v, want CategoryServerError", s, got)
+		}
+	}
+}
+
+func TestClassifyError_DegenerateOutput(t *testing.T) {
+	err := fmt.Errorf("degenerate output detected: pseudo tool-call markers")
+	if got := ClassifyError(err); got != CategoryServerError {
+		t.Errorf("got %v, want CategoryServerError", got)
+	}
+}
+
+func TestClassifyError_EmptyContentOrResponse(t *testing.T) {
+	tests := []string{"empty content in response", "empty response from upstream"}
+	for _, s := range tests {
+		if got := ClassifyError(fmt.Errorf("%s", s)); got != CategoryServerError {
+			t.Errorf("%q: got %v, want CategoryServerError", s, got)
+		}
+	}
+}
+
+func TestClassifyError_TrulyUnknown(t *testing.T) {
+	err := fmt.Errorf("some completely unrecognized error string")
+	if got := ClassifyError(err); got != CategoryUnknown {
+		t.Errorf("got %v, want CategoryUnknown", got)
+	}
+}
+
+func TestCalculateBackoff_NonPositiveAttempt(t *testing.T) {
+	s := Strategy{BaseDelay: time.Second, MaxDelay: 60 * time.Second}
+	if d := CalculateBackoff(s, 0); d != 0 {
+		t.Errorf("attempt 0: expected 0, got %v", d)
+	}
+	if d := CalculateBackoff(s, -1); d != 0 {
+		t.Errorf("negative attempt: expected 0, got %v", d)
+	}
+}
+
+func TestIsUpstreamOverloadError(t *testing.T) {
+	tests := []struct {
+		errStr string
+		want   bool
+	}{
+		{"Database error occurred", true},
+		{"service temporarily unavailable", true},
+		{"Upstream service Temporarily Unavailable", true},
+		{"internal error happened", true},
+		{"server error 500", true},
+		{"bad gateway", true},
+		{"gateway timeout", true},
+		{"service unavailable", true},
+		{"status 400: bad request", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := IsUpstreamOverloadError(tt.errStr); got != tt.want {
+			t.Errorf("IsUpstreamOverloadError(%q) = %v, want %v", tt.errStr, got, tt.want)
+		}
+	}
+}
+
+func TestExecuteWithStrategies_ContextCancelledDuringWait(t *testing.T) {
+	testStrategies := map[ErrorCategory]Strategy{
+		CategoryRateLimit: {MaxRetries: 5, BaseDelay: 200 * time.Millisecond, MaxDelay: 200 * time.Millisecond, Retryable: true},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	r := ExecuteWithStrategies(ctx, testStrategies, func() error {
+		return fmt.Errorf("status 429: rate limit")
+	})
+	if r.Category != CategoryCancelled {
+		t.Errorf("expected CategoryCancelled, got %v", r.Category)
+	}
+	if r.LastErr == nil {
+		t.Error("expected ctx error set as LastErr")
+	}
+}
+
+func TestExecuteWithStrategies_CategorySwitchStaysRetryable(t *testing.T) {
+	testStrategies := map[ErrorCategory]Strategy{
+		CategoryRateLimit:   {MaxRetries: 5, BaseDelay: 1 * time.Millisecond, MaxDelay: 2 * time.Millisecond, Retryable: true},
+		CategoryServerError: {MaxRetries: 5, BaseDelay: 1 * time.Millisecond, MaxDelay: 2 * time.Millisecond, Retryable: true},
+	}
+	callCount := 0
+	r := ExecuteWithStrategies(context.Background(), testStrategies, func() error {
+		callCount++
+		switch {
+		case callCount == 1:
+			return fmt.Errorf("status 429: rate limit")
+		case callCount == 2:
+			return fmt.Errorf("status 500: server error")
+		default:
+			return nil
+		}
+	})
+	if !r.Succeeded {
+		t.Errorf("expected eventual success, got reason from last err: %v", r.LastErr)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 calls (429 -> 500 -> success), got %d", callCount)
+	}
+	if r.Category != CategoryServerError {
+		t.Errorf("expected final category server_error (from the switch), got %v", r.Category)
+	}
+}
+
+func TestErrorCategory_String_PermanentQuotaAndUnknown(t *testing.T) {
+	if got := CategoryPermanentQuota.String(); got != "permanent_quota" {
+		t.Errorf("got %q, want permanent_quota", got)
+	}
+	if got := ErrorCategory(999).String(); got != "unknown" {
+		t.Errorf("got %q, want unknown for invalid category", got)
+	}
+}
+
+func TestFormatRetryError_NilLastErr(t *testing.T) {
+	r := &Result{Attempts: 3, LastErr: nil}
+	if err := FormatRetryError(r); err != nil {
+		t.Errorf("expected nil error when LastErr is nil, got %v", err)
+	}
+}
+
+func TestFormatRetryError_SingleAttemptReturnsRaw(t *testing.T) {
+	raw := fmt.Errorf("raw single-attempt error")
+	r := &Result{Attempts: 1, LastErr: raw}
+	got := FormatRetryError(r)
+	if got != raw {
+		t.Errorf("expected raw error returned unchanged for single attempt, got %v", got)
+	}
+}
+
+func TestEngine_ImmediateSuccess(t *testing.T) {
+	engine := NewEngine()
+	r := engine.Execute(context.Background(), func() error { return nil })
+	if !r.Succeeded {
+		t.Error("expected success")
+	}
+	if r.Attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", r.Attempts)
+	}
+}
+
+func TestEngine_ContextCancelledDuringWait(t *testing.T) {
+	testStrategies := map[ErrorCategory]Strategy{
+		CategoryRateLimit: {MaxRetries: 5, BaseDelay: 200 * time.Millisecond, MaxDelay: 200 * time.Millisecond, Retryable: true},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	engine := NewEngineWithStrategies(testStrategies)
+	r := engine.Execute(ctx, func() error {
+		return fmt.Errorf("status 429: rate limit")
+	})
+	if r.Category != CategoryCancelled {
+		t.Errorf("expected CategoryCancelled, got %v", r.Category)
+	}
+}
+
+func TestEngine_AdaptiveBackoffDelayCappedAtDoubleMax(t *testing.T) {
+	// consecutiveSameCategory grows the backoffMultiplier each retry; with enough
+	// consecutive same-category failures the multiplier must be clamped so the
+	// delay never exceeds strategy.MaxDelay*2.
+	testStrategies := map[ErrorCategory]Strategy{
+		CategoryRateLimit: {MaxRetries: 15, BaseDelay: 10 * time.Millisecond, MaxDelay: 10 * time.Millisecond, Retryable: true},
+	}
+	engine := NewEngineWithStrategies(testStrategies)
+	r := engine.Execute(context.Background(), func() error {
+		return fmt.Errorf("status 429: rate limit")
+	})
+	if r.Succeeded {
+		t.Error("should not succeed")
+	}
+	maxPossibleDelay := testStrategies[CategoryRateLimit].MaxDelay * 2 * time.Duration(testStrategies[CategoryRateLimit].MaxRetries)
+	if r.TotalDelay > maxPossibleDelay {
+		t.Errorf("total delay %v exceeds theoretical max %v given the MaxDelay*2 clamp", r.TotalDelay, maxPossibleDelay)
+	}
+}
+
+func TestResult_ErrorSummary_NilLastErr(t *testing.T) {
+	r := &Result{Attempts: 3, LastErr: nil}
+	if got := r.ErrorSummary(); got != "" {
+		t.Errorf("expected empty summary when LastErr is nil, got %q", got)
+	}
+}
+
 func TestClassifyError_WrappedTimeout(t *testing.T) {
 	innerErr := fmt.Errorf("net/http: timeout awaiting response headers")
 	wrappedErr := fmt.Errorf("all retry attempts failed, last error: %w", innerErr)

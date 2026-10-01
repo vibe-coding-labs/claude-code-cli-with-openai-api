@@ -2,6 +2,7 @@ package converter
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -198,5 +199,78 @@ func TestGeminiThoughtSignature_CapturedDuringStreaming(t *testing.T) {
 	sig, ok := globalThoughtSignatureCache.lookup(toolID)
 	if !ok || sig != "stream-signature-abc" {
 		t.Errorf("expected cached signature stream-signature-abc for %q, got %q (ok=%v)", toolID, sig, ok)
+	}
+}
+
+// TestThoughtSignatureCache_RememberIgnoresEmptyKeyOrValue covers remember's
+// early-return guard: neither an empty tool call ID nor an empty signature
+// should create an entry.
+func TestThoughtSignatureCache_RememberIgnoresEmptyKeyOrValue(t *testing.T) {
+	c := &thoughtSignatureCache{entries: make(map[string]string)}
+	c.remember("", "some-signature")
+	c.remember("some-id", "")
+	if len(c.entries) != 0 {
+		t.Errorf("expected no entries to be recorded, got %d", len(c.entries))
+	}
+}
+
+// TestThoughtSignatureCache_LookupEmptyID covers lookup's early-return guard
+// for an empty tool call ID.
+func TestThoughtSignatureCache_LookupEmptyID(t *testing.T) {
+	c := &thoughtSignatureCache{entries: make(map[string]string)}
+	if sig, ok := c.lookup(""); ok || sig != "" {
+		t.Errorf("expected (\"\", false) for empty ID, got (%q, %v)", sig, ok)
+	}
+}
+
+// TestThoughtSignatureCache_UpdateExistingEntryDoesNotEvict proves that
+// re-remembering an already-cached ID with a new signature just updates the
+// value in place — it must not consume an eviction slot or touch c.order,
+// since the ID is already tracked there.
+func TestThoughtSignatureCache_UpdateExistingEntryDoesNotEvict(t *testing.T) {
+	c := &thoughtSignatureCache{entries: make(map[string]string)}
+	c.remember("toolu_1", "sig-v1")
+	c.remember("toolu_1", "sig-v2")
+
+	if len(c.order) != 1 {
+		t.Fatalf("expected order to have exactly 1 entry after updating an existing key, got %d", len(c.order))
+	}
+	sig, ok := c.lookup("toolu_1")
+	if !ok || sig != "sig-v2" {
+		t.Errorf("expected updated signature sig-v2, got %q (ok=%v)", sig, ok)
+	}
+}
+
+// TestThoughtSignatureCache_EvictsOldestBeyondMaxEntries proves the cache is
+// bounded: once thoughtSignatureCacheMaxEntries distinct IDs are recorded,
+// inserting one more evicts the single oldest entry (FIFO), preventing
+// unbounded memory growth across a long-running proxy process.
+func TestThoughtSignatureCache_EvictsOldestBeyondMaxEntries(t *testing.T) {
+	c := &thoughtSignatureCache{entries: make(map[string]string)}
+
+	for i := 0; i < thoughtSignatureCacheMaxEntries; i++ {
+		c.remember(fmt.Sprintf("toolu_%d", i), fmt.Sprintf("sig-%d", i))
+	}
+	if len(c.entries) != thoughtSignatureCacheMaxEntries {
+		t.Fatalf("expected %d entries after filling to capacity, got %d", thoughtSignatureCacheMaxEntries, len(c.entries))
+	}
+	if _, ok := c.lookup("toolu_0"); !ok {
+		t.Fatal("expected the oldest entry to still be present right at capacity")
+	}
+
+	// One more insert should evict exactly the oldest entry (toolu_0).
+	c.remember("toolu_overflow", "sig-overflow")
+
+	if len(c.entries) != thoughtSignatureCacheMaxEntries {
+		t.Fatalf("expected cache to stay bounded at %d entries, got %d", thoughtSignatureCacheMaxEntries, len(c.entries))
+	}
+	if _, ok := c.lookup("toolu_0"); ok {
+		t.Error("expected the oldest entry (toolu_0) to have been evicted")
+	}
+	if _, ok := c.lookup("toolu_1"); !ok {
+		t.Error("expected the second-oldest entry (toolu_1) to still be present")
+	}
+	if sig, ok := c.lookup("toolu_overflow"); !ok || sig != "sig-overflow" {
+		t.Errorf("expected the newly inserted entry to be present, got %q (ok=%v)", sig, ok)
 	}
 }

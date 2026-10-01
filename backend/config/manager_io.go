@@ -57,6 +57,15 @@ func (cm *ConfigManager) SaveConfigs() error {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
+	return cm.saveConfigsLocked()
+}
+
+// saveConfigsLocked writes configs to disk assuming the caller already holds
+// cm.mutex (read or write lock). sync.RWMutex is not reentrant, so CRUD methods
+// that call SaveConfigs while already holding the write lock must call this
+// instead — otherwise the RLock() inside SaveConfigs deadlocks against the
+// write lock held by the same goroutine.
+func (cm *ConfigManager) saveConfigsLocked() error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(cm.filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {

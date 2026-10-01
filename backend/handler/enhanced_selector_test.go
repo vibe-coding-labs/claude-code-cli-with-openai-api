@@ -115,6 +115,13 @@ func TestSelectConfig_Random(t *testing.T) {
 
 	lb := createTestLoadBalancer(t)
 	lb.Strategy = "random"
+	// NewEnhancedSelector's RefreshNodes() reloads the load balancer from the
+	// DB by ID, so the in-memory Strategy change above must be persisted
+	// first or the selector silently keeps using "round_robin" (see the
+	// weighted test below, which already does this correctly).
+	if err := database.UpdateLoadBalancer(lb); err != nil {
+		t.Fatalf("Failed to update load balancer: %v", err)
+	}
 
 	cbMgr := createTestCircuitBreakerManager()
 	selector, err := NewEnhancedSelector(lb, cbMgr)
@@ -229,6 +236,13 @@ func TestSelectConfig_LeastConnections(t *testing.T) {
 
 	lb := createTestLoadBalancer(t)
 	lb.Strategy = "least_connections"
+	// NewEnhancedSelector's RefreshNodes() reloads the load balancer from the
+	// DB by ID, so the in-memory Strategy change above must be persisted
+	// first or the selector silently keeps using "round_robin" (see the
+	// weighted test below, which already does this correctly).
+	if err := database.UpdateLoadBalancer(lb); err != nil {
+		t.Fatalf("Failed to update load balancer: %v", err)
+	}
 
 	cbMgr := createTestCircuitBreakerManager()
 	selector, err := NewEnhancedSelector(lb, cbMgr)

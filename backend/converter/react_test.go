@@ -166,10 +166,21 @@ func TestNeedsReactFallback(t *testing.T) {
 		{"deepseek-coder-6.7b", true},
 		{"qwen2.5-72b", true},
 		{"gpt-4o-mini", false},
+		{"http://localhost:11434/v1/some-custom-model", true},
+		{"http://127.0.0.1:11434/v1/some-custom-model", true},
 	}
 	for _, tt := range tests {
 		if got := NeedsReactFallback(tt.model); got != tt.expected {
 			t.Errorf("NeedsReactFallback(%q) = %v, want %v", tt.model, got, tt.expected)
 		}
+	}
+}
+
+func TestReactConverter_ConvertToolResultsToXML(t *testing.T) {
+	rc := &ReactConverter{}
+	got := rc.ConvertToolResultsToXML("toolu_123", "file contents here")
+	want := "[Tool result for toolu_123]: file contents here"
+	if got != want {
+		t.Errorf("ConvertToolResultsToXML() = %q, want %q", got, want)
 	}
 }

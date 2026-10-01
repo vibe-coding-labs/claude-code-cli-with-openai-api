@@ -359,3 +359,137 @@ func TestBatchHandler_DeleteBatch(t *testing.T) {
 		t.Errorf("Expected status code %d for deleted batch, got %d", http.StatusNotFound, w.Code)
 	}
 }
+
+func TestBatchHandler_CreateBatch_InvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	handler := NewBatchHandler(cfg)
+
+	req := httptest.NewRequest("POST", "/v1/batches", bytes.NewReader([]byte("{invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	handler.CreateBatch(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, w.Code)
+	}
+
+	var response models.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Errorf("Failed to parse response: %v", err)
+	}
+	if response.Error.Type != "invalid_request_error" {
+		t.Errorf("Expected error type 'invalid_request_error', got '%s'", response.Error.Type)
+	}
+}
+
+func TestBatchHandler_GetBatchResults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	handler := NewBatchHandler(cfg)
+
+	createReq := models.CreateBatchRequest{
+		Requests: []models.BatchMessageRequest{
+			{
+				CustomID: "test_req",
+				MessagesRequest: &models.MessagesRequest{
+					Model:     "claude-3-opus-20240229",
+					Messages:  []models.Message{{Role: "user", Content: "Test"}},
+					MaxTokens: 100,
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest("POST", "/v1/batches", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	handler.CreateBatch(c)
+
+	var createdBatch models.BatchResponse
+	json.Unmarshal(w.Body.Bytes(), &createdBatch)
+
+	tests := []struct {
+		name         string
+		batchID      string
+		expectedCode int
+	}{
+		{"Get results for existing batch", createdBatch.ID, http.StatusOK},
+		{"Get results for non-existing batch", "batch_nonexistent", http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/batches/"+tt.batchID+"/results", nil)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = req
+			c.Params = []gin.Param{{Key: "batch_id", Value: tt.batchID}}
+
+			handler.GetBatchResults(c)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status code %d, got %d", tt.expectedCode, w.Code)
+			}
+
+			if tt.expectedCode == http.StatusOK {
+				var results models.BatchResultsResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+					t.Errorf("Failed to parse response: %v", err)
+				}
+				if len(results.Results) == 0 {
+					t.Error("Expected at least one result")
+				}
+			}
+		})
+	}
+}
+
+func TestBatchHandler_CancelBatch_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	handler := NewBatchHandler(cfg)
+
+	req := httptest.NewRequest("POST", "/v1/batches/batch_nonexistent/cancel", nil)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	c.Params = []gin.Param{{Key: "batch_id", Value: "batch_nonexistent"}}
+
+	handler.CancelBatch(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestBatchHandler_DeleteBatch_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	handler := NewBatchHandler(cfg)
+
+	req := httptest.NewRequest("DELETE", "/v1/batches/batch_nonexistent", nil)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	c.Params = []gin.Param{{Key: "batch_id", Value: "batch_nonexistent"}}
+
+	handler.DeleteBatch(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, w.Code)
+	}
+}

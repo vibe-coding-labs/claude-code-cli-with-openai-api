@@ -517,6 +517,94 @@ func TestOpenAIConverter_ParseResponse_WithToolCalls(t *testing.T) {
 	}
 }
 
+// TestOpenAIConverter_ParseResponse_ToolCallsWithStopFinishReason is a
+// regression test found via live multi-provider testing: several
+// SenseNova-routed GLM-5.2 configs return a populated tool_calls array but
+// label the response finish_reason="stop" instead of the spec-correct
+// "tool_calls". Without deriving stop_reason from the actual content, the
+// proxy reported "end_turn" despite a tool_use content block, so Claude
+// Code's agentic loop treated the turn as finished and never executed the
+// tool.
+func TestOpenAIConverter_ParseResponse_ToolCallsWithStopFinishReason(t *testing.T) {
+	body := []byte(`{
+		"id": "chatcmpl-456",
+		"object": "chat.completion",
+		"model": "glm-5.2",
+		"choices": [
+			{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"tool_calls": [
+						{
+							"id": "call_xyz",
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"arguments": "{\"city\": \"Berlin\"}"
+							}
+						}
+					]
+				},
+				"finish_reason": "stop"
+			}
+		],
+		"usage": {"prompt_tokens": 20, "completion_tokens": 15}
+	}`)
+
+	c := NewOpenAIConverter(nil)
+	resp, err := c.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.StopReason != "tool_use" {
+		t.Errorf("expected stop_reason tool_use (derived from tool_calls, not finish_reason=stop), got %q", resp.StopReason)
+	}
+}
+
+// TestOpenAIConverter_ParseResponse_LengthFinishReasonNotOverriddenByToolCalls
+// guards against over-correcting the fix above: when finish_reason is
+// "length" the tool call arguments may be truncated mid-JSON, so max_tokens
+// remains the more accurate signal and must not be masked by tool_use.
+func TestOpenAIConverter_ParseResponse_LengthFinishReasonNotOverriddenByToolCalls(t *testing.T) {
+	body := []byte(`{
+		"id": "chatcmpl-789",
+		"object": "chat.completion",
+		"model": "glm-5.2",
+		"choices": [
+			{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"tool_calls": [
+						{
+							"id": "call_trunc",
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"arguments": "{\"city\": \"Berl"
+							}
+						}
+					]
+				},
+				"finish_reason": "length"
+			}
+		],
+		"usage": {"prompt_tokens": 20, "completion_tokens": 15}
+	}`)
+
+	c := NewOpenAIConverter(nil)
+	resp, err := c.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.StopReason != "max_tokens" {
+		t.Errorf("expected stop_reason max_tokens to survive despite present tool_calls, got %q", resp.StopReason)
+	}
+}
+
 func TestOpenAIConverter_ParseResponse_ToolCallIDConversion(t *testing.T) {
 	// Test that fc_ prefix is converted to call_ prefix
 	body := []byte(`{

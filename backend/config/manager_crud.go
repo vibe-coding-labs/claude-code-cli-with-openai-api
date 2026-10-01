@@ -32,6 +32,7 @@ func (cm *ConfigManager) CreateConfig(req *models.APIConfigRequest) (*models.API
 		RetryBackoffBase: req.RetryBackoffBase,
 		RetryBackoffMax:  req.RetryBackoffMax,
 		AnthropicAPIKey:  req.AnthropicAPIKey,
+		SupportedModels:  req.SupportedModels,
 		Enabled:          true,
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
@@ -62,7 +63,7 @@ func (cm *ConfigManager) CreateConfig(req *models.APIConfigRequest) (*models.API
 	}
 
 	// Save to file
-	if err := cm.SaveConfigs(); err != nil {
+	if err := cm.saveConfigsLocked(); err != nil {
 		return nil, fmt.Errorf("failed to save configs: %w", err)
 	}
 
@@ -157,7 +158,7 @@ func (cm *ConfigManager) UpdateConfig(id string, req *models.APIConfigRequest) (
 	config.UpdatedAt = time.Now()
 
 	// Save to file
-	if err := cm.SaveConfigs(); err != nil {
+	if err := cm.saveConfigsLocked(); err != nil {
 		return nil, fmt.Errorf("failed to save configs: %w", err)
 	}
 
@@ -181,7 +182,7 @@ func (cm *ConfigManager) DeleteConfig(id string) error {
 	delete(cm.configs, id)
 
 	// Save to file
-	if err := cm.SaveConfigs(); err != nil {
+	if err := cm.saveConfigsLocked(); err != nil {
 		return fmt.Errorf("failed to save configs: %w", err)
 	}
 
@@ -199,7 +200,7 @@ func (cm *ConfigManager) SetDefaultConfig(id string) error {
 
 	cm.defaultConfigID = id
 
-	return cm.SaveConfigs()
+	return cm.saveConfigsLocked()
 }
 
 // GetDefaultConfig returns the default configuration
@@ -243,7 +244,11 @@ func (cm *ConfigManager) UpdateTestStatus(id string, status string, errorMsg str
 		return fmt.Errorf("config not found: %s", id)
 	}
 
-	config.UpdatedAt = time.Now()
+	now := time.Now()
+	config.LastTestedAt = &now
+	config.LastTestStatus = status
+	config.LastTestError = errorMsg
+	config.UpdatedAt = now
 
-	return cm.SaveConfigs()
+	return cm.saveConfigsLocked()
 }
