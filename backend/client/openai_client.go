@@ -34,14 +34,19 @@ import (
 // Override with PROXY_RESPONSE_HEADER_TIMEOUT_SEC (whole seconds).
 // The overall request is separately bounded by the per-request
 // deadline (RequestTimeout) and the stream stall detector (StreamStallTimeout).
-var upstreamResponseHeaderTimeout = func() time.Duration {
+var upstreamResponseHeaderTimeout = upstreamResponseHeaderTimeoutFromEnv()
+
+// upstreamResponseHeaderTimeoutFromEnv reads PROXY_RESPONSE_HEADER_TIMEOUT_SEC
+// (whole seconds; 0 disables the header timeout). It is a named function rather
+// than an inline closure so retryDeadline and unit tests can read the live value.
+func upstreamResponseHeaderTimeoutFromEnv() time.Duration {
 	if v := os.Getenv("PROXY_RESPONSE_HEADER_TIMEOUT_SEC"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
 			return time.Duration(secs) * time.Second
 		}
 	}
 	return 600 * time.Second
-}()
+}
 
 // ClassifyOpenAIError provides specific error guidance for common OpenAI API issues
 func ClassifyOpenAIError(errorDetail string) string {
@@ -358,6 +363,13 @@ type OpenAIClient struct {
 	RetryBackoffMax  time.Duration // 指数退避最大上限
 	httpClient       *http.Client
 	UpstreamEndpoint string // "chat/completions" (默认) 或 "responses"
+
+	// Test-only override seams (nil = use the real implementation). They let unit
+	// tests force marshal / body-prepare / 429-backoff failures deterministically
+	// without spinning up a hostile upstream.
+	marshalOverride func(any) ([]byte, error)
+	prepareOverride func(*models.OpenAIRequest, []byte) ([]byte, error)
+	wait429Override func(context.Context, string, string, ratelimit.RateLimit429Config) (*ratelimit.RateLimit429Result, error)
 }
 
 func NewOpenAIClient(cfg *config.Config) *OpenAIClient {
@@ -565,10 +577,40 @@ func (c *OpenAIClient) logProxyError(model, upstreamModel string, statusCode int
 // no-op.
 func (c *OpenAIClient) retryDeadline(startTime time.Time) time.Time {
 	deadline := startTime.Add(c.Timeout)
-	if floor := startTime.Add(upstreamResponseHeaderTimeout * 2); deadline.Before(floor) {
+	if floor := startTime.Add(upstreamResponseHeaderTimeoutFromEnv() * 2); deadline.Before(floor) {
 		return floor
 	}
 	return deadline
+}
+
+// marshal is the single seam through which all request-body JSON encoding flows.
+// It exists so unit tests can force a marshal failure via marshalOverride
+// without needing a request body that json.Marshal would reject on its own.
+func (c *OpenAIClient) marshal(v any) ([]byte, error) {
+	if c.marshalOverride != nil {
+		return c.marshalOverride(v)
+	}
+	return json.Marshal(v)
+}
+
+// prepareBody is the seam around prepareRequestBody (the chat↔responses / flat
+// tools body transform). Tests inject prepareOverride to force a failure on a
+// specific attempt (e.g. the second one, after a normalization retry).
+func (c *OpenAIClient) prepareBody(openAIReq *models.OpenAIRequest, reqBody []byte) ([]byte, error) {
+	if c.prepareOverride != nil {
+		return c.prepareOverride(openAIReq, reqBody)
+	}
+	return c.prepareRequestBody(openAIReq, reqBody)
+}
+
+// wait429 is the seam around the global 429 smart-backoff. Tests inject
+// wait429Override to deterministically simulate quota-exhausted / aborted /
+// transient-wait outcomes and backoff failures without real timers.
+func (c *OpenAIClient) wait429(ctx context.Context, configID, errorMsg string, cfg ratelimit.RateLimit429Config) (*ratelimit.RateLimit429Result, error) {
+	if c.wait429Override != nil {
+		return c.wait429Override(ctx, configID, errorMsg, cfg)
+	}
+	return ratelimit.Global.WaitWith429Backoff(ctx, configID, errorMsg, cfg)
 }
 
 // buildUpstreamURL constructs the upstream API URL based on the configured endpoint.
@@ -800,7 +842,7 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 	logger.Debug("  MaxTokens: %d", openAIReq.MaxTokens)
 	logger.Debug("  Retry count: %d", c.RetryCount)
 
-	reqBody, err := json.Marshal(openAIReq)
+	reqBody, err := c.marshal(openAIReq)
 	if err != nil {
 		logger.Error("← [OpenAIClient] Failed to marshal request: %v", err)
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -809,7 +851,7 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 	logger.Debug("  Request body: %s", string(reqBody))
 
 	// Transform body if upstream expects Responses API format
-	reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+	reqBody, err = c.prepareBody(openAIReq, reqBody)
 	if err != nil {
 		logger.Error("← [OpenAIClient] Failed to prepare request body: %v", err)
 		return nil, fmt.Errorf("failed to prepare request body: %w", err)
@@ -912,7 +954,7 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 				if rewrittenReq, changed := normalizeToolCallIDsForRetry(openAIReq, errorMsg); changed {
 					logger.Warn("  Detected tool_call_id mismatch, retrying once with normalized tool_call_id")
 					openAIReq = rewrittenReq
-					reqBody, err = json.Marshal(openAIReq)
+					reqBody, err = c.marshal(openAIReq)
 					if err != nil {
 						logger.Error("← [OpenAIClient] Failed to marshal normalized request: %v", err)
 						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
@@ -924,7 +966,7 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 				if rewrittenReq, changed := normalizeToolChoiceForRetry(openAIReq, errorMsg); changed {
 					logger.Warn("  Detected upstream requiring flat tool_choice shape, retrying once with normalized tool_choice")
 					openAIReq = rewrittenReq
-					reqBody, err = json.Marshal(openAIReq)
+					reqBody, err = c.marshal(openAIReq)
 					if err != nil {
 						logger.Error("← [OpenAIClient] Failed to marshal normalized request: %v", err)
 						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
@@ -968,7 +1010,7 @@ func (c *OpenAIClient) CreateChatCompletionNonStream(openAIReq *models.OpenAIReq
 					return nil, fmt.Errorf("429 rate limit: exhausted %d retries", ratelimit429Cfg.MaxAttempts)
 				}
 
-				waitResult, waitErr := ratelimit.Global.WaitWith429Backoff(ctx, c.ConfigID, errorMsg, ratelimit429Cfg)
+				waitResult, waitErr := c.wait429(ctx, c.ConfigID, errorMsg, ratelimit429Cfg)
 				if waitErr != nil {
 					return nil, fmt.Errorf("cancelled while waiting for 429 backoff: %w", waitErr)
 				}
@@ -1231,7 +1273,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 		openAIReq.StreamOptions.IncludeUsage = true
 	}
 
-	reqBody, err := json.Marshal(openAIReq)
+	reqBody, err := c.marshal(openAIReq)
 	if err != nil {
 		logger.Error("← [OpenAIClient] Failed to marshal request: %v", err)
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -1239,7 +1281,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 	logger.Debug("  Request body size: %d bytes", len(reqBody))
 
 	// Transform body if upstream expects Responses API format
-	reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+	reqBody, err = c.prepareBody(openAIReq, reqBody)
 	if err != nil {
 		logger.Error("← [OpenAIClient] Failed to prepare streaming request body: %v", err)
 		return nil, fmt.Errorf("failed to prepare request body: %w", err)
@@ -1339,12 +1381,12 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 				if rewrittenReq, changed := normalizeToolChoiceForRetry(openAIReq, errorMsg); changed {
 					logger.Warn("  Detected upstream requiring flat tool_choice shape in streaming, retrying once with normalized tool_choice")
 					openAIReq = rewrittenReq
-					reqBody, err = json.Marshal(openAIReq)
+					reqBody, err = c.marshal(openAIReq)
 					if err != nil {
 						logger.Error("← [OpenAIClient] Failed to marshal normalized request: %v", err)
 						return nil, fmt.Errorf("failed to marshal normalized request: %w", err)
 					}
-					reqBody, err = c.prepareRequestBody(openAIReq, reqBody)
+					reqBody, err = c.prepareBody(openAIReq, reqBody)
 					if err != nil {
 						logger.Error("← [OpenAIClient] Failed to prepare normalized request: %v", err)
 						return nil, fmt.Errorf("failed to prepare normalized request: %w", err)
@@ -1394,7 +1436,7 @@ func (c *OpenAIClient) CreateChatCompletionStream(openAIReq *models.OpenAIReques
 				ratelimit429Ctx, ratelimit429Cancel := context.WithTimeout(context.Background(), time.Until(deadline))
 				defer ratelimit429Cancel()
 
-				waitResult, waitErr := ratelimit.Global.WaitWith429Backoff(ratelimit429Ctx, c.ConfigID, errorMsg, ratelimit429Cfg)
+				waitResult, waitErr := c.wait429(ratelimit429Ctx, c.ConfigID, errorMsg, ratelimit429Cfg)
 				if waitErr != nil {
 					return nil, fmt.Errorf("cancelled while waiting for 429 backoff: %w", waitErr)
 				}

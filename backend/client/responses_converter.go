@@ -354,6 +354,19 @@ func convertResponsesToChatResponse(respBody []byte, chatModel string) ([]byte, 
 	return json.Marshal(chatResp)
 }
 
+// writeSSE writes one SSE data event to writer, JSON-encoding the payload.
+// It is a package-level function (rather than a closure inside
+// convertResponsesStreamingToChat) so the json.Marshal failure branch stays
+// reachable in tests via unserializable payloads.
+func writeSSE(writer io.Writer, data map[string]interface{}) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(writer, "data: %s\n\n", string(b))
+	return err
+}
+
 // convertResponsesStreamingToChat reads Responses API SSE events from reader and
 // writes Chat Completions SSE format to writer. Returns when the stream ends.
 func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatModel string) error {
@@ -371,15 +384,6 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 	var toolCalls []toolCall
 	lastToolIdx := -1
 	finishReason := ""
-
-	writeSSE := func(data map[string]interface{}) error {
-		b, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(writer, "data: %s\n\n", string(b))
-		return err
-	}
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -452,7 +456,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				choice["delta"].(map[string]interface{})["role"] = "assistant"
 				roleSent = true
 			}
-			if err := writeSSE(map[string]interface{}{
+			if err := writeSSE(writer, map[string]interface{}{
 				"choices": []interface{}{choice},
 			}); err != nil {
 				return err
@@ -527,7 +531,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 				choice["delta"].(map[string]interface{})["role"] = "assistant"
 				roleSent = true
 			}
-			if err := writeSSE(map[string]interface{}{
+			if err := writeSSE(writer, map[string]interface{}{
 				"choices": []interface{}{choice},
 			}); err != nil {
 				return err
@@ -581,7 +585,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 			if len(usage) > 0 {
 				sseData["usage"] = usage
 			}
-			if err := writeSSE(sseData); err != nil {
+			if err := writeSSE(writer, sseData); err != nil {
 				return err
 			}
 
@@ -589,7 +593,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 			return nil
 
 		case "response.failed":
-			writeSSE(map[string]interface{}{
+			writeSSE(writer, map[string]interface{}{
 				"choices": []interface{}{
 					map[string]interface{}{
 						"index":         0,
@@ -618,7 +622,7 @@ func convertResponsesStreamingToChat(reader io.Reader, writer io.Writer, chatMod
 		"delta":         map[string]interface{}{},
 		"finish_reason": finishReason,
 	}
-	writeSSE(map[string]interface{}{
+	writeSSE(writer, map[string]interface{}{
 		"choices": []interface{}{choice},
 	})
 	fmt.Fprintf(writer, "data: [DONE]\n\n")

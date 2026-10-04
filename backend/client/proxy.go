@@ -13,6 +13,15 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// socksDialerFromURL is the seam BuildTransportProxy uses to build the SOCKS5
+// dialer (x/net/proxy.FromURL). It exists only for unit tests: the real socks5
+// dialer (internal/socks.Dialer) implements proxy.ContextDialer, so the dialCtx
+// closure's dialer.Dial fallback branch is unreachable without injecting a
+// fake dialer that implements only Dial. Tests override this package-level var
+// and defer-restore it; production behavior is identical to calling
+// proxy.FromURL directly.
+var socksDialerFromURL = proxy.FromURL
+
 // ProxyConfig carries the effective proxy settings for a transport.
 // It is derived from config.Config with the system-wide fallback already
 // applied (see ProxyConfigFromConfig).
@@ -99,7 +108,7 @@ func BuildTransportProxy(pc ProxyConfig) (proxyFunc func(*http.Request) (*url.UR
 		}
 		// tlsHandshakeTimeout governs the TLS session above the tunnel, so the
 		// underlying TCP dial to the SOCKS server gets its own generous cap.
-		dialer, err := proxy.FromURL(parsed, &net.Dialer{Timeout: 60 * time.Second})
+		dialer, err := socksDialerFromURL(parsed, &net.Dialer{Timeout: 60 * time.Second})
 		if err != nil {
 			utils.GetLogger().Warn("[proxy] failed to build SOCKS5 dialer for %q, falling back to environment proxy: %v", pc.ProxyURL, err)
 			return http.ProxyFromEnvironment, nil

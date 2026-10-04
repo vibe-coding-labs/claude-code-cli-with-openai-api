@@ -486,7 +486,7 @@ func insertLBRequestLogAt(t *testing.T, id, lbID, configID string, success bool,
 			id, load_balancer_id, selected_config_id, request_time, response_time,
 			duration_ms, status_code, success, retry_count, created_at
 		) VALUES (?, ?, ?, ?, ?, 10, 200, ?, 0, ?)
-	`, id, lbID, configID, when.UTC().Format("2006-01-02 15:04:05"), when.UTC().Format("2006-01-02 15:04:05"), success, when.UTC().Format("2006-01-02 15:04:05"))
+	`, id, lbID, configID, when, when, success, when)
 	if err != nil {
 		t.Fatalf("insertLBRequestLogAt: %v", err)
 	}

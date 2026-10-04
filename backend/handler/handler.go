@@ -576,7 +576,16 @@ func (h *Handler) executeMessageRequestWithConfig(c *gin.Context, dbConfig *data
 		if stallTimeout <= 0 {
 			stallTimeout = 60 * time.Second
 		}
+		// stall-retry 次数由 config.RetryCount 驱动（与 request-stage 重试同一配置源）。
+		// 上游过载 relay（如 apibest）常有无响应退化窗口（5-15min），硬编码 3 次不够覆盖；
+		// DB retry_count=10 × stallTimeout 120s ≈ 20min，足以吃住这类窗口。
 		maxStallRetries := 3
+		if targetConfig != nil && targetConfig.RetryCount > 0 {
+			maxStallRetries = targetConfig.RetryCount
+			if maxStallRetries > 50 {
+				maxStallRetries = 50
+			}
+		}
 
 		// Commit the SSE response (headers + message_start + heartbeat) BEFORE
 		// any upstream I/O. Slow upstreams (e.g. reasoning models that take

@@ -343,7 +343,7 @@ func CheckAndCreateHighErrorRateAlert(loadBalancerID string, errorRateThreshold 
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
-			SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests
+			COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) as failed_requests
 		FROM load_balancer_request_logs
 		WHERE load_balancer_id = ? AND request_time >= ?
 	`
