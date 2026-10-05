@@ -25,6 +25,7 @@ data/claude-relay-service/
 
 # Project-specific binaries
 claude-with-openai-api
+claude-with-openai-api.new
 claude-code-cli-with-openai-api
 /claude-with-openai-api
 test_build
